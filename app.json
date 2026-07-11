@@ -1,29 +1,45 @@
 {
   "expo": {
+    "scheme": "docuguard",
     "name": "DocuGuard",
     "slug": "DocuGuard",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.anonymous.DocuGuard",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
-      "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
-      },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.anonymous.DocuGuard",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ]
     },
-    "web": {
-      "favicon": "./assets/favicon.png"
-    },
+    "web": {},
     "plugins": [
       "expo-router",
-      "expo-status-bar"
-    ]
+      "expo-status-bar",
+      "expo-splash-screen",
+      "expo-sharing",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow DocuGuard to access your camera to scan secure identity and vault documents."
+        }
+      ],
+      "react-native-document-scanner-plugin"
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "118057a8-ff30-4258-b9a4-096c617ae595"
+      }
+    }
   }
 }

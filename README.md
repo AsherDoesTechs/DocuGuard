@@ -16,13 +16,13 @@ Rather than simply acting as a cloud storage application, DocuGuard provides int
 
 The primary objectives of DocuGuard are to:
 
-* Provide a secure repository for storing important digital documents.
-* Organize documents into user-friendly categories.
-* Track document expiration dates automatically.
-* Notify users before documents expire.
-* Help users quickly search and retrieve stored documents.
-* Reduce document loss through secure cloud storage.
-* Improve personal document management using an intuitive mobile interface.
+- Provide a secure repository for storing important digital documents.
+- Organize documents into user-friendly categories.
+- Track document expiration dates automatically.
+- Notify users before documents expire.
+- Help users quickly search and retrieve stored documents.
+- Reduce document loss through secure cloud storage.
+- Improve personal document management using an intuitive mobile interface.
 
 ---
 
@@ -32,13 +32,13 @@ Many individuals store important documents across multiple locations, including 
 
 Examples include:
 
-* Driver's Licenses
-* Passports
-* Government IDs
-* School Documents
-* Insurance Policies
-* Business Permits
-* Professional Certifications
+- Driver's Licenses
+- Passports
+- Government IDs
+- School Documents
+- Insurance Policies
+- Business Permits
+- Professional Certifications
 
 Missing renewal deadlines may lead to penalties, delays, or interrupted access to essential services.
 
@@ -50,12 +50,12 @@ DocuGuard addresses these issues by providing an intelligent document management
 
 DocuGuard centralizes document storage into a secure mobile application that enables users to:
 
-* Upload digital documents
-* Categorize documents
-* View document details
-* Monitor document validity
-* Receive expiration reminders
-* Access documents anytime
+- Upload digital documents
+- Categorize documents
+- View document details
+- Monitor document validity
+- Receive expiration reminders
+- Access documents anytime
 
 The application continuously evaluates each document's expiration date and classifies it according to its current status.
 
@@ -65,22 +65,22 @@ The application continuously evaluates each document's expiration date and class
 
 ## 🔐 User Authentication
 
-* User Registration
-* Secure Login
-* Password Encryption
-* Session Management
+- User Registration
+- Secure Login
+- Password Encryption
+- Session Management
 
 ---
 
 ## 📂 Document Management
 
-* Upload Documents
-* View Documents
-* Edit Document Information
-* Delete Documents
-* Categorize Documents
-* Search Documents
-* Filter Documents
+- Upload Documents
+- View Documents
+- Edit Document Information
+- Delete Documents
+- Categorize Documents
+- Search Documents
+- Filter Documents
 
 ---
 
@@ -108,10 +108,10 @@ Document has already expired.
 
 Users receive notifications:
 
-* 30 Days Before Expiration
-* 7 Days Before Expiration
-* 1 Day Before Expiration
-* On Expiration Day
+- 30 Days Before Expiration
+- 7 Days Before Expiration
+- 1 Day Before Expiration
+- On Expiration Day
 
 ---
 
@@ -121,11 +121,11 @@ The dashboard provides a quick overview of the user's document collection.
 
 Displayed information includes:
 
-* Total Documents
-* Valid Documents
-* Expiring Soon
-* Expired Documents
-* Recently Added Documents
+- Total Documents
+- Valid Documents
+- Expiring Soon
+- Expired Documents
+- Recently Added Documents
 
 ---
 
@@ -133,10 +133,10 @@ Displayed information includes:
 
 Users can:
 
-* Update Profile Information
-* Change Password
-* Manage Notification Preferences
-* View Account Details
+- Update Profile Information
+- Change Password
+- Manage Notification Preferences
+- View Account Details
 
 ---
 
@@ -168,35 +168,35 @@ Push Notification Service
 
 ## Mobile Development
 
-* React Native
-* Expo
-* Expo Router
-* TypeScript
-* NativeWind
+- React Native
+- Expo
+- Expo Router
+- TypeScript
+- NativeWind
 
 ## Backend
 
-* Node.js
-* Express.js
+- Node.js
+- Express.js
 
 ## Database
 
-* MongoDB
-* Mongoose
+- MongoDB
+- Mongoose
 
 ## Authentication
 
-* JSON Web Token (JWT)
-* bcrypt
+- JSON Web Token (JWT)
+- bcrypt
 
 ## Storage
 
-* Cloudinary
-* Firebase Storage (optional)
+- Cloudinary
+- Firebase Storage (optional)
 
 ## Notifications
 
-* Expo Notifications
+- Expo Notifications
 
 ---
 
@@ -222,40 +222,40 @@ DocuGuard
 
 ## Phase 1
 
-* Project Setup
-* Navigation
-* UI Design System
+- Project Setup
+- Navigation
+- UI Design System
 
 ## Phase 2
 
-* Authentication
-* Backend Integration
+- Authentication
+- Backend Integration
 
 ## Phase 3
 
-* Dashboard
+- Dashboard
 
 ## Phase 4
 
-* Document Management
+- Document Management
 
 ## Phase 5
 
-* Smart Expiration Monitoring
+- Smart Expiration Monitoring
 
 ## Phase 6
 
-* Notification System
+- Notification System
 
 ## Phase 7
 
-* User Profile & Settings
+- User Profile & Settings
 
 ## Phase 8
 
-* Testing
-* Optimization
-* Deployment
+- Testing
+- Optimization
+- Deployment
 
 ---
 
