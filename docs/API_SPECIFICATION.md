@@ -15,7 +15,7 @@ http://localhost:5000/api
 POST
 
 ```
-/auth/register
+/register
 ```
 
 Request
@@ -35,7 +35,7 @@ Request
 POST
 
 ```
-/auth/login
+/login
 ```
 
 ---
@@ -45,7 +45,7 @@ POST
 POST
 
 ```
-/auth/logout
+/logout
 ```
 
 ---
