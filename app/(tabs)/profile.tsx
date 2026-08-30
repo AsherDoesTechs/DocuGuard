@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+import { api } from "../../services/api";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -8,14 +9,16 @@ import {
   Alert,
   Switch,
   TextInput,
+  ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { Card } from "../../components/ui";
 import { SubscriptionView } from "../../components/ui/SubscriptionView";
-import { MOCK_USER, COLORS } from "@/constants";
+import { COLORS } from "@/constants";
 import { RefreshableContainer } from "@/components/ui/RefreshableContainer";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 type SettingsTab =
   | "none"
@@ -23,6 +26,26 @@ type SettingsTab =
   | "notifications"
   | "subscription"
   | "support";
+
+interface SubscriptionDetails {
+  planName: string;
+  renewalDate: string;
+  storageUsed: number;
+  storageTotal: number;
+}
+
+interface UserProfile {
+  name: string;
+  email: string;
+  securityLevel: string;
+  documentCount: number;
+  expiringCount: number;
+  notifyPush: boolean;
+  notifyEmail: boolean;
+  notifyExpiry: boolean;
+  twoFactor: boolean;
+  subscription: SubscriptionDetails;
+}
 
 interface SettingRowProps {
   icon: string;
@@ -76,11 +99,8 @@ const UniqueAvatar = ({ name }: { name: string }) => {
 export default function ProfileScreen() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<SettingsTab>("none");
-
-  const handleDataReload = async () => {
-    console.log("Refreshing data...");
-    // Add your fetch logic
-  };
+  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState<UserProfile | null>(null);
 
   const [passwords, setPasswords] = useState({
     current: "",
@@ -93,12 +113,142 @@ export default function ProfileScreen() {
   const [notifyExpiry, setNotifyExpiry] = useState(true);
   const [supportMessage, setSupportMessage] = useState("");
 
-  const handleLogout = () => {
+  const fetchProfile = async () => {
+    try {
+      const res = await api.client.get("/profile");
+      setUser(res.data);
+      setTwoFactor(res.data.twoFactor);
+      setNotifyEmail(res.data.notifyEmail);
+      setNotifyPush(res.data.notifyPush);
+      setNotifyExpiry(res.data.notifyExpiry);
+    } catch (err: any) {
+      console.error(
+        "Server error response:",
+        err.response?.status,
+        err.response?.data,
+      );
+      Alert.alert("Error", "Could not load profile details.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchProfile();
+  }, []);
+
+  const handleDataReload = async () => {
+    await fetchProfile();
+  };
+
+  const handleSaveSecurity = async () => {
+    if (passwords.new && passwords.new !== passwords.confirm) {
+      return Alert.alert("Error", "New passwords do not match.");
+    }
+    try {
+      const token = await AsyncStorage.getItem("userToken");
+      const res = await api.client.patch(
+        "/profile/security",
+        {
+          currentPassword: passwords.current,
+          newPassword: passwords.new,
+          twoFactor,
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        },
+      );
+
+      if (res.status !== 200 && res.status !== 201) {
+        throw new Error(res.data?.error || "Failed to update security");
+      }
+
+      Alert.alert("Success", "Security settings updated");
+      setPasswords({ current: "", new: "", confirm: "" });
+    } catch (err: any) {
+      Alert.alert("Error", err.response?.data?.error || err.message);
+    }
+  };
+
+  const handleSavePreferences = async (
+    email: boolean,
+    push: boolean,
+    expiry: boolean,
+  ) => {
+    setNotifyEmail(email);
+    setNotifyPush(push);
+    setNotifyExpiry(expiry);
+
+    try {
+      const token = await AsyncStorage.getItem("userToken");
+      await api.client.patch(
+        "/profile/preferences",
+        {
+          notifyEmail: email,
+          notifyPush: push,
+          notifyExpiry: expiry,
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        },
+      );
+    } catch (err) {
+      console.error("Failed to update notification flags", err);
+    }
+  };
+
+  const handleSubmitTicket = async () => {
+    if (!supportMessage.trim()) return;
+    try {
+      const token = await AsyncStorage.getItem("userToken");
+      const res = await api.client.post(
+        "/profile/support",
+        { message: supportMessage },
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        },
+      );
+      if (res.status !== 200 && res.status !== 201)
+        throw new Error("Failed to submit ticket");
+      Alert.alert("Sent", "Support team notified.");
+      setSupportMessage("");
+    } catch (err) {
+      Alert.alert("Error", "Could not submit support ticket.");
+    }
+  };
+
+  const handleExportToCloud = async () => {
+    try {
+      const res = await api.cloud.exportData();
+      if (res.status === "success") {
+        Alert.alert(
+          "Export Complete",
+          "Your documents have been exported to Supabase cloud.",
+        );
+      }
+    } catch (err) {
+      Alert.alert(
+        "Export Failed",
+        "Could not export data to cloud. Please try again.",
+      );
+    }
+  };
+
+  const handleLogout = async () => {
     Alert.alert("Sign Out", "Are you sure you want to sign out?", [
       { text: "Cancel" },
       {
         text: "Sign Out",
-        onPress: () => router.replace("/login" as any),
+        onPress: async () => {
+          await AsyncStorage.removeItem("userToken");
+          router.replace("/login" as any);
+        },
         style: "destructive",
       },
     ]);
@@ -106,6 +256,21 @@ export default function ProfileScreen() {
 
   const toggleTab = (tab: SettingsTab) =>
     setActiveTab(activeTab === tab ? "none" : tab);
+
+  if (loading || !user) {
+    return (
+      <SafeAreaView
+        style={{
+          flex: 1,
+          backgroundColor: COLORS.background,
+          justifyContent: "center",
+          alignItems: "center",
+        }}
+      >
+        <ActivityIndicator size="large" color={COLORS.primary} />
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: COLORS.background }}>
@@ -120,10 +285,10 @@ export default function ProfileScreen() {
         >
           <Card style={styles.userCard}>
             <View style={styles.userCardContent}>
-              <UniqueAvatar name={MOCK_USER.name} />
+              <UniqueAvatar name={user.name} />
               <View style={styles.userInfo}>
-                <Text style={styles.userName}>{MOCK_USER.name}</Text>
-                <Text style={styles.userEmail}>{MOCK_USER.email}</Text>
+                <Text style={styles.userName}>{user.name}</Text>
+                <Text style={styles.userEmail}>{user.email}</Text>
                 <View style={styles.securityLevel}>
                   <Ionicons
                     name="shield-checkmark"
@@ -131,7 +296,7 @@ export default function ProfileScreen() {
                     color={COLORS.primary}
                   />
                   <Text style={styles.securityLevelText}>
-                    {MOCK_USER.securityLevel}
+                    {user.securityLevel}
                   </Text>
                 </View>
               </View>
@@ -141,14 +306,14 @@ export default function ProfileScreen() {
           <View style={styles.statsContainer}>
             <Card style={[styles.statCard, { backgroundColor: "#EFF6FF" }]}>
               <Text style={[styles.statValue, { color: "#2563EB" }]}>
-                {MOCK_USER.documentCount}
+                {user.documentCount}
               </Text>
               <Text style={styles.statLabel}>Documents</Text>
             </Card>
 
             <Card style={[styles.statCard, { backgroundColor: "#FEF2F2" }]}>
               <Text style={[styles.statValue, { color: "#DC2626" }]}>
-                {MOCK_USER.expiringCount}
+                {user.expiringCount}
               </Text>
               <Text style={styles.statLabel}>Expiring Soon</Text>
             </Card>
@@ -182,6 +347,15 @@ export default function ProfileScreen() {
                     value={passwords.new}
                     onChangeText={(t) => setPasswords({ ...passwords, new: t })}
                   />
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Confirm New Password"
+                    secureTextEntry
+                    value={passwords.confirm}
+                    onChangeText={(t) =>
+                      setPasswords({ ...passwords, confirm: t })
+                    }
+                  />
                   <View style={styles.switchRow}>
                     <Text>Enable 2FA Authentication</Text>
                     <Switch
@@ -192,9 +366,7 @@ export default function ProfileScreen() {
                   </View>
                   <TouchableOpacity
                     style={styles.primaryButton}
-                    onPress={() =>
-                      Alert.alert("Success", "Security settings updated")
-                    }
+                    onPress={handleSaveSecurity}
                   >
                     <Text style={styles.buttonText}>Save Changes</Text>
                   </TouchableOpacity>
@@ -214,18 +386,27 @@ export default function ProfileScreen() {
                     <Text>Email Alerts</Text>
                     <Switch
                       value={notifyEmail}
-                      onValueChange={setNotifyEmail}
+                      onValueChange={(val) =>
+                        handleSavePreferences(val, notifyPush, notifyExpiry)
+                      }
                     />
                   </View>
                   <View style={styles.switchRow}>
                     <Text>Push Notifications</Text>
-                    <Switch value={notifyPush} onValueChange={setNotifyPush} />
+                    <Switch
+                      value={notifyPush}
+                      onValueChange={(val) =>
+                        handleSavePreferences(notifyEmail, val, notifyExpiry)
+                      }
+                    />
                   </View>
                   <View style={styles.switchRow}>
                     <Text>Expiry Alerts</Text>
                     <Switch
                       value={notifyExpiry}
-                      onValueChange={setNotifyExpiry}
+                      onValueChange={(val) =>
+                        handleSavePreferences(notifyEmail, notifyPush, val)
+                      }
                     />
                   </View>
                 </View>
@@ -241,10 +422,16 @@ export default function ProfileScreen() {
               {activeTab === "subscription" && (
                 <View style={styles.expandedContent}>
                   <SubscriptionView
-                    planName={MOCK_USER.securityLevel}
-                    renewalDate="August 20, 2026"
-                    storageUsed={12.5}
-                    storageTotal={50}
+                    planName={user.subscription?.planName || user.securityLevel}
+                    renewalDate={
+                      user.subscription?.renewalDate
+                        ? new Date(
+                            user.subscription.renewalDate,
+                          ).toLocaleDateString()
+                        : "Active Plan"
+                    }
+                    storageUsed={user.subscription?.storageUsed ?? 0}
+                    storageTotal={user.subscription?.storageTotal ?? 50}
                   />
                 </View>
               )}
@@ -267,9 +454,7 @@ export default function ProfileScreen() {
                   />
                   <TouchableOpacity
                     style={styles.primaryButton}
-                    onPress={() =>
-                      Alert.alert("Sent", "Support team notified.")
-                    }
+                    onPress={handleSubmitTicket}
                   >
                     <Text style={styles.buttonText}>Submit Ticket</Text>
                   </TouchableOpacity>
@@ -277,6 +462,19 @@ export default function ProfileScreen() {
               )}
             </Card>
           </View>
+
+          <Card style={styles.sectionCard}>
+            <Text style={styles.sectionTitle}>Cloud Sync</Text>
+            <Text style={styles.sectionSubtitle}>
+              Export your documents and reminders to Supabase cloud backup.
+            </Text>
+            <TouchableOpacity
+              style={styles.primaryButton}
+              onPress={handleExportToCloud}
+            >
+              <Text style={styles.buttonText}>Export to Cloud</Text>
+            </TouchableOpacity>
+          </Card>
 
           <TouchableOpacity style={styles.signOutButton} onPress={handleLogout}>
             <View style={styles.signOutButtonContent}>
@@ -388,44 +586,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     borderBottomWidth: 1,
     borderBottomColor: "#eee",
-  },
-  subHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 8,
-  },
-  subTitle: { fontSize: 16, fontWeight: "700" },
-  badge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
-  badgeText: { fontSize: 12, fontWeight: "800" },
-  renewalText: { color: "#666", marginBottom: 20 },
-  usageContainer: { marginBottom: 20 },
-  usageRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 8,
-  },
-  usageLabel: { fontSize: 14, color: "#666" },
-  usageValue: { fontSize: 14, fontWeight: "600" },
-  progressBarBackground: {
-    height: 6,
-    backgroundColor: "#E5E7EB",
-    borderRadius: 3,
-    overflow: "hidden",
-  },
-  progressBarFill: { height: "100%", borderRadius: 3 },
-  paymentMethod: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 20,
-    gap: 10,
-  },
-  paymentText: { color: "#4B5563", fontSize: 14 },
-  cancelText: {
-    textAlign: "center",
-    color: "#6B7280",
-    fontSize: 14,
-    fontWeight: "500",
   },
   activeSettingRow: { backgroundColor: `${COLORS.primary}05` },
   settingInfo: { flex: 1, marginLeft: 16 },

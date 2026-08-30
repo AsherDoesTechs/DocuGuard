@@ -1,10 +1,11 @@
-import React from "react";
-import { View, Text, StyleSheet, ScrollView } from "react-native";
+import React, { useState } from "react";
+import { View, Text, StyleSheet, ScrollView, Alert } from "react-native";
 import { Link, useRouter } from "expo-router";
 import { Input, Button, Card } from "../../components/ui";
 import { useForm } from "../../hooks/useForm";
 import { isValidEmail } from "../../utils";
 import { COLORS } from "../../constants";
+import { api } from "../../services/api";
 
 interface FormValues {
   email: string;
@@ -12,6 +13,7 @@ interface FormValues {
 
 export default function ForgotPasswordScreen() {
   const router = useRouter();
+  const [serverError, setServerError] = useState<string | null>(null);
 
   const validate = (values: FormValues) => {
     const errors: Record<string, string> = {};
@@ -24,8 +26,20 @@ export default function ForgotPasswordScreen() {
     initialValues: { email: "" },
     validate,
     onSubmit: async (values) => {
-      console.log("Password reset requested for:", values.email);
-      router.push("/login" as any);
+      setServerError(null);
+      try {
+        await api.auth.forgotPassword({ email: values.email });
+        Alert.alert(
+          "Check Your Email",
+          "If an account exists with that email, instructions and a secure link to reset your password have been sent.",
+          [{ text: "OK", onPress: () => router.push("/(auth)/login" as any) }],
+        );
+      } catch (err: any) {
+        setServerError(
+          err.response?.data?.error ||
+            "Something went wrong. Please try again.",
+        );
+      }
     },
   });
 
@@ -34,11 +48,13 @@ export default function ForgotPasswordScreen() {
       <View style={styles.header}>
         <Text style={styles.title}>Reset Password</Text>
         <Text style={styles.subtitle}>
-          Enter your email to receive reset instructions
+          Enter your email to receive a secure reset link
         </Text>
       </View>
 
       <Card>
+        {serverError && <Text style={styles.errorText}>{serverError}</Text>}
+
         <Input
           label="Email"
           placeholder="you@example.com"
@@ -91,6 +107,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: COLORS.textSecondary,
     textAlign: "center",
+  },
+  errorText: {
+    color: COLORS.danger,
+    marginBottom: 12,
+    textAlign: "center",
+    fontSize: 14,
   },
   footer: {
     flexDirection: "row",

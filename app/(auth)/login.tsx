@@ -10,6 +10,7 @@ import {
 } from "react-native";
 import { Link, useRouter } from "expo-router";
 import * as LocalAuthentication from "expo-local-authentication";
+import * as SecureStore from "expo-secure-store";
 import { Ionicons } from "@expo/vector-icons";
 import { Input, Button, Card } from "../../components/ui";
 import { useForm } from "../../hooks/useForm";
@@ -64,28 +65,26 @@ export default function LoginScreen() {
     },
     onSubmit: async (values) => {
       try {
-        await api.auth.login({ ...values, rememberMe });
+        const response = await api.auth.login({ ...values, rememberMe });
+
+        // Save session token securely if returned from login API
+        if (response?.data?.token) {
+          await SecureStore.setItemAsync("userToken", response.data.token);
+        }
+
         router.replace("/(tabs)/documents" as any);
-      } catch (err) {
-        console.error("Login crashed", err);
+      } catch (err: any) {
+        Alert.alert(
+          "Login Failed",
+          err?.response?.data?.error ||
+            "Please check your credentials and try again.",
+        );
       }
     },
   });
 
-  const handleBiometricAuth = async () => {
-    const result = await LocalAuthentication.authenticateAsync({
-      promptMessage: "Sign in with Biometrics",
-      fallbackLabel: "Use Password",
-    });
-
-    if (result.success) {
-      router.replace("/(tabs)/home" as any);
-    } else {
-      Alert.alert(
-        "Authentication failed",
-        "Please try again or use your password.",
-      );
-    }
+  const handleBiometricAuth = () => {
+    router.push("/(auth)/biometric-login" as any);
   };
 
   return (

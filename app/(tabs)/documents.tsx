@@ -1,36 +1,62 @@
-import React, { useState } from "react";
+import { api } from "../../services/api";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
+  ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { Input, Card, StatusBadge } from "../../components/ui";
-import { MOCK_DOCUMENTS, COLORS, DOCUMENT_CATEGORIES } from "../../constants";
+import { COLORS, DOCUMENT_CATEGORIES } from "../../constants";
 import { formatShortDate } from "../../utils";
 import { AppDocument } from "../../types";
 import { RefreshableContainer } from "@/components/ui/RefreshableContainer";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 export default function DocumentsScreen() {
   const router = useRouter();
   const [search, setSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
 
+  // Real data states
+  const [documents, setDocuments] = useState<AppDocument[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  // Function to fetch documents from your backend
+  const fetchDocuments = async () => {
+    try {
+      const response = await api.client.get("/documents");
+      setDocuments(response.data);
+    } catch (err: any) {
+      console.error(
+        "Failed to fetch documents:",
+        err.response?.data || err.message,
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchDocuments();
+  }, []);
+
   const handleDataReload = async () => {
-    console.log("Refreshing data...");
-    // Add your fetch logic
+    setLoading(true);
+    await fetchDocuments();
   };
 
   const categories = ["all", ...Object.keys(DOCUMENT_CATEGORIES)];
 
-  const filtered = MOCK_DOCUMENTS.filter((doc: AppDocument) => {
+  const filtered = documents.filter((doc: AppDocument) => {
     const matchesSearch =
-      doc.title.toLowerCase().includes(search.toLowerCase()) ||
-      doc.issuer.toLowerCase().includes(search.toLowerCase());
+      doc.title?.toLowerCase().includes(search.toLowerCase()) ||
+      doc.issuer?.toLowerCase().includes(search.toLowerCase());
     const matchesCategory =
       selectedCategory === "all" || doc.category === selectedCategory;
     return matchesSearch && matchesCategory;
@@ -95,39 +121,51 @@ export default function DocumentsScreen() {
             ))}
           </ScrollView>
 
-          <View style={styles.docsList}>
-            {filtered.map((doc: AppDocument) => (
-              <TouchableOpacity
-                key={doc.id}
-                onPress={() => router.push(`/document-details/${doc.id}`)}
-              >
-                <Card style={styles.docCard}>
-                  <View style={styles.docCardContent}>
-                    <View style={styles.docInfo}>
-                      <Text style={styles.docTitle}>{doc.title}</Text>
-                      <Text style={styles.docIssuer}>{doc.issuer}</Text>
-                      <View style={styles.docMeta}>
-                        <Text style={styles.docNumber}>
-                          ID: {doc.documentNumber}
-                        </Text>
-                        <View style={styles.docDate}>
-                          <Ionicons
-                            name="calendar"
-                            size={14}
-                            color={COLORS.textSecondary}
-                          />
-                          <Text style={styles.docDateText}>
-                            Expires {formatShortDate(doc.expiryDate)}
-                          </Text>
+          {loading ? (
+            <ActivityIndicator
+              size="large"
+              color={COLORS.primary}
+              style={{ marginTop: 40 }}
+            />
+          ) : (
+            <View style={styles.docsList}>
+              {filtered.length === 0 ? (
+                <Text style={styles.emptyText}>No documents found.</Text>
+              ) : (
+                filtered.map((doc: AppDocument) => (
+                  <TouchableOpacity
+                    key={doc.id}
+                    onPress={() => router.push(`/document-details/${doc.id}`)}
+                  >
+                    <Card style={styles.docCard}>
+                      <View style={styles.docCardContent}>
+                        <View style={styles.docInfo}>
+                          <Text style={styles.docTitle}>{doc.title}</Text>
+                          <Text style={styles.docIssuer}>{doc.issuer}</Text>
+                          <View style={styles.docMeta}>
+                            <Text style={styles.docNumber}>
+                              ID: {doc.documentNumber}
+                            </Text>
+                            <View style={styles.docDate}>
+                              <Ionicons
+                                name="calendar"
+                                size={14}
+                                color={COLORS.textSecondary}
+                              />
+                              <Text style={styles.docDateText}>
+                                Expires {formatShortDate(doc.expiryDate)}
+                              </Text>
+                            </View>
+                          </View>
                         </View>
+                        <StatusBadge status={doc.status} />
                       </View>
-                    </View>
-                    <StatusBadge status={doc.status} />
-                  </View>
-                </Card>
-              </TouchableOpacity>
-            ))}
-          </View>
+                    </Card>
+                  </TouchableOpacity>
+                ))
+              )}
+            </View>
+          )}
         </ScrollView>
         <TouchableOpacity
           style={styles.floatingAddButton}
@@ -166,13 +204,13 @@ const styles = StyleSheet.create({
   },
   floatingAddButton: {
     position: "absolute",
-    bottom: 20, // Adjust based on your tab bar height
+    bottom: 20,
     right: 20,
-    zIndex: 10, // Ensures it sits on top of everything
-    backgroundColor: "#fff", // Optional: white background to make it pop
-    borderRadius: 28, // Half of the icon size for a perfect circle
-    elevation: 5, // Shadow for Android
-    shadowColor: "#000", // Shadow for iOS
+    zIndex: 10,
+    backgroundColor: "#fff",
+    borderRadius: 28,
+    elevation: 5,
+    shadowColor: "#000",
     shadowOffset: { width: 5, height: 5 },
     shadowOpacity: 0.25,
     shadowRadius: 3.84,
@@ -197,4 +235,9 @@ const styles = StyleSheet.create({
   docNumber: { fontSize: 12, color: COLORS.textSecondary },
   docDate: { flexDirection: "row", alignItems: "center", gap: 4 },
   docDateText: { fontSize: 12, color: COLORS.textSecondary },
+  emptyText: {
+    textAlign: "center",
+    color: COLORS.textSecondary,
+    marginTop: 20,
+  },
 });

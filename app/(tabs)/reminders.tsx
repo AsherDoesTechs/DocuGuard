@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+import { api } from "../../services/api";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -6,30 +7,80 @@ import {
   ScrollView,
   TouchableOpacity,
   Switch,
+  ActivityIndicator,
+  Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { Card } from "../../components/ui";
-import { MOCK_REMINDERS, COLORS } from "@/constants";
+import { COLORS } from "@/constants";
 import { formatShortDate } from "../../utils";
 import { RefreshableContainer } from "@/components/ui/RefreshableContainer";
 
 type FilterType = "all" | "unread" | "urgent";
 
+interface Reminder {
+  id: number;
+  title: string;
+  description: string;
+  dueDate: string;
+  severity: "info" | "warning" | "urgent";
+  read: boolean;
+}
+
 export default function RemindersScreen() {
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [filter, setFilter] = useState<FilterType>("all");
-  const filtered = MOCK_REMINDERS.filter((r) => {
+  const [reminders, setReminders] = useState<Reminder[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchReminders = async () => {
+    try {
+      const res = await api.client.get("/reminders");
+      setReminders(res.data);
+    } catch (err: any) {
+      console.error(
+        "Server error response:",
+        err.response?.status,
+        err.response?.data,
+      );
+      Alert.alert("Error", "Could not load reminders.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchReminders();
+  }, []);
+
+  const handleToggleNotifications = async (value: boolean) => {
+    setNotificationsEnabled(value);
+    try {
+      // Use Axios client instead of raw fetch to automatically handle baseURL and headers
+      await api.client.patch("/reminders/preferences", {
+        notificationsEnabled: value,
+      });
+    } catch (err: any) {
+      console.error(
+        "Failed to update notification setting",
+        err?.response?.data || err.message,
+      );
+      Alert.alert("Error", "Failed to update notification setting.");
+    }
+  };
+
+  const handleDataReload = async () => {
+    await fetchReminders();
+  };
+
+  const filtered = reminders.filter((r) => {
     if (filter === "unread") return !r.read;
     if (filter === "urgent") return r.severity === "urgent";
     return true;
   });
-  const unreadCount = MOCK_REMINDERS.filter((r) => !r.read).length;
 
-  const handleDataReload = async () => {
-    console.log("Refreshing data...");
-    // Add your fetch logic
-  };
+  const unreadCount = reminders.filter((r) => !r.read).length;
 
   const getSeverityIcon = (s: string) =>
     s === "urgent"
@@ -37,6 +88,7 @@ export default function RemindersScreen() {
       : s === "warning"
         ? "warning"
         : "information-circle";
+
   const getSeverityColor = (s: string) =>
     s === "urgent"
       ? COLORS.danger
@@ -62,26 +114,18 @@ export default function RemindersScreen() {
               <View style={styles.notificationControls}>
                 <Switch
                   value={notificationsEnabled}
-                  onValueChange={setNotificationsEnabled}
+                  onValueChange={handleToggleNotifications}
                   trackColor={{ false: "#ccc", true: COLORS.primary }}
                 />
-                <TouchableOpacity
-                  onPress={() => setNotificationsEnabled(!notificationsEnabled)}
-                >
-                  <Ionicons
-                    name={
-                      notificationsEnabled
-                        ? "notifications"
-                        : "notifications-off"
-                    }
-                    size={24}
-                    color={
-                      notificationsEnabled
-                        ? COLORS.primary
-                        : COLORS.textSecondary
-                    }
-                  />
-                </TouchableOpacity>
+                <Ionicons
+                  name={
+                    notificationsEnabled ? "notifications" : "notifications-off"
+                  }
+                  size={24}
+                  color={
+                    notificationsEnabled ? COLORS.primary : COLORS.textSecondary
+                  }
+                />
               </View>
             </View>
           </View>
@@ -112,36 +156,48 @@ export default function RemindersScreen() {
             ))}
           </View>
 
-          <View style={styles.remindersList}>
-            {filtered.map((reminder) => (
-              <Card key={reminder.id} style={styles.reminderCard}>
-                <View
-                  style={[
-                    styles.reminderBorder,
-                    { borderLeftColor: getSeverityColor(reminder.severity) },
-                  ]}
-                >
-                  <View style={styles.reminderContent}>
-                    <Ionicons
-                      name={getSeverityIcon(reminder.severity) as any}
-                      size={24}
-                      color={getSeverityColor(reminder.severity)}
-                      style={styles.reminderIcon}
-                    />
-                    <View style={styles.reminderInfo}>
-                      <Text style={styles.reminderTitle}>{reminder.title}</Text>
-                      <Text style={styles.reminderDesc}>
-                        {reminder.description}
-                      </Text>
-                      <Text style={styles.reminderDate}>
-                        Due: {formatShortDate(reminder.dueDate)}
-                      </Text>
+          {loading ? (
+            <ActivityIndicator
+              size="large"
+              color={COLORS.primary}
+              style={{ marginTop: 40 }}
+            />
+          ) : filtered.length === 0 ? (
+            <Text style={styles.emptyText}>No reminders found.</Text>
+          ) : (
+            <View style={styles.remindersList}>
+              {filtered.map((reminder) => (
+                <Card key={reminder.id} style={styles.reminderCard}>
+                  <View
+                    style={[
+                      styles.reminderBorder,
+                      { borderLeftColor: getSeverityColor(reminder.severity) },
+                    ]}
+                  >
+                    <View style={styles.reminderContent}>
+                      <Ionicons
+                        name={getSeverityIcon(reminder.severity) as any}
+                        size={24}
+                        color={getSeverityColor(reminder.severity)}
+                        style={styles.reminderIcon}
+                      />
+                      <View style={styles.reminderInfo}>
+                        <Text style={styles.reminderTitle}>
+                          {reminder.title}
+                        </Text>
+                        <Text style={styles.reminderDesc}>
+                          {reminder.description}
+                        </Text>
+                        <Text style={styles.reminderDate}>
+                          Due: {formatShortDate(reminder.dueDate)}
+                        </Text>
+                      </View>
                     </View>
                   </View>
-                </View>
-              </Card>
-            ))}
-          </View>
+                </Card>
+              ))}
+            </View>
+          )}
         </ScrollView>
       </RefreshableContainer>
     </SafeAreaView>
@@ -159,7 +215,7 @@ const styles = StyleSheet.create({
   notificationControls: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 12, // Adds space between Switch and Icon
+    gap: 12,
   },
   header: { marginBottom: 24 },
   title: { fontSize: 28, fontWeight: "700", color: COLORS.text },
@@ -187,4 +243,9 @@ const styles = StyleSheet.create({
   reminderTitle: { fontSize: 16, fontWeight: "600", color: COLORS.text },
   reminderDesc: { fontSize: 14, color: COLORS.textSecondary, marginTop: 4 },
   reminderDate: { fontSize: 12, color: COLORS.textSecondary, marginTop: 8 },
+  emptyText: {
+    textAlign: "center",
+    color: COLORS.textSecondary,
+    marginTop: 40,
+  },
 });

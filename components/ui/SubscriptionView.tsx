@@ -18,7 +18,7 @@ export const SubscriptionView = ({
   storageTotal,
 }: SubscriptionViewProps) => {
   const router = useRouter();
-  const percentage = (storageUsed / storageTotal) * 100;
+  const percentage = storageTotal > 0 ? (storageUsed / storageTotal) * 100 : 0;
 
   const handleAction = (action: string) => {
     router.push({
@@ -35,12 +35,12 @@ export const SubscriptionView = ({
           style={[styles.badge, { backgroundColor: `${COLORS.primary}15` }]}
         >
           <Text style={[styles.badgeText, { color: COLORS.primary }]}>
-            {planName.toUpperCase()}
+            {planName ? planName.toUpperCase() : "STANDARD TIER"}
           </Text>
         </View>
       </View>
 
-      <Text style={styles.renewalText}>Renews on: {renewalDate}</Text>
+      <Text style={styles.renewalText}>Renews on: {renewalDate || "N/A"}</Text>
 
       <View style={styles.usageContainer}>
         <View style={styles.usageRow}>
@@ -53,7 +53,10 @@ export const SubscriptionView = ({
           <View
             style={[
               styles.progressBarFill,
-              { width: `${percentage}%`, backgroundColor: COLORS.primary },
+              {
+                width: `${Math.min(percentage, 100)}%`,
+                backgroundColor: COLORS.primary,
+              },
             ]}
           />
         </View>
@@ -61,7 +64,7 @@ export const SubscriptionView = ({
 
       <View style={styles.paymentMethod}>
         <Ionicons name="card-outline" size={20} color="#666" />
-        <Text style={styles.paymentText}>Visa ending in 4242</Text>
+        <Text style={styles.paymentText}>Secured via Backend Vault</Text>
       </View>
 
       {/* Navigation Actions */}
@@ -97,18 +100,18 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 8,
   },
-  subTitle: { fontSize: 16, fontWeight: "700" },
+  subTitle: { fontSize: 16, fontWeight: "700", color: COLORS.text },
   badge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
   badgeText: { fontSize: 12, fontWeight: "800" },
-  renewalText: { color: "#666", marginBottom: 20 },
+  renewalText: { color: COLORS.textSecondary, marginBottom: 20 },
   usageContainer: { marginBottom: 20 },
   usageRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     marginBottom: 8,
   },
-  usageLabel: { fontSize: 14, color: "#666" },
-  usageValue: { fontSize: 14, fontWeight: "600" },
+  usageLabel: { fontSize: 14, color: COLORS.textSecondary },
+  usageValue: { fontSize: 14, fontWeight: "600", color: COLORS.text },
   progressBarBackground: {
     height: 6,
     backgroundColor: "#E5E7EB",

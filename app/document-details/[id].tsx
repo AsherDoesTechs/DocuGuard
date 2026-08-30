@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -8,21 +8,152 @@ import {
   Alert,
   ActivityIndicator,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context"; // Added import
+import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { Paths, File } from "expo-file-system";
 import * as Sharing from "expo-sharing";
-import { Card, StatusBadge } from "../../components/ui";
-import { MOCK_DOCUMENTS, COLORS } from "@/constants";
+import * as SecureStore from "expo-secure-store";
+
+import { API_BASE_URL } from "../../services/api";
+import { Card, StatusBadge, DocumentPreview } from "../../components/ui";
+import { COLORS } from "@/constants";
 import { formatShortDate, getDaysUntilExpiry } from "../../utils";
+
+interface DocumentData {
+  id: string;
+  title: string;
+  category: string;
+  issuer: string;
+  documentNumber: string;
+  issueDate: string;
+  expiryDate: string;
+  notes?: string;
+  status: any;
+  fileUrl?: string;
+  fileType?: string;
+}
 
 export default function DocumentDetailsScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const document = MOCK_DOCUMENTS.find((d) => d.id === id);
 
+  const [document, setDocument] = useState<DocumentData | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const [isDownloading, setIsDownloading] = useState(false);
+
+  useEffect(() => {
+    fetchDocumentDetails();
+  }, [id]);
+
+  const fetchDocumentDetails = async () => {
+    try {
+      const token = await SecureStore.getItemAsync("userToken");
+      const res = await fetch(`${API_BASE_URL}/documents/${id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (!res.ok) throw new Error("Failed to load document");
+      const data = await res.json();
+      setDocument(data);
+    } catch (error) {
+      Alert.alert("Error", "Could not retrieve document details.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    Alert.alert(
+      "Delete Document",
+      "Are you sure you want to delete this document from your vault?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              const token = await SecureStore.getItemAsync("userToken");
+              const res = await fetch(`${API_BASE_URL}/documents/${id}`, {
+                method: "DELETE",
+                headers: { Authorization: `Bearer ${token}` },
+              });
+
+              if (!res.ok) throw new Error("Failed to delete");
+              router.replace("/(tabs)/documents" as any);
+            } catch (err) {
+              Alert.alert("Error", "Could not delete document.");
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const handleDownload = async () => {
+    if (!document) return;
+
+    // Ensure we have a valid file URL from the database/backend record
+    const fileUrl = document.fileUrl;
+
+    if (!fileUrl) {
+      Alert.alert("Error", "No file attachment available for this document.");
+      return;
+    }
+
+    setIsDownloading(true);
+    try {
+      const cleanTitle = document.title
+        .replace(/[^a-z0-9]/gi, "_")
+        .toLowerCase();
+      const filename = `${cleanTitle}_${document.id}.pdf`;
+
+      const targetFile = new File(Paths.document, filename);
+
+      if (!targetFile.parentDirectory.exists) {
+        targetFile.parentDirectory.create();
+      }
+
+      const downloadRes = await fetch(fileUrl);
+      const blob = await downloadRes.blob();
+
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const base64Data = reader.result as string;
+        await targetFile.write(base64Data);
+
+        if (await Sharing.isAvailableAsync()) {
+          await Sharing.shareAsync(targetFile.uri, {
+            mimeType: "application/pdf",
+            dialogTitle: `Download ${document.title}`,
+            UTI: "com.adobe.pdf",
+          });
+        } else {
+          Alert.alert("Success", "File downloaded locally to vault.");
+        }
+      };
+      reader.readAsDataURL(blob);
+    } catch (error) {
+      console.error("Download error:", error);
+      Alert.alert(
+        "Download Failed",
+        "Something went wrong while retrieving your file.",
+      );
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.errorContainer}>
+          <ActivityIndicator size="large" color={COLORS.primary} />
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   if (!document) {
     return (
@@ -36,46 +167,11 @@ export default function DocumentDetailsScreen() {
 
   const daysUntilExpiry = getDaysUntilExpiry(document.expiryDate);
 
-  const handleDownload = async () => {
-    setIsDownloading(true);
-    try {
-      const fileUrl =
-        "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf";
-
-      const cleanTitle = document.title
-        .replace(/[^a-z0-9]/gi, "_")
-        .toLowerCase();
-      const filename = `${cleanTitle}_${document.id}.pdf`;
-
-      const targetFile = new File(Paths.document, filename);
-
-      await File.downloadFileAsync(fileUrl, targetFile);
-
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(targetFile.uri, {
-          mimeType: "application/pdf",
-          dialogTitle: `Download ${document.title}`,
-          UTI: "com.adobe.pdf",
-        });
-      } else {
-        Alert.alert("Success", `File downloaded locally to documents layout.`);
-      }
-    } catch (error) {
-      console.error("Download Error: ", error);
-      Alert.alert(
-        "Download Failed",
-        "Something went wrong while retrieving your file.",
-      );
-    } finally {
-      setIsDownloading(false);
-    }
-  };
-
   return (
     <SafeAreaView style={styles.container} edges={["top", "left", "right"]}>
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()}>
+          <TouchableOpacity onPress={() => router.back()} hitSlop={10}>
             <Ionicons name="chevron-back" size={28} color={COLORS.primary} />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Document Details</Text>
@@ -84,11 +180,11 @@ export default function DocumentDetailsScreen() {
 
         <Card style={styles.docCard}>
           <View style={styles.docHeader}>
-            <View>
+            <View style={{ flex: 1, marginRight: 12 }}>
               <Text style={styles.docTitle}>{document.title}</Text>
               <Text style={styles.docIssuer}>{document.issuer}</Text>
             </View>
-            <StatusBadge status={document.status} />
+            <StatusBadge status={document.status || "ACTIVE"} />
           </View>
 
           <View style={styles.metaGrid}>
@@ -134,12 +230,18 @@ export default function DocumentDetailsScreen() {
           </View>
         </Card>
 
-        {document.notes && (
+        {document.notes ? (
           <Card style={styles.notesCard}>
             <Text style={styles.notesTitle}>Notes</Text>
             <Text style={styles.notesText}>{document.notes}</Text>
           </Card>
-        )}
+        ) : null}
+
+        <DocumentPreview
+          fileUrl={document.fileUrl}
+          fileType={document.fileType}
+          onPress={() => handleDownload()}
+        />
 
         <View style={styles.actions}>
           <TouchableOpacity
@@ -148,7 +250,9 @@ export default function DocumentDetailsScreen() {
             disabled={isDownloading}
           >
             <Ionicons name="create" size={20} color="#fff" />
-            <Text style={styles.actionButtonText}>Edit Document</Text>
+            <Text style={[styles.actionButtonText, { color: "#fff" }]}>
+              Edit Document
+            </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -173,20 +277,7 @@ export default function DocumentDetailsScreen() {
           <TouchableOpacity
             style={[styles.actionButton, styles.actionDanger]}
             disabled={isDownloading}
-            onPress={() => {
-              Alert.alert(
-                "Delete Document",
-                "Are you sure you want to delete this document?",
-                [
-                  { text: "Cancel" },
-                  {
-                    text: "Delete",
-                    onPress: () => router.back(),
-                    style: "destructive",
-                  },
-                ],
-              );
-            }}
+            onPress={handleDelete}
           >
             <Ionicons name="trash" size={20} color={COLORS.danger} />
             <Text style={[styles.actionButtonText, { color: COLORS.danger }]}>
@@ -208,7 +299,6 @@ const styles = StyleSheet.create({
     padding: 16,
     paddingBottom: 40,
   },
-  // ... rest of your styles remain the same
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -230,13 +320,13 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   docTitle: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: "700",
     color: COLORS.text,
   },
   docIssuer: {
     fontSize: 14,
-    color: COLORS.textSecondary,
+    color: COLORS.textSecondary || "#777",
     marginTop: 4,
   },
   metaGrid: {
@@ -248,7 +338,7 @@ const styles = StyleSheet.create({
   },
   metaLabel: {
     fontSize: 12,
-    color: COLORS.textSecondary,
+    color: COLORS.textSecondary || "#777",
     marginTop: 8,
   },
   metaValue: {

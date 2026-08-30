@@ -181,8 +181,7 @@ Push Notification Service
 
 ## Database
 
-- MongoDB
-- Mongoose
+- PostgreSQL
 
 ## Authentication
 
@@ -197,6 +196,7 @@ Push Notification Service
 ## Notifications
 
 - Expo Notifications
+- Firebase Cloud Messaging
 
 ---
 
@@ -280,3 +280,14 @@ DocuGuard is being developed as a Bachelor of Science in Information Technology 
 # 📄 License
 
 This project is intended for academic and educational purposes. Future versions may be expanded for public or commercial use.
+
+# CHATGPT Prompt:
+
+[Title]
+[Description]
+
+- Implement Critical Detail Debugging Logs
+- Implement Number Codes for Every error ex (Code: #54321 Contact your Administrator!)
+- Implement Essential Supporting details along to this feature.
+- Create detailed schema for this so that we can later integrate it.
+- if additional files are needed create me the file tree that i need to do in order to integrate the new changes in this system.

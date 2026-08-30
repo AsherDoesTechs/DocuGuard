@@ -1,32 +1,78 @@
-import React from "react";
+import { API_BASE_URL } from "../../services/api";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
+  Alert,
+  ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Input, Button, Card } from "../../components/ui";
 import { useForm } from "../../hooks/useForm";
-import { DOCUMENT_CATEGORIES, COLORS, MOCK_DOCUMENTS } from "@/constants";
+import { DOCUMENT_CATEGORIES, COLORS } from "@/constants";
+import { formatCategoryForBackend } from "@/DocuGuard-Server/utils/categories";
+
+interface DocumentValues {
+  title: string;
+  category: string;
+  issuer: string;
+  documentNumber: string;
+  issueDate: string;
+  expiryDate: string;
+  notes: string;
+}
 
 export default function EditDocumentScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const document = MOCK_DOCUMENTS.find((d) => d.id === id);
 
-  if (!document) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.errorContainer}>
-          <Text style={styles.errorText}>Document not found</Text>
-        </View>
-      </SafeAreaView>
-    );
-  }
+  const [isLoading, setIsLoading] = useState(true);
+  const [initialData, setInitialData] = useState<DocumentValues>({
+    title: "",
+    category: "other",
+    issuer: "",
+    documentNumber: "",
+    issueDate: "",
+    expiryDate: "",
+    notes: "",
+  });
+
+  useEffect(() => {
+    fetchDocumentData();
+  }, [id]);
+
+  const fetchDocumentData = async () => {
+    try {
+      const token = await AsyncStorage.getItem("userToken");
+      const res = await fetch(`${API_BASE_URL}/documents/${id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (!res.ok) throw new Error("Failed to fetch document");
+      const data = await res.json();
+
+      setInitialData({
+        title: data.title || "",
+        category: data.category || "other",
+        issuer: data.issuer || "",
+        documentNumber: data.documentNumber || "",
+        issueDate: data.issueDate ? data.issueDate.split("T")[0] : "",
+        expiryDate: data.expiryDate ? data.expiryDate.split("T")[0] : "",
+        notes: data.notes || "",
+      });
+    } catch (error) {
+      console.error(error);
+      Alert.alert("Error", "Could not load document details for editing.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const validate = (values: any) => {
     const errors: Record<string, string> = {};
@@ -40,21 +86,46 @@ export default function EditDocumentScreen() {
   };
 
   const form = useForm({
-    initialValues: {
-      title: document.title,
-      category: document.category,
-      issuer: document.issuer,
-      documentNumber: document.documentNumber,
-      issueDate: document.issueDate,
-      expiryDate: document.expiryDate,
-      notes: document.notes || "",
-    },
+    initialValues: initialData,
     validate,
     onSubmit: async (values) => {
-      console.log("Document updated:", values);
-      router.back();
+      try {
+        const token = await AsyncStorage.getItem("userToken");
+        const payload = {
+          ...values,
+          category: formatCategoryForBackend(values.category),
+        };
+        const res = await fetch(`${API_BASE_URL}/documents/${id}`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(payload),
+        });
+
+        if (!res.ok) {
+          const errData = await res.json();
+          throw new Error(errData.error || "Failed to update document");
+        }
+
+        Alert.alert("Success", "Document updated securely.");
+        router.back();
+      } catch (err: any) {
+        Alert.alert("Error", err.message || "Could not save changes.");
+      }
     },
   });
+
+  if (isLoading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.errorContainer}>
+          <ActivityIndicator size="large" color={COLORS.primary} />
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container} edges={["top", "left", "right"]}>
