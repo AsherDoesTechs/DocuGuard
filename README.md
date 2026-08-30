@@ -284,7 +284,7 @@ This project is intended for academic and educational purposes. Future versions 
 # CHATGPT Prompt:
 
 [Title]
-[Description]
+[Description]..
 
 - Implement Critical Detail Debugging Logs
 - Implement Number Codes for Every error ex (Code: #54321 Contact your Administrator!)
