@@ -3,21 +3,39 @@ const router = express.Router();
 const db = require("../config/db");
 const authMiddleware = require("../middleware/auth");
 
+// Store both Expo push token and native device push token (FCM/APNs)
 router.post("/push-token", authMiddleware, async (req, res) => {
   try {
-    const { pushToken } = req.body;
+    const { expoPushToken, devicePushToken } = req.body;
     const userId = req.user.userId;
 
-    if (!pushToken) {
+    if (!expoPushToken && !devicePushToken) {
       return res.status(400).json({
         status: "fail",
         errorCode: "PUSH_TOKEN_MISSING",
-        error: "Push token is required.",
+        error: "At least one push token is required.",
       });
     }
 
-    const query = `UPDATE users SET fcm_token = $1, updated_at = NOW() WHERE id = $2 RETURNING id, email, fcm_token`;
-    const result = await db.query(query, [pushToken, userId]);
+    const updates = [];
+    const values = [];
+    let paramCount = 1;
+
+    if (expoPushToken) {
+      updates.push(`expo_push_token = $${paramCount++}`);
+      values.push(expoPushToken);
+    }
+
+    if (devicePushToken) {
+      updates.push(`fcm_token = $${paramCount++}`);
+      values.push(devicePushToken);
+    }
+
+    updates.push(`updated_at = NOW()`);
+    values.push(userId);
+
+    const query = `UPDATE users SET ${updates.join(", ")} WHERE id = $${paramCount} RETURNING id, email, expo_push_token, fcm_token`;
+    const result = await db.query(query, values);
 
     if (result.rows.length === 0) {
       return res.status(404).json({

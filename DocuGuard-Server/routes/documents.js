@@ -12,6 +12,8 @@ router.put("/:id", documentController.updateDocument);
 router.delete("/:id", documentController.deleteDocument);
 
 router.get("/upload-url", documentController.getUploadUrl);
-router.post("/process", documentController.processDocumentOCR);
+router.post("/process", documentController.processDocument);
+router.post("/verify", documentController.verifyDocument);
+router.post("/sync", documentController.syncDocument);
 
 module.exports = router;
