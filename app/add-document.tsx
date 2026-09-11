@@ -17,12 +17,12 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import * as SecureStore from "expo-secure-store";
-import { formatCategoryForBackend } from "../DocuGuard-Server/utils/categories";
-
+import * as DocumentPicker from "expo-document-picker";
 import { API_BASE_URL } from "../services/api";
 import { Button, Card } from "@/components/ui";
 import { useForm } from "@/hooks/useForm";
 import { DOCUMENT_CATEGORIES, COLORS } from "@/constants";
+import { createDocument, updateDocument, logDocumentAction } from "../services/localDatabase";
 
 type DocumentFormValues = {
   title: string;
@@ -186,49 +186,82 @@ function validate(values: DocumentFormValues): FormErrors {
 /* API                                                                        */
 /* -------------------------------------------------------------------------- */
 
-async function saveDocument(values: DocumentFormValues) {
+async function saveDocument(
+  values: DocumentFormValues,
+  file: { name: string; uri: string; size: number; mimeType?: string } | null,
+) {
   const token = await getStoredToken();
 
-  if (!token) {
-    throw new Error("Your session has expired. Please sign in again.");
-  }
-
-  const payload = {
+   const payload: Record<string, any> = {
     title: values.title.trim(),
-    category: formatCategoryForBackend(values.category),
+    category: values.category,
     issuer: values.issuer.trim(),
     documentNumber: values.documentNumber.trim().toUpperCase(),
     issueDate: values.issueDate,
     expiryDate: values.expiryDate,
     notes: values.notes.trim(),
+    status: "active",
+    enableAlerts: true,
+    processingStatus: "pending",
+    needsSync: !!token,
   };
 
-  const response = await fetch(`${API_BASE_URL}/documents`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(payload),
-  });
+  let localId: number | null = null;
 
-  let data: any = null;
-  try {
-    data = await response.json();
-  } catch {
-    data = null;
+  if (file) {
+    payload.processingStatus = "uploading";
+    localId = await createDocument(payload);
+
+    try {
+      const uploadUrlRes = await fetch(
+        `${API_BASE_URL}/documents/upload-url?fileName=${encodeURIComponent(file.name)}&fileType=${encodeURIComponent(file.mimeType || "application/octet-stream")}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        },
+      );
+
+      if (!uploadUrlRes.ok) {
+        const errData = await uploadUrlRes.json().catch(() => ({}));
+        throw new Error(errData?.error || "Failed to get upload URL.");
+      }
+
+      const uploadUrlData = await uploadUrlRes.json();
+
+      const uploadRes = await fetch(uploadUrlData.uploadUrl, {
+        method: "PUT",
+        body: await (await fetch(file.uri)).blob(),
+        headers: {
+          "Content-Type": file.mimeType || "application/octet-stream",
+        },
+      });
+
+      if (!uploadRes.ok) {
+        throw new Error("Failed to upload file to S3.");
+      }
+
+      payload.fileUrl = uploadUrlData.fileUrl;
+      payload.fileType = file.mimeType || "application/octet-stream";
+      payload.s3Key = uploadUrlData.s3Key;
+      payload.processingStatus = "processing";
+
+      await updateDocument(localId, payload);
+      return { id: localId, ...payload };
+    } catch (uploadErr: any) {
+      if (localId) {
+        await updateDocument(localId, {
+          processingStatus: "failed",
+          notes: `${values.notes}\n\nUpload error: ${uploadErr.message}`,
+        });
+      }
+      throw uploadErr;
+    }
   }
 
-  if (response.status === 401) {
-    throw new Error("Your session has expired. Please sign in again.");
-  }
-
-  if (!response.ok) {
-    throw new Error(data?.error || data?.message || "Failed to save document.");
-  }
-
-  return data;
+  localId = await createDocument(payload);
+  await logDocumentAction(localId, "created", payload);
+  return { id: localId, ...payload };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -365,6 +398,38 @@ export default function AddDocumentScreen() {
   const [checkingAuthentication, setCheckingAuthentication] = useState(true);
   const [datePicker, setDatePicker] = useState<DateField | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [selectedFile, setSelectedFile] = useState<{
+    name: string;
+    uri: string;
+    size: number;
+    mimeType?: string;
+  } | null>(null);
+  const [uploading, setUploading] = useState(false);
+
+  const pickDocument = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ["application/pdf", "image/*"],
+        copyToCacheDirectory: true,
+      });
+
+      if (!result.canceled && result.assets?.[0]) {
+        const asset = result.assets[0];
+        setSelectedFile({
+          name: asset.name,
+          uri: asset.uri,
+          size: asset.size || 0,
+          mimeType: asset.mimeType,
+        });
+      }
+    } catch (err) {
+      Alert.alert("Error", "Could not select file. Please try again.");
+    }
+  };
+
+  const removeSelectedFile = () => {
+    setSelectedFile(null);
+  };
 
   const form = useForm<DocumentFormValues>({
     initialValues: {
@@ -378,39 +443,24 @@ export default function AddDocumentScreen() {
     },
     validate,
     onSubmit: async (values) => {
-      setSubmitError(null);
-      try {
-        const token = await getStoredToken();
-        if (!token) {
-          Alert.alert(
-            "Authentication Required",
-            "Please sign in again to add a document.",
-            [
-              {
-                text: "Sign In",
-                onPress: () => router.replace("/login" as any),
-              },
-            ],
-          );
-          return;
-        }
+       setSubmitError(null);
+       try {
+         await saveDocument(values, selectedFile);
 
-        await saveDocument(values);
-
-        Alert.alert("Success", "Document added securely to your vault.", [
-          {
-            text: "OK",
-            onPress: () => router.replace("/(tabs)/documents" as any),
-          },
-        ]);
-      } catch (error: unknown) {
-        const message =
-          error instanceof Error
-            ? error.message
-            : "Could not connect to the server.";
-        setSubmitError(message);
-      }
-    },
+         Alert.alert("Success", "Document added to your vault.", [
+           {
+             text: "OK",
+             onPress: () => router.replace("/(tabs)/documents" as any),
+           },
+         ]);
+       } catch (error: unknown) {
+         const message =
+           error instanceof Error
+             ? error.message
+             : "Could not save document.";
+         setSubmitError(message);
+       }
+     },
   });
 
   useEffect(() => {
@@ -713,10 +763,58 @@ export default function AddDocumentScreen() {
               error={form.touched.notes ? form.errors.notes : undefined}
             />
 
+            <View style={styles.fieldContainer}>
+              <Text style={styles.fieldLabel}>Document File</Text>
+              
+              {!selectedFile ? (
+                <TouchableOpacity
+                  style={styles.filePickerButton}
+                  onPress={pickDocument}
+                >
+                  <Ionicons
+                    name="document-attach-outline"
+                    size={24}
+                    color={COLORS.primary}
+                  />
+                  <Text style={styles.filePickerText}>
+                    Tap to attach a file (PDF or image)
+                  </Text>
+                </TouchableOpacity>
+              ) : (
+                <View style={styles.selectedFileContainer}>
+                  <View style={styles.selectedFileInfo}>
+                    <Ionicons
+                      name="document"
+                      size={24}
+                      color={COLORS.primary}
+                    />
+                    <View style={styles.selectedFileDetails}>
+                      <Text style={styles.selectedFileName} numberOfLines={1}>
+                        {selectedFile.name}
+                      </Text>
+                      <Text style={styles.selectedFileSize}>
+                        {(selectedFile.size / 1024).toFixed(1)} KB
+                      </Text>
+                    </View>
+                  </View>
+                  <TouchableOpacity
+                    onPress={removeSelectedFile}
+                    style={styles.removeFileButton}
+                  >
+                    <Ionicons
+                      name="close-circle"
+                      size={24}
+                      color={COLORS.danger}
+                    />
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
+
             <Button
-              title="Add Document"
+              title={uploading ? "Uploading..." : "Add Document"}
               onPress={form.handleSubmit}
-              loading={form.isSubmitting}
+              loading={form.isSubmitting || uploading}
             />
           </Card>
         </ScrollView>
@@ -817,4 +915,52 @@ const styles = StyleSheet.create({
   dateText: { fontSize: 15, fontWeight: "600", color: COLORS.text },
   datePlaceholder: { fontSize: 15, color: "#999" },
   dateHint: { fontSize: 11, color: "#999", marginTop: 3 },
+  filePickerButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 10,
+    backgroundColor: "#fff",
+    paddingVertical: 20,
+    paddingHorizontal: 14,
+  },
+  filePickerText: {
+    fontSize: 14,
+    color: COLORS.primary,
+    fontWeight: "600",
+  },
+  selectedFileContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 10,
+    backgroundColor: "#fff",
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+  },
+  selectedFileInfo: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    flex: 1,
+  },
+  selectedFileDetails: { flex: 1 },
+  selectedFileName: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: COLORS.text,
+  },
+  selectedFileSize: {
+    fontSize: 12,
+    color: "#888",
+    marginTop: 2,
+  },
+  removeFileButton: {
+    padding: 4,
+  },
 });

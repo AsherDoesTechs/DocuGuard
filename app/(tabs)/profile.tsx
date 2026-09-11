@@ -16,9 +16,11 @@ import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { Card } from "../../components/ui";
 import { SubscriptionView } from "../../components/ui/SubscriptionView";
-import { COLORS } from "@/constants";
+import { COLORS, Colors } from "@/constants";
 import { RefreshableContainer } from "@/components/ui/RefreshableContainer";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { getUserProfile, getAllDocuments } from "../../services/localDatabase";
+import { exportLocalBackup } from "../../services/backupService";
 
 type SettingsTab =
   | "none"
@@ -115,19 +117,73 @@ export default function ProfileScreen() {
 
   const fetchProfile = async () => {
     try {
-      const res = await api.client.get("/profile");
-      setUser(res.data);
-      setTwoFactor(res.data.twoFactor);
-      setNotifyEmail(res.data.notifyEmail);
-      setNotifyPush(res.data.notifyPush);
-      setNotifyExpiry(res.data.notifyExpiry);
+      const localProfile = await getUserProfile();
+      const localDocs = await getAllDocuments();
+
+      if (localProfile) {
+        setUser({
+          name: localProfile.name,
+          email: localProfile.email || "user@example.com",
+          securityLevel: "Standard",
+          documentCount: localDocs.length,
+          expiringCount: localDocs.filter(
+            (d) => d.status === "expiring",
+          ).length,
+          notifyEmail: localProfile.notifyEmail,
+          notifyPush: false,
+          notifyExpiry: localProfile.notifyExpiry,
+          twoFactor: localProfile.twoFactor,
+          subscription: {
+            planName: "Free",
+            renewalDate: "",
+            storageUsed: localDocs.length,
+            storageTotal: 50,
+          },
+        });
+        setTwoFactor(localProfile.twoFactor);
+        setNotifyEmail(localProfile.notifyEmail);
+        setNotifyExpiry(localProfile.notifyExpiry);
+      } else {
+        setUser({
+          name: "User",
+          email: "user@example.com",
+          securityLevel: "Standard",
+          documentCount: localDocs.length,
+          expiringCount: localDocs.filter(
+            (d) => d.status === "expiring",
+          ).length,
+          notifyEmail: true,
+          notifyPush: false,
+          notifyExpiry: true,
+          twoFactor: false,
+          subscription: {
+            planName: "Free",
+            renewalDate: "",
+            storageUsed: localDocs.length,
+            storageTotal: 50,
+          },
+        });
+      }
+
+      const token = await AsyncStorage.getItem("userToken");
+      if (token) {
+        try {
+          const res = await api.client.get("/profile");
+          setUser((prev) => ({
+            ...prev,
+            ...res.data,
+            subscription: res.data.subscription || prev?.subscription,
+          }));
+          if (res.data.twoFactor !== undefined) setTwoFactor(res.data.twoFactor);
+          if (res.data.notifyEmail !== undefined) setNotifyEmail(res.data.notifyEmail);
+          if (res.data.notifyPush !== undefined) setNotifyPush(res.data.notifyPush);
+          if (res.data.notifyExpiry !== undefined) setNotifyExpiry(res.data.notifyExpiry);
+        } catch (err) {
+          // Fall back to local data silently
+        }
+      }
     } catch (err: any) {
-      console.error(
-        "Server error response:",
-        err.response?.status,
-        err.response?.data,
-      );
-      Alert.alert("Error", "Could not load profile details.");
+      console.error("Failed to load profile:", err);
     } finally {
       setLoading(false);
     }
@@ -226,17 +282,23 @@ export default function ProfileScreen() {
   const handleExportToCloud = async () => {
     try {
       const res = await api.cloud.exportData();
-      if (res.status === "success") {
-        Alert.alert(
-          "Export Complete",
-          "Your documents have been exported to Supabase cloud.",
-        );
-      }
+      Alert.alert(
+        "Cloud Export Complete",
+        "Your documents have been exported to Supabase cloud backup.",
+      );
     } catch (err) {
       Alert.alert(
-        "Export Failed",
-        "Could not export data to cloud. Please try again.",
+        "Cloud Export Failed",
+        "Could not export data to cloud. Try local backup instead.",
       );
+    }
+  };
+
+  const handleLocalBackup = async () => {
+    try {
+      await exportLocalBackup();
+    } catch (err) {
+      Alert.alert("Backup Failed", "Could not create local backup.");
     }
   };
 
@@ -474,6 +536,14 @@ export default function ProfileScreen() {
             >
               <Text style={styles.buttonText}>Export to Cloud</Text>
             </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.primaryButton, { backgroundColor: Colors.textMuted, marginTop: 12 }]}
+              onPress={handleLocalBackup}
+            >
+              <Ionicons name="download-outline" size={20} color="white" />
+              <Text style={styles.buttonText}>Export Local Backup</Text>
+            </TouchableOpacity>
           </Card>
 
           <TouchableOpacity style={styles.signOutButton} onPress={handleLogout}>
@@ -628,6 +698,24 @@ const styles = StyleSheet.create({
     backgroundColor: `${COLORS.danger}08`,
   },
   actionButtonText: { fontWeight: "600", fontSize: 14 },
+  sectionCard: {
+    padding: 16,
+    marginBottom: 28,
+    backgroundColor: COLORS.surface,
+    borderRadius: 16,
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: COLORS.text,
+    marginBottom: 8,
+  },
+  sectionSubtitle: {
+    fontSize: 14,
+    color: COLORS.textSecondary,
+    marginBottom: 16,
+    lineHeight: 20,
+  },
   version: {
     textAlign: "center",
     fontSize: 13,

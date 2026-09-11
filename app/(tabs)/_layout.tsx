@@ -57,6 +57,15 @@ export default function TabsLayout() {
           ),
         }}
       />
+      <Tabs.Screen
+        name="sync"
+        options={{
+          title: "Sync",
+          tabBarIcon: ({ color }) => (
+            <Ionicons name="cloud-upload" size={24} color={color} />
+          ),
+        }}
+      />
     </Tabs>
   );
 }

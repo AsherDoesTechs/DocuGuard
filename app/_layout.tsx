@@ -4,10 +4,21 @@ import { Stack } from "expo-router";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { usePushNotifications } from "../hooks/usePushNotifications";
+import { initDatabase } from "../services/localDatabase";
+import { checkAndScheduleAlerts } from "../services/notificationScheduler";
 
 export default function RootLayout() {
-  // Call the custom hook properly at the top level of the component
   usePushNotifications();
+
+  useEffect(() => {
+    initDatabase().catch((err) => {
+      console.warn("Failed to initialize local database:", err);
+    });
+
+    checkAndScheduleAlerts().catch((err) => {
+      console.warn("Failed to schedule alerts:", err);
+    });
+  }, []);
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>

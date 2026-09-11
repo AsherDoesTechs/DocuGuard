@@ -16,6 +16,8 @@ import { Card } from "../../components/ui";
 import { COLORS } from "@/constants";
 import { formatShortDate } from "../../utils";
 import { RefreshableContainer } from "@/components/ui/RefreshableContainer";
+import * as SecureStore from "expo-secure-store";
+import { getAllReminders, LocalReminder } from "../../services/localDatabase";
 
 type FilterType = "all" | "unread" | "urgent";
 
@@ -36,15 +38,19 @@ export default function RemindersScreen() {
 
   const fetchReminders = async () => {
     try {
-      const res = await api.client.get("/reminders");
-      setReminders(res.data);
-    } catch (err: any) {
-      console.error(
-        "Server error response:",
-        err.response?.status,
-        err.response?.data,
+      const localReminders = await getAllReminders();
+      setReminders(
+        localReminders.map((r) => ({
+          id: r.id || 0,
+          title: r.title,
+          description: r.description || "",
+          dueDate: r.dueDate,
+          severity: (r.severity || "info") as "info" | "warning" | "urgent",
+          read: r.read,
+        })),
       );
-      Alert.alert("Error", "Could not load reminders.");
+    } catch (err: any) {
+      console.error("Failed to load reminders:", err);
     } finally {
       setLoading(false);
     }
@@ -56,18 +62,7 @@ export default function RemindersScreen() {
 
   const handleToggleNotifications = async (value: boolean) => {
     setNotificationsEnabled(value);
-    try {
-      // Use Axios client instead of raw fetch to automatically handle baseURL and headers
-      await api.client.patch("/reminders/preferences", {
-        notificationsEnabled: value,
-      });
-    } catch (err: any) {
-      console.error(
-        "Failed to update notification setting",
-        err?.response?.data || err.message,
-      );
-      Alert.alert("Error", "Failed to update notification setting.");
-    }
+    await SecureStore.setItemAsync("notificationsEnabled", String(value));
   };
 
   const handleDataReload = async () => {

@@ -47,6 +47,7 @@
       "expo-status-bar",
       "expo-splash-screen",
       "expo-sharing",
+      "expo-sqlite",
       [
         "expo-camera",
         {

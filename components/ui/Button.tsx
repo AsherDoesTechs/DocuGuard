@@ -4,6 +4,8 @@ import {
   Text,
   StyleSheet,
   ActivityIndicator,
+  StyleProp,
+  ViewStyle,
 } from "react-native";
 import Colors from "../../constants/colors";
 import Spacing from "../../constants/spacing";
@@ -13,6 +15,7 @@ interface ButtonProps {
   onPress: () => void;
   variant?: "primary" | "secondary" | "danger";
   loading?: boolean;
+  style?: StyleProp<ViewStyle>;
 }
 
 export default function Button({
@@ -20,6 +23,7 @@ export default function Button({
   onPress,
   variant = "primary",
   loading,
+  style,
 }: ButtonProps) {
   const isSecondary = variant === "secondary";
   const isDanger = variant === "danger";
@@ -30,6 +34,7 @@ export default function Button({
         styles.button,
         isSecondary && styles.secondaryButton,
         isDanger && styles.dangerButton,
+        style,
       ]}
       onPress={onPress}
       disabled={loading}

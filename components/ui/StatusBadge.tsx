@@ -6,9 +6,10 @@ import Spacing from "../../constants/spacing";
 // Supporting lowercase, uppercase, or whatever format your backend/mock data uses
 interface StatusBadgeProps {
   status: "approved" | "pending" | "rejected" | string;
+  text?: string;
 }
 
-export default function StatusBadge({ status }: StatusBadgeProps) {
+export default function StatusBadge({ status, text }: StatusBadgeProps) {
   const normalizedStatus = status.toLowerCase();
 
   // Dynamically set colors based on document status
@@ -31,7 +32,7 @@ export default function StatusBadge({ status }: StatusBadgeProps) {
 
   return (
     <View style={[styles.badge, badgeStyle]}>
-      <Text style={[styles.text, textStyle]}>{label}</Text>
+      <Text style={[styles.text, textStyle]}>{text || label}</Text>
     </View>
   );
 }

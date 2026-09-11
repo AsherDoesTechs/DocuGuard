@@ -15,10 +15,15 @@ import { Paths, File } from "expo-file-system";
 import * as Sharing from "expo-sharing";
 import * as SecureStore from "expo-secure-store";
 
-import { API_BASE_URL } from "../../services/api";
+import { API_BASE_URL, api } from "../../services/api";
 import { Card, StatusBadge, DocumentPreview } from "../../components/ui";
 import { COLORS } from "@/constants";
 import { formatShortDate, getDaysUntilExpiry } from "../../utils";
+import {
+  getDocumentById,
+  deleteDocument,
+  updateDocument,
+} from "../../services/localDatabase";
 
 interface DocumentData {
   id: string;
@@ -32,6 +37,9 @@ interface DocumentData {
   status: any;
   fileUrl?: string;
   fileType?: string;
+  processingStatus?: string;
+  riskScore?: number;
+  riskLevel?: string;
 }
 
 export default function DocumentDetailsScreen() {
@@ -48,14 +56,26 @@ export default function DocumentDetailsScreen() {
 
   const fetchDocumentDetails = async () => {
     try {
-      const token = await SecureStore.getItemAsync("userToken");
-      const res = await fetch(`${API_BASE_URL}/documents/${id}`, {
-        headers: { Authorization: `Bearer ${token}` },
+      const doc = await getDocumentById(parseInt(id, 10));
+      if (!doc) {
+        throw new Error("Document not found");
+      }
+      setDocument({
+        id: String(doc.id),
+        title: doc.title,
+        category: doc.category,
+        issuer: doc.issuer,
+        documentNumber: doc.documentNumber || "",
+        issueDate: doc.issueDate || "",
+        expiryDate: doc.expiryDate || "",
+        notes: doc.notes,
+        status: doc.status,
+        fileUrl: doc.fileUrl,
+        fileType: doc.fileType,
+        processingStatus: doc.processingStatus,
+        riskScore: doc.riskScore,
+        riskLevel: doc.riskLevel,
       });
-
-      if (!res.ok) throw new Error("Failed to load document");
-      const data = await res.json();
-      setDocument(data);
     } catch (error) {
       Alert.alert("Error", "Could not retrieve document details.");
     } finally {
@@ -72,20 +92,14 @@ export default function DocumentDetailsScreen() {
         {
           text: "Delete",
           style: "destructive",
-          onPress: async () => {
-            try {
-              const token = await SecureStore.getItemAsync("userToken");
-              const res = await fetch(`${API_BASE_URL}/documents/${id}`, {
-                method: "DELETE",
-                headers: { Authorization: `Bearer ${token}` },
-              });
-
-              if (!res.ok) throw new Error("Failed to delete");
-              router.replace("/(tabs)/documents" as any);
-            } catch (err) {
-              Alert.alert("Error", "Could not delete document.");
-            }
-          },
+             onPress: async () => {
+              try {
+                await deleteDocument(parseInt(id, 10));
+                router.replace("/(tabs)/documents" as any);
+              } catch (err) {
+                Alert.alert("Error", "Could not delete document.");
+              }
+            },
         },
       ],
     );
@@ -142,6 +156,35 @@ export default function DocumentDetailsScreen() {
       );
     } finally {
       setIsDownloading(false);
+    }
+  };
+
+  const handleVerify = async () => {
+    if (!document) return;
+
+    try {
+      await updateDocument(parseInt(id, 10), {
+        status: "verified",
+        needsSync: true,
+      });
+
+      setDocument({ ...document, status: "verified" });
+
+      const token = await SecureStore.getItemAsync("userToken");
+      if (token) {
+        try {
+          await api.documents.verifyDocument(parseInt(id, 10));
+        } catch (syncErr) {
+          console.warn("Could not sync verification to cloud:", syncErr);
+        }
+      }
+
+      Alert.alert("Verified", "Document has been marked as verified.");
+    } catch (err) {
+      Alert.alert(
+        "Verification Failed",
+        "Could not verify document locally.",
+      );
     }
   };
 
@@ -243,7 +286,59 @@ export default function DocumentDetailsScreen() {
           onPress={() => handleDownload()}
         />
 
+        {document.processingStatus === "processing" && (
+          <Card style={styles.processingCard}>
+            <ActivityIndicator size="small" color={COLORS.primary} />
+            <Text style={styles.processingText}>
+              Processing document with AI...
+            </Text>
+          </Card>
+        )}
+
+        {document.processingStatus === "failed" && (
+          <Card style={styles.errorCard}>
+            <Ionicons name="alert-circle" size={20} color={COLORS.danger} />
+            <Text style={styles.errorText}>
+              Processing failed. You can still view the document.
+            </Text>
+          </Card>
+        )}
+
+        {document.riskScore !== undefined && document.riskLevel && (
+          <Card style={styles.riskCard}>
+            <Text style={styles.riskLabel}>AI Risk Assessment</Text>
+            <View style={styles.riskRow}>
+              <Text style={styles.riskScore}>
+                Score: {document.riskScore}/100
+              </Text>
+              <StatusBadge
+                status={
+                  document.riskLevel === "Low"
+                    ? "success"
+                    : document.riskLevel === "Medium"
+                      ? "warning"
+                      : "danger"
+                }
+                text={document.riskLevel}
+              />
+            </View>
+          </Card>
+        )}
+
         <View style={styles.actions}>
+          {document.status !== "verified" && (
+            <TouchableOpacity
+              style={[styles.actionButton, styles.actionVerify]}
+              onPress={handleVerify}
+              disabled={isDownloading}
+            >
+              <Ionicons name="checkmark-circle" size={20} color="#fff" />
+              <Text style={[styles.actionButtonText, { color: "#fff" }]}>
+                Verify Document
+              </Text>
+            </TouchableOpacity>
+          )}
+
           <TouchableOpacity
             style={[styles.actionButton, styles.actionPrimary]}
             onPress={() => router.push(`/edit-document/${document.id}` as any)}
@@ -382,9 +477,48 @@ const styles = StyleSheet.create({
   actionDanger: {
     backgroundColor: `${COLORS.danger}15`,
   },
+  actionVerify: {
+    backgroundColor: COLORS.success,
+  },
   actionButtonText: {
     fontWeight: "600",
     fontSize: 16,
+  },
+  processingCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 20,
+  },
+  processingText: {
+    fontSize: 14,
+    color: COLORS.primary,
+    fontWeight: "600",
+  },
+  errorCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 20,
+  },
+  riskCard: {
+    marginBottom: 20,
+  },
+  riskLabel: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: COLORS.textSecondary,
+    marginBottom: 8,
+  },
+  riskRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  riskScore: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: COLORS.text,
   },
   errorContainer: {
     flex: 1,
@@ -393,6 +527,7 @@ const styles = StyleSheet.create({
   },
   errorText: {
     fontSize: 16,
-    color: COLORS.text,
+    color: COLORS.textSecondary,
+    marginTop: 16,
   },
 });

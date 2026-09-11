@@ -16,7 +16,13 @@ import { COLORS, DOCUMENT_CATEGORIES } from "../../constants";
 import { formatShortDate } from "../../utils";
 import { AppDocument } from "../../types";
 import { RefreshableContainer } from "@/components/ui/RefreshableContainer";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import {
+  getAllDocuments,
+  getExpiredDocuments,
+  updateDocumentStatus,
+  LocalDocument,
+} from "../../services/localDatabase";
+import { cancelDocumentNotifications } from "../../services/notificationScheduler";
 
 export default function DocumentsScreen() {
   const router = useRouter();
@@ -24,19 +30,27 @@ export default function DocumentsScreen() {
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
 
   // Real data states
-  const [documents, setDocuments] = useState<AppDocument[]>([]);
+  const [documents, setDocuments] = useState<LocalDocument[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Function to fetch documents from your backend
+  // Function to fetch documents from local database
   const fetchDocuments = async () => {
     try {
-      const response = await api.client.get("/documents");
-      setDocuments(response.data);
+      const localDocs = await getAllDocuments();
+      setDocuments(localDocs);
+
+      const expiredDocs = await getExpiredDocuments();
+      for (const doc of expiredDocs) {
+        if (doc.status !== "expired") {
+          await updateDocumentStatus(doc.id!, "expired");
+          await cancelDocumentNotifications(doc.id!);
+        }
+      }
+
+      const updatedDocs = await getAllDocuments();
+      setDocuments(updatedDocs);
     } catch (err: any) {
-      console.error(
-        "Failed to fetch documents:",
-        err.response?.data || err.message,
-      );
+      console.error("Failed to fetch documents:", err);
     } finally {
       setLoading(false);
     }
@@ -53,7 +67,7 @@ export default function DocumentsScreen() {
 
   const categories = ["all", ...Object.keys(DOCUMENT_CATEGORIES)];
 
-  const filtered = documents.filter((doc: AppDocument) => {
+  const filtered = documents.filter((doc) => {
     const matchesSearch =
       doc.title?.toLowerCase().includes(search.toLowerCase()) ||
       doc.issuer?.toLowerCase().includes(search.toLowerCase());
@@ -72,8 +86,16 @@ export default function DocumentsScreen() {
           <View style={styles.header}>
             <View style={styles.headerTop}>
               <Text style={styles.title}>Documents</Text>
+              <TouchableOpacity
+                onPress={() => router.push("/(tabs)/sync")}
+                style={styles.syncButton}
+              >
+                <Ionicons name="cloud-upload" size={20} color={COLORS.primary} />
+              </TouchableOpacity>
             </View>
-            <Text style={styles.subtitle}>{filtered.length} documents</Text>
+            <Text style={styles.subtitle}>
+              {filtered.length} documents • Offline
+            </Text>
           </View>
 
           <View style={styles.searchContainer}>
@@ -132,10 +154,12 @@ export default function DocumentsScreen() {
               {filtered.length === 0 ? (
                 <Text style={styles.emptyText}>No documents found.</Text>
               ) : (
-                filtered.map((doc: AppDocument) => (
+                filtered.map((doc: LocalDocument) => (
                   <TouchableOpacity
                     key={doc.id}
-                    onPress={() => router.push(`/document-details/${doc.id}`)}
+                    onPress={() =>
+                      router.push(`/document-details/${doc.id}`)
+                    }
                   >
                     <Card style={styles.docCard}>
                       <View style={styles.docCardContent}>
@@ -190,6 +214,11 @@ const styles = StyleSheet.create({
   },
   title: { fontSize: 28, fontWeight: "700", color: COLORS.text },
   subtitle: { fontSize: 14, color: COLORS.textSecondary },
+  syncButton: {
+    padding: 8,
+    backgroundColor: COLORS.primary + "15",
+    borderRadius: 8,
+  },
   searchContainer: { position: "relative", marginBottom: 16 },
   searchIcon: { position: "absolute", left: 12, top: 16, zIndex: 10 },
   categoryScroll: { marginBottom: 20 },

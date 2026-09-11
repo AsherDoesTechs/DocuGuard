@@ -14,7 +14,16 @@ import { COLORS } from "@/constants";
 import { formatShortDate } from "../../utils";
 import { DocumentScannerComponent } from "../../components/ui/DocumentScanner";
 import { RefreshableContainer } from "@/components/ui/RefreshableContainer";
-import { api } from "../../services/api";
+import {
+  getAllDocuments,
+  getAllReminders,
+  getUserProfile,
+  getExpiringDocuments,
+  getExpiredDocuments,
+  LocalDocument,
+  LocalReminder,
+  LocalUserProfile,
+} from "../../services/localDatabase";
 
 interface DashboardSummary {
   safetyScore: number;
@@ -49,48 +58,49 @@ export default function HomeScreen() {
 
   const fetchDashboardData = async () => {
     try {
-      // Fetch profile for name and stats
-      const profileRes = await api.client.get("/profile");
-      if (profileRes.data) {
-        setUserName(profileRes.data.name || "User");
+      const [localProfile, localDocs, expiringDocs, expiredDocs, localReminders] =
+        await Promise.all([
+          getUserProfile(),
+          getAllDocuments(),
+          getExpiringDocuments(30),
+          getExpiredDocuments(),
+          getAllReminders(),
+        ]);
 
-        const docCount = profileRes.data.documentCount || 0;
-        const expiringCount = profileRes.data.expiringCount || 0;
-        const expiredCount = profileRes.data.expiredCount || 0;
-
-        // Calculate intelligent safety score dynamically
-        const problematicCount = expiringCount + expiredCount;
-        const validCount = Math.max(0, docCount - problematicCount);
-        const score =
-          docCount > 0 ? Math.round((validCount / docCount) * 100) : 100;
-
-        setSummary({
-          safetyScore: score,
-          validDocuments: validCount,
-          expiringDocuments: expiringCount,
-          expiredDocuments: expiredCount,
-          totalReminders: 0,
-        });
+      if (localProfile) {
+        setUserName(localProfile.name);
       }
 
-      // Fetch real reminders from backend
-      const remindersRes = await api.client.get("/reminders");
-      if (remindersRes.data) {
-        const allReminders: Reminder[] = remindersRes.data;
-        const urgent = allReminders
-          .filter((r) => r.severity === "urgent")
-          .slice(0, 2);
-        setUrgentReminders(urgent);
-        setSummary((prev) => ({
-          ...prev,
-          totalReminders: allReminders.length,
-        }));
-      }
-    } catch (err: any) {
-      console.error(
-        "Failed to load dashboard data:",
-        err?.response?.data || err.message,
+      const docCount = localDocs.length;
+      const expiringCount = expiringDocs.length;
+      const expiredCount = expiredDocs.length;
+      const validCount = Math.max(0, docCount - expiringCount - expiredCount);
+
+      const score = docCount > 0 ? Math.round((validCount / docCount) * 100) : 100;
+
+      setSummary({
+        safetyScore: score,
+        validDocuments: validCount,
+        expiringDocuments: expiringCount,
+        expiredDocuments: expiredCount,
+        totalReminders: localReminders.length,
+      });
+
+      const urgent = localReminders
+        .filter((r) => r.severity === "urgent")
+        .slice(0, 2);
+      setUrgentReminders(
+        urgent.map((r) => ({
+          id: r.id || 0,
+          title: r.title,
+          description: r.description || "",
+          dueDate: r.dueDate,
+          severity: (r.severity || "info") as "info" | "warning" | "urgent",
+          read: r.read,
+        })),
       );
+    } catch (err: any) {
+      console.error("Failed to load dashboard data:", err);
     } finally {
       setLoading(false);
     }

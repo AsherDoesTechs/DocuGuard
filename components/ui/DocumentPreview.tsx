@@ -1,7 +1,7 @@
 import React from "react";
 import { View, Text, StyleSheet, Image, TouchableOpacity } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { COLORS } from "../../constants/colors";
+import Colors from "../../constants/colors";
 
 interface DocumentPreviewProps {
   fileUrl?: string;
@@ -37,12 +37,12 @@ export const DocumentPreview: React.FC<DocumentPreviewProps> = ({
         />
       ) : isPdf ? (
         <View style={styles.placeholderContainer}>
-          <Ionicons name="document-text" size={48} color={COLORS.primary} />
+          <Ionicons name="document-text" size={48} color={Colors.primary} />
           <Text style={styles.fileText}>PDF Document Preview</Text>
         </View>
       ) : (
         <View style={styles.placeholderContainer}>
-          <Ionicons name="folder-open" size={48} color={COLORS.textSecondary} />
+          <Ionicons name="folder-open" size={48} color={Colors.textMuted} />
           <Text style={styles.fileText}>No Preview Available</Text>
         </View>
       )}
@@ -74,7 +74,7 @@ const styles = StyleSheet.create({
   },
   fileText: {
     fontSize: 14,
-    color: COLORS.textSecondary,
+    color: Colors.textMuted,
     fontWeight: "500",
   },
 });
