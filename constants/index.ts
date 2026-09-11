@@ -2,6 +2,7 @@ import { AppDocument, User, Reminder } from "./../types";
 
 export { default as Colors } from "./colors";
 export { default as Spacing } from "./spacing";
+export { ErrorCodes, getErrorMessage, formatError } from "./errorCodes";
 
 export const COLORS = {
   primary: "#2563eb",
