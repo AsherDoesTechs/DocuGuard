@@ -167,8 +167,18 @@ export const documents = {
     });
   },
 
-  processDocument: async (s3Key: string) => {
-    const response = await client.post("/documents/process", { s3Key });
+  processDocument: async (documentId: number) => {
+    const response = await client.post("/documents/process", { documentId });
+    return response.data;
+  },
+
+   verifyDocument: async (documentId: number) => {
+    const response = await client.post("/documents/verify", { documentId });
+    return response.data;
+  },
+
+  syncDocument: async (payload: any) => {
+    const response = await client.post("/documents/sync", payload);
     return response.data;
   },
 };

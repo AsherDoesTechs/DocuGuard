@@ -27,7 +27,7 @@ export function usePushNotifications() {
   useEffect(() => {
     registerForPushNotificationsAsync().then((token) => {
       if (token) {
-        setExpoPushToken(token);
+        setExpoPushToken(token.expoToken || null);
         syncTokenToBackend(token);
       }
     });
@@ -62,7 +62,8 @@ export function usePushNotifications() {
 
 // Helper: Register device and get token
 export async function registerForPushNotificationsAsync() {
-  let token;
+  let expoToken;
+  let deviceToken;
 
   if (Platform.OS === "android") {
     await Notifications.setNotificationChannelAsync("default", {
@@ -92,10 +93,15 @@ export async function registerForPushNotificationsAsync() {
         Constants?.expoConfig?.extra?.eas?.projectId ??
         Constants?.easConfig?.projectId;
 
-      const pushTokenData = await Notifications.getExpoPushTokenAsync(
+      // Get Expo push token
+      const expoPushTokenData = await Notifications.getExpoPushTokenAsync(
         projectId ? { projectId } : undefined,
       );
-      token = pushTokenData.data;
+      expoToken = expoPushTokenData.data;
+
+      // Get native device push token (FCM on Android, APNs on iOS)
+      const devicePushTokenData = await Notifications.getDevicePushTokenAsync();
+      deviceToken = devicePushTokenData.data;
     } catch (e) {
       // Push token fetch failed
     }
@@ -103,14 +109,15 @@ export async function registerForPushNotificationsAsync() {
     // Must use physical device for Push Notifications
   }
 
-  return token;
+  return { expoToken, deviceToken };
 }
 
 // Helper: Send token to your backend API server
-async function syncTokenToBackend(token: string) {
+async function syncTokenToBackend(tokens: { expoToken?: string; deviceToken?: string }) {
   try {
     await api.client.post("/api/notifications/push-token", {
-      pushToken: token,
+      expoPushToken: tokens.expoToken,
+      devicePushToken: tokens.deviceToken,
     });
   } catch (err: any) {
     // Silently fail token sync
