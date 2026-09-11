@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS users (
   expiry_alerts BOOLEAN DEFAULT TRUE,
   two_factor BOOLEAN DEFAULT FALSE,
   fcm_token TEXT,
+  expo_push_token TEXT,
   is_verified BOOLEAN DEFAULT FALSE,
   verification_token TEXT,
   verification_expires_at TIMESTAMPTZ,
