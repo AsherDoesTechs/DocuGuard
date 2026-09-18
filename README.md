@@ -291,3 +291,13 @@ This project is intended for academic and educational purposes. Future versions 
 - Implement Essential Supporting details along to this feature.
 - Create detailed schema for this so that we can later integrate it.
 - if additional files are needed create me the file tree that i need to do in order to integrate the new changes in this system.
+
+Sep 11, 2026 (Nex Export Application)
+
+- Created the 80% offline features of it
+- Created the 20% online feature of it. (Some of it works.)
+  Need Fixing to the Back-end of the Application.
+  - Deploy the Back-end to the Supabase or Cloud (Possibly render or Supabase)
+  - Test it if it works
+    Yes it Works Schedule a consultation meeting with Sir M.
+    No Make it work so you can schedule a consultation meeting with the Adviser.

@@ -9,12 +9,6 @@
     "orientation": "portrait",
     "userInterfaceStyle": "light",
 
-    "splash": {
-      "image": "./app/assets/icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
-    },
-
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.anonymous.DocuGuard",
@@ -45,7 +39,14 @@
     "plugins": [
       "expo-router",
       "expo-status-bar",
-      "expo-splash-screen",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./app/assets/icon.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#ffffff"
+        }
+      ],
       "expo-sharing",
       "expo-sqlite",
       [
