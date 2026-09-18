@@ -18,7 +18,7 @@ const transporter = nodemailer.createTransport({
 });
 
 // 1. Registration: Hash password, create verification token, save user, and send verification email
-exports.register = async (req, res) => {
+exports.register = async (req, res, next) => {
   const { name, email, password } = req.body;
 
   try {
@@ -50,7 +50,10 @@ exports.register = async (req, res) => {
     );
 
     const newUser = result.rows[0];
-    info("Auth", "User registered", { userId: newUser.id, email: newUser.email });
+    info("Auth", "User registered", {
+      userId: newUser.id,
+      email: newUser.email,
+    });
 
     const verificationLink = `exp://localhost:8081/(auth)/verify-email?token=${verificationToken}`;
 
@@ -67,9 +70,15 @@ exports.register = async (req, res) => {
           <p>${verificationLink}</p>
         `,
       });
-      debug("Auth", "Verification email sent", { to: email, userId: newUser.id });
+      debug("Auth", "Verification email sent", {
+        to: email,
+        userId: newUser.id,
+      });
     } catch (mailErr) {
-      warn("Auth", "Failed to send verification email", { email, error: mailErr.message });
+      warn("Auth", "Failed to send verification email", {
+        email,
+        error: mailErr.message,
+      });
     }
 
     res.status(201).json({
@@ -78,11 +87,16 @@ exports.register = async (req, res) => {
       user: { id: newUser.id, email: newUser.email, name: newUser.name },
     });
   } catch (err) {
-    logError("Auth", "Registration error", {
-      error: err.message,
-      stack: err.stack,
-      body: req.body,
-    }, ErrorCodes.AUTH_REGISTER_FAILED);
+    logError(
+      "Auth",
+      "Registration error",
+      {
+        error: err.message,
+        stack: err.stack,
+        body: req.body,
+      },
+      ErrorCodes.AUTH_REGISTER_FAILED,
+    );
     return next(
       new AppError(
         "Registration failed due to server error",
@@ -133,10 +147,15 @@ exports.login = async (req, res, next) => {
       user: { id: user.id, email: user.email, name: user.name },
     });
   } catch (err) {
-    logError("Auth", "Login error", {
-      error: err.message,
-      stack: err.stack,
-    }, ErrorCodes.AUTH_LOGIN_FAILED);
+    logError(
+      "Auth",
+      "Login error",
+      {
+        error: err.message,
+        stack: err.stack,
+      },
+      ErrorCodes.AUTH_LOGIN_FAILED,
+    );
     return next(
       new AppError(
         "Login failed due to server error",
@@ -163,10 +182,15 @@ exports.checkEmail = async (req, res) => {
     ]);
     return res.json({ exists: result.rows.length > 0 });
   } catch (err) {
-    logError("Auth", "Database error checking email", {
-      error: err.message,
-      stack: err.stack,
-    }, ErrorCodes.DB_QUERY_FAILED);
+    logError(
+      "Auth",
+      "Database error checking email",
+      {
+        error: err.message,
+        stack: err.stack,
+      },
+      ErrorCodes.DB_QUERY_FAILED,
+    );
     return res.status(500).json({
       error: "Internal server error",
       code: ErrorCodes.DB_QUERY_FAILED,
@@ -187,7 +211,9 @@ exports.verifyEmail = async (req, res, next) => {
     );
 
     if (result.rows.length === 0) {
-      warn("Auth", "Invalid or expired verification token", { tokenLength: token?.length });
+      warn("Auth", "Invalid or expired verification token", {
+        tokenLength: token?.length,
+      });
       return res.status(400).json({
         error: "Invalid or expired verification token.",
         code: ErrorCodes.AUTH_TOKEN_INVALID,
@@ -205,17 +231,25 @@ exports.verifyEmail = async (req, res, next) => {
       expiresIn: "7d",
     });
 
-    info("Auth", "Email verified successfully", { userId: user.id, email: user.email });
+    info("Auth", "Email verified successfully", {
+      userId: user.id,
+      email: user.email,
+    });
 
     return res.json({
       message: "Email verified successfully!",
       token: authToken,
     });
   } catch (err) {
-    logError("Auth", "Email verification error", {
-      error: err.message,
-      stack: err.stack,
-    }, ErrorCodes.UNKNOWN_ERROR);
+    logError(
+      "Auth",
+      "Email verification error",
+      {
+        error: err.message,
+        stack: err.stack,
+      },
+      ErrorCodes.UNKNOWN_ERROR,
+    );
     return next(
       new AppError(
         "Internal server error during verification",
