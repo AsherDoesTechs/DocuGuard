@@ -152,7 +152,10 @@ exports.checkEmail = async (req, res) => {
   try {
     const { email } = req.query;
     if (!email) {
-      return res.status(400).json({ error: "Email parameter is required" });
+      return res.status(400).json({
+        error: "Email parameter is required",
+        code: ErrorCodes.DOC_VALIDATION,
+      });
     }
 
     const result = await db.query("SELECT id FROM users WHERE email = $1", [
@@ -160,8 +163,14 @@ exports.checkEmail = async (req, res) => {
     ]);
     return res.json({ exists: result.rows.length > 0 });
   } catch (err) {
-    console.error("Database error checking email:", err);
-    return res.status(500).json({ error: "Internal server error" });
+    logError("Auth", "Database error checking email", {
+      error: err.message,
+      stack: err.stack,
+    }, ErrorCodes.DB_QUERY_FAILED);
+    return res.status(500).json({
+      error: "Internal server error",
+      code: ErrorCodes.DB_QUERY_FAILED,
+    });
   }
 };
 
