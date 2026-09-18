@@ -3,17 +3,20 @@ const router = express.Router();
 const documentController = require("../controllers/documentController");
 const authMiddleware = require("../middleware/auth");
 
+const asyncHandler = (fn) => (req, res, next) =>
+  Promise.resolve(fn(req, res, next)).catch(next);
+
 router.use(authMiddleware);
 
-router.get("/", documentController.getAllDocuments);
-router.get("/:id", documentController.getDocumentById);
-router.post("/", documentController.createDocument);
-router.put("/:id", documentController.updateDocument);
-router.delete("/:id", documentController.deleteDocument);
+router.get("/", asyncHandler(documentController.getAllDocuments));
+router.get("/:id", asyncHandler(documentController.getDocumentById));
+router.post("/", asyncHandler(documentController.createDocument));
+router.put("/:id", asyncHandler(documentController.updateDocument));
+router.delete("/:id", asyncHandler(documentController.deleteDocument));
 
-router.get("/upload-url", documentController.getUploadUrl);
-router.post("/process", documentController.processDocument);
-router.post("/verify", documentController.verifyDocument);
-router.post("/sync", documentController.syncDocument);
+router.get("/upload-url", asyncHandler(documentController.getUploadUrl));
+router.post("/process", asyncHandler(documentController.processDocument));
+router.post("/verify", asyncHandler(documentController.verifyDocument));
+router.post("/sync", asyncHandler(documentController.syncDocument));
 
 module.exports = router;
