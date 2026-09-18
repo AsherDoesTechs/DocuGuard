@@ -2,10 +2,7 @@ const express = require("express");
 const router = express.Router();
 const authController = require("../controllers/authController");
 const authMiddleware = require("../middleware/auth");
-
-// Wrapper to catch async errors and pass to next()
-const asyncHandler = (fn) => (req, res, next) =>
-  Promise.resolve(fn(req, res, next)).catch(next);
+const { asyncHandler } = require("../utils/asyncHandler");
 
 // Public Auth Endpoints
 router.post("/register", asyncHandler(authController.register));

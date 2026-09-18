@@ -2,61 +2,53 @@ const express = require("express");
 const router = express.Router();
 const db = require("../config/db");
 const authMiddleware = require("../middleware/auth");
+const { asyncHandler } = require("../utils/asyncHandler");
 
-// Store both Expo push token and native device push token (FCM/APNs)
-router.post("/push-token", authMiddleware, async (req, res) => {
-  try {
-    const { expoPushToken, devicePushToken } = req.body;
-    const userId = req.user.userId;
+router.post("/push-token", authMiddleware, asyncHandler(async (req, res) => {
+  const { expoPushToken, devicePushToken } = req.body;
+  const userId = req.user.userId;
 
-    if (!expoPushToken && !devicePushToken) {
-      return res.status(400).json({
-        status: "fail",
-        errorCode: "PUSH_TOKEN_MISSING",
-        error: "At least one push token is required.",
-      });
-    }
-
-    const updates = [];
-    const values = [];
-    let paramCount = 1;
-
-    if (expoPushToken) {
-      updates.push(`expo_push_token = $${paramCount++}`);
-      values.push(expoPushToken);
-    }
-
-    if (devicePushToken) {
-      updates.push(`fcm_token = $${paramCount++}`);
-      values.push(devicePushToken);
-    }
-
-    updates.push(`updated_at = NOW()`);
-    values.push(userId);
-
-    const query = `UPDATE users SET ${updates.join(", ")} WHERE id = $${paramCount} RETURNING id, email, expo_push_token, fcm_token`;
-    const result = await db.query(query, values);
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({
-        status: "fail",
-        errorCode: "USER_NOT_FOUND",
-        error: "User not found.",
-      });
-    }
-
-    res.status(200).json({
-      status: "success",
-      message: "Push token registered successfully.",
-      user: result.rows[0],
-    });
-  } catch (error) {
-    res.status(500).json({
-      status: "error",
-      errorCode: "INTERNAL_SERVER_ERROR",
-      error: error.message,
+  if (!expoPushToken && !devicePushToken) {
+    return res.status(400).json({
+      status: "fail",
+      errorCode: "PUSH_TOKEN_MISSING",
+      error: "At least one push token is required.",
     });
   }
-});
+
+  const updates = [];
+  const values = [];
+  let paramCount = 1;
+
+  if (expoPushToken) {
+    updates.push(`expo_push_token = $${paramCount++}`);
+    values.push(expoPushToken);
+  }
+
+  if (devicePushToken) {
+    updates.push(`fcm_token = $${paramCount++}`);
+    values.push(devicePushToken);
+  }
+
+  updates.push(`updated_at = NOW()`);
+  values.push(userId);
+
+  const query = `UPDATE users SET ${updates.join(", ")} WHERE id = $${paramCount} RETURNING id, email, expo_push_token, fcm_token`;
+  const result = await db.query(query, values);
+
+  if (result.rows.length === 0) {
+    return res.status(404).json({
+      status: "fail",
+      errorCode: "USER_NOT_FOUND",
+      error: "User not found.",
+    });
+  }
+
+  res.status(200).json({
+    status: "success",
+    message: "Push token registered successfully.",
+    user: result.rows[0],
+  });
+}));
 
 module.exports = router;

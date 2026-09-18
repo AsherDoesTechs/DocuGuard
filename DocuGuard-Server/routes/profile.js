@@ -2,9 +2,7 @@ const express = require("express");
 const router = express.Router();
 const authMiddleware = require("../middleware/auth");
 const profileController = require("../controllers/profileController");
-
-const asyncHandler = (fn) => (req, res, next) =>
-  Promise.resolve(fn(req, res, next)).catch(next);
+const { asyncHandler } = require("../utils/asyncHandler");
 
 router.use(authMiddleware);
 
