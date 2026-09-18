@@ -69,7 +69,7 @@
 
     "extra": {
       "router": {},
-      "apiBaseUrl": "https://docuguard-g45p.onrender.com",
+      "apiBaseUrl": "https://docuguard-api-onoj.onrender.com",
       "eas": {
         "projectId": "118057a8-ff30-4258-b9a4-096c617ae595"
       }
