@@ -5,16 +5,52 @@ const authenticateToken = require("../middleware/auth");
 const db = require("../config/db");
 const { asyncHandler } = require("../utils/asyncHandler");
 
-console.log("=== SUBSCRIPTION ROUTE DEBUG ===");
-console.log("authenticateToken type:", typeof authenticateToken);
-console.log("asyncHandler type:", typeof asyncHandler);
+router.post(
+  "/subscription",
+  authenticateToken,
+  asyncHandler(async (req, res) => {
+    const userId = req.user.userId;
+    const { name, serial, card, expiry } = req.body;
 
-const testHandler = asyncHandler(async (req, res) => {
-  res.json({ ok: true });
-});
+    const renewalDate = new Date();
+    renewalDate.setFullYear(renewalDate.getFullYear() + 1);
 
-console.log("testHandler type:", typeof testHandler);
+    const subscriptionQuery = `
+      INSERT INTO subscriptions (
+        user_id,
+        plan_name,
+        renewal_date,
+        storage_used,
+        storage_total,
+        updated_at
+      )
+      VALUES ($1, 'pro', $2, 0.00, 50.00, CURRENT_TIMESTAMP)
+      ON CONFLICT (user_id)
+      DO UPDATE SET
+        plan_name = 'pro',
+        renewal_date = $2,
+        storage_total = 50.00,
+        updated_at = CURRENT_TIMESTAMP
+      RETURNING *;
+    `;
 
-router.post("/subscription", authenticateToken, testHandler);
+    await db.query(subscriptionQuery, [userId, renewalDate]);
+
+    const logQuery = `
+      INSERT INTO activity_logs (user_id, action, details)
+      VALUES ($1, 'SUBSCRIPTION_UPGRADED', $2)
+    `;
+
+    await db.query(logQuery, [
+      userId,
+      `Upgraded plan via checkout. Serial: ${serial}`,
+    ]);
+
+    res.status(200).json({
+      success: true,
+      message: "Subscription updated successfully",
+    });
+  }),
+);
 
 module.exports = router;
