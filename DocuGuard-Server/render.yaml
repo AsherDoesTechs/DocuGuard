@@ -36,13 +36,9 @@ services:
         sync: false
       - key: SUPABASE_JWKS_URL
         sync: false
-      - key: EMAIL_HOST
+      - key: RESEND_API_KEY
         sync: false
-      - key: EMAIL_PORT
-        sync: false
-      - key: EMAIL_USER
-        sync: false
-      - key: EMAIL_PASS
+      - key: EMAIL_FROM
         sync: false
       - key: AZURE_ENDPOINT
         sync: false

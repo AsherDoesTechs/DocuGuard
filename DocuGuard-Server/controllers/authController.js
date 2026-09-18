@@ -1,21 +1,14 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
-const nodemailer = require("nodemailer");
+const { Resend } = require("resend");
 const db = require("../config/db");
 const { AppError, ErrorCodes } = require("../utils/errors");
 const { debug, info, warn, error: logError } = require("../utils/debugLogger");
 
-// Configure Nodemailer transporter using your .env variables
-const transporter = nodemailer.createTransport({
-  host: process.env.EMAIL_HOST || "smtp.gmail.com",
-  port: parseInt(process.env.EMAIL_PORT || "587"),
-  secure: false, // true for 465, false for other ports
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-});
+// Initialize Resend
+const resend = new Resend(process.env.RESEND_API_KEY);
+const EMAIL_FROM = process.env.EMAIL_FROM || "DocuGuard <noreply@yourdomain.com>";
 
 // 1. Registration: Hash password, create verification token, save user, and send verification email
 exports.register = async (req, res, next) => {
@@ -58,8 +51,8 @@ exports.register = async (req, res, next) => {
     const verificationLink = `exp://localhost:8081/(auth)/verify-email?token=${verificationToken}`;
 
     try {
-      await transporter.sendMail({
-        from: `"DocuGuard System" <${process.env.EMAIL_USER}>`,
+      await resend.emails.send({
+        from: EMAIL_FROM,
         to: email,
         subject: "Verify Your Email - DocuGuard",
         html: `
@@ -289,8 +282,8 @@ exports.resendVerification = async (req, res) => {
 
     const verificationLink = `exp://localhost:8081/(auth)/verify-email?token=${verificationToken}`;
 
-    await transporter.sendMail({
-      from: `"DocuGuard System" <${process.env.EMAIL_USER}>`,
+    await resend.emails.send({
+      from: EMAIL_FROM,
       to: email,
       subject: "Verify Your Email - DocuGuard",
       html: `
@@ -337,8 +330,8 @@ exports.forgotPassword = async (req, res) => {
 
     const resetLink = `exp://localhost:8081/(auth)/reset-password?token=${resetToken}`;
 
-    await transporter.sendMail({
-      from: `"DocuGuard System" <${process.env.EMAIL_USER}>`,
+    await resend.emails.send({
+      from: EMAIL_FROM,
       to: email,
       subject: "Password Reset Request - DocuGuard",
       html: `
