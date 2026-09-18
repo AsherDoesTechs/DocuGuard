@@ -2,7 +2,7 @@
 const express = require("express");
 const router = express.Router();
 const { authenticateToken } = require("../middleware/auth"); // Your JWT auth middleware
-const pool = require("../db"); // Your pg pool connection
+const db = require("../config/db"); // Your pg pool connection
 
 router.post("/subscription", authenticateToken, async (req, res) => {
   const userId = req.user.id;
@@ -24,14 +24,14 @@ router.post("/subscription", authenticateToken, async (req, res) => {
         updated_at = CURRENT_TIMESTAMP
       RETURNING *;
     `;
-    await pool.query(subscriptionQuery, [userId, renewalDate]);
+    await db.query(subscriptionQuery, [userId, renewalDate]);
 
     // 2. Insert into Activity Logs
     const logQuery = `
       INSERT INTO activity_logs (user_id, action, details)
       VALUES ($1, 'SUBSCRIPTION_UPGRADED', $2)
     `;
-    await pool.query(logQuery, [
+    await db.query(logQuery, [
       userId,
       `Upgraded plan via checkout. Serial: ${serial}`,
     ]);

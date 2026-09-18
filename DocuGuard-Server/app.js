@@ -7,6 +7,7 @@ const reminderRoutes = require("./routes/reminder");
 const profileRoutes = require("./routes/profile");
 const notificationRoutes = require("./routes/notification");
 const exportRoutes = require("./routes/export");
+const subscriptionRoutes = require("./routes/subscription");
 
 // Security & Error Middlewares
 const { helmet, apiLimiter, authLimiter } = require("./middleware/security");
@@ -27,7 +28,12 @@ app.use("/api/", apiLimiter);
 app.use("/auth/login", authLimiter);
 app.use("/auth/register", authLimiter);
 
-// 3. API Routes
+// 3. Health Check
+app.get("/health", (req, res) => {
+  res.json({ status: "ok", timestamp: new Date().toISOString() });
+});
+
+// 4. API Routes
 app.use("/auth", authRoutes);
 app.use("/dashboard", dashboardRoutes);
 app.use("/documents", docRoutes);
@@ -35,8 +41,9 @@ app.use("/reminders", reminderRoutes);
 app.use("/profile", profileRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/export", exportRoutes);
+app.use("/subscription", subscriptionRoutes);
 
-// 4. Centralized Error Handler (Must be registered LAST after all routes)
+// 5. Centralized Error Handler (Must be registered LAST after all routes)
 app.use(errorHandler);
 
 const PORT = process.env.PORT || 3000;
