@@ -1,4 +1,4 @@
-const supabase = require("../config/supabase");
+const { supabaseAdmin } = require("../config/supabase");
 const db = require("../config/db");
 
 async function exportUserData(userId) {
@@ -24,7 +24,7 @@ async function exportUserData(userId) {
     exportedAt: new Date().toISOString(),
   };
 
-  const { error } = await supabase
+  const { error } = await supabaseAdmin
     .from("exports")
     .insert([{ user_id: userId, data: exportData }]);
 
@@ -36,7 +36,7 @@ async function exportUserData(userId) {
 }
 
 async function syncDocumentToCloud(userId, document) {
-  const { error } = await supabase
+  const { error } = await supabaseAdmin
     .from("documents")
     .upsert({
       id: document.id,

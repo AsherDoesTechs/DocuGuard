@@ -1,11 +1,11 @@
-const supabase = require("../config/supabase");
+const { supabaseAdmin } = require("../config/supabase");
 
 const STORAGE_BUCKET = "documents";
 
 exports.generatePresignedUploadUrl = async (userId, fileName, fileType) => {
   const storagePath = `${userId}/${Date.now()}_${fileName}`;
 
-  const { data, error } = await supabase.storage
+  const { data, error } = await supabaseAdmin.storage
     .from(STORAGE_BUCKET)
     .createSignedUploadUrl(storagePath);
 
