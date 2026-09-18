@@ -1,7 +1,7 @@
 // routes/subscription.js
 const express = require("express");
 const router = express.Router();
-const { authenticateToken } = require("../middleware/auth"); // Your JWT auth middleware
+const authenticateToken = require("../middleware/auth"); // Your JWT auth middleware
 const db = require("../config/db"); // Your pg pool connection
 
 router.post("/subscription", authenticateToken, async (req, res) => {
