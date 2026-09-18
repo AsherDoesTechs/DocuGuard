@@ -101,13 +101,11 @@ exports.extractDocumentData = async (fileUrlOrS3Key) => {
       };
     }
 
-    // Determine if fileUrlOrS3Key is a URL or S3 key
+    // Determine if fileUrlOrS3Key is a URL or storage path
     let fileUrl = fileUrlOrS3Key;
     if (!fileUrlOrS3Key.startsWith("http")) {
-      // It's an S3 key, construct the URL
-      const bucketName = process.env.AWS_BUCKET_NAME;
-      const region = process.env.AWS_REGION || "us-east-1";
-      fileUrl = `https://${bucketName}.s3.${region}.amazonaws.com/${fileUrlOrS3Key}`;
+      // It's a Supabase storage path, construct the URL
+      fileUrl = `${process.env.SUPABASE_URL}/storage/v1/object/public/documents/${fileUrlOrS3Key}`;
     }
 
     console.log(`Analyzing document with Azure: ${fileUrl}`);

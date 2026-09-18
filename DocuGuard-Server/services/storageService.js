@@ -1,25 +1,19 @@
-const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
-const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
+const supabase = require("../config/supabase");
 
-const s3Client = new S3Client({
-  region: process.env.AWS_REGION || "us-east-1",
-  credentials: {
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-  },
-});
+const STORAGE_BUCKET = "documents";
 
 exports.generatePresignedUploadUrl = async (userId, fileName, fileType) => {
-  const s3Key = `documents/${userId}/${Date.now()}_${fileName}`;
+  const storagePath = `${userId}/${Date.now()}_${fileName}`;
 
-  const command = new PutObjectCommand({
-    Bucket: process.env.AWS_BUCKET_NAME,
-    Key: s3Key,
-    ContentType: fileType,
-  });
+  const { data, error } = await supabase.storage
+    .from(STORAGE_BUCKET)
+    .createSignedUploadUrl(storagePath);
 
-  const uploadUrl = await getSignedUrl(s3Client, command, { expiresIn: 300 }); // 5 minutes expiry
-  const fileUrl = `https://${process.env.AWS_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${s3Key}`;
+  if (error) {
+    throw new Error(`Supabase signed URL error: ${error.message}`);
+  }
 
-  return { uploadUrl, fileUrl, s3Key };
+  const fileUrl = `${process.env.SUPABASE_URL}/storage/v1/object/public/${STORAGE_BUCKET}/${storagePath}`;
+
+  return { uploadUrl: data.signedUrl, fileUrl, s3Key: storagePath };
 };

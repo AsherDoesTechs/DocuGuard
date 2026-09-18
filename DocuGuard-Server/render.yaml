@@ -44,14 +44,6 @@ services:
         sync: false
       - key: EMAIL_PASS
         sync: false
-      - key: AWS_REGION
-        sync: false
-      - key: AWS_BUCKET_NAME
-        sync: false
-      - key: AWS_ACCESS_KEY_ID
-        sync: false
-      - key: AWS_SECRET_ACCESS_KEY
-        sync: false
       - key: AZURE_ENDPOINT
         sync: false
       - key: AZURE_KEY
