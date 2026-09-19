@@ -397,6 +397,44 @@ exports.createDocument = async (req, res) => {
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'active', CURRENT_TIMESTAMP, $10, $11, $12, $13) 
        RETURNING id, title, category, issuer, document_number AS "documentNumber", 
                  issue_date AS "issueDate", expiry_date AS "expiryDate", notes, status, enable_alerts AS "enableAlerts",
+                 file_url AS "fileUrl", file_type AS "fileType", s3_key AS "s3Key",
+                 processing_status AS "processingStatus", risk_score AS "riskScore", risk_level AS "riskLevel"
+       `,
+      [
+        userId,
+        trimmedTitle,
+        sanitizedCategory,
+        trimmedIssuer,
+        trimmedDocNum,
+        issueDate,
+        expiryDate,
+        notes || "",
+        enableAlerts !== false,
+        s3Key || null,
+        fileUrl || null,
+        fileType || null,
+        "completed",
+      ],
+    );
+
+    info("Documents", "Document created", { userId, docId: newDoc.rows[0].id });
+    res.status(201).json({
+      message: "Document created successfully",
+      document: newDoc.rows[0],
+    });
+  } catch (err) {
+    logError("Documents", "Error creating document", {
+      error: err.message,
+      stack: err.stack,
+      userId,
+      body: req.body,
+    }, ErrorCodes.DOC_CREATE_FAILED);
+    res.status(500).json({
+      error: "Server error while creating document",
+      code: ErrorCodes.DOC_CREATE_FAILED,
+      details: err.message,
+    });
+  }
                  s3_key AS "s3Key", file_url AS "fileUrl", file_type AS "fileType",
                  processing_status AS "processingStatus"`,
       [
