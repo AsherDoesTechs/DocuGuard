@@ -14,6 +14,34 @@ const EMAIL_FROM = process.env.EMAIL_FROM || "DocuGuard <noreply@yourdomain.com>
 exports.register = async (req, res, next) => {
   const { name, email, password } = req.body;
 
+  // Validation
+  if (!name || !name.trim()) {
+    return res.status(400).json({
+      error: "Name is required",
+      code: ErrorCodes.AUTH_REGISTER_FAILED,
+    });
+  }
+  if (!email || !email.trim()) {
+    return res.status(400).json({
+      error: "Email is required",
+      code: ErrorCodes.AUTH_REGISTER_FAILED,
+    });
+  }
+  if (!password || password.length < 6) {
+    return res.status(400).json({
+      error: "Password must be at least 6 characters",
+      code: ErrorCodes.AUTH_REGISTER_FAILED,
+    });
+  }
+  // Basic email format validation
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    return res.status(400).json({
+      error: "Invalid email format",
+      code: ErrorCodes.AUTH_REGISTER_FAILED,
+    });
+  }
+
   try {
     debug("Auth", "Registration attempt", { email });
 
