@@ -244,10 +244,11 @@ exports.verifyDocument = async (req, res) => {
         [userId],
       );
 
-      const pushToken = userResult.rows[0]?.fcm_token || userResult.rows[0]?.expo_push_token;
-      if (pushToken) {
+      // Use FCM token only (Expo tokens not supported by Firebase Admin SDK)
+      const fcmToken = userResult.rows[0]?.fcm_token;
+      if (fcmToken && !fcmToken.startsWith("ExponentPushToken")) {
         try {
-          await sendVerificationNotification(pushToken, docResult.rows[0].title);
+          await sendVerificationNotification(fcmToken, docResult.rows[0].title);
           debug("Documents", "Verification notification sent", {
             userId, documentId,
           });
@@ -256,6 +257,10 @@ exports.verifyDocument = async (req, res) => {
             error: notifErr.message, userId, documentId,
           });
         }
+      } else {
+        debug("Documents", "Skipping verification notification - no valid FCM token", {
+          userId, documentId,
+        });
       }
     }
 

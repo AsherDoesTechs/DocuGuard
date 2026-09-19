@@ -1,6 +1,17 @@
 const admin = require("../config/firebase");
 
 async function sendPushNotification(token, title, body, data = {}) {
+  // Validate token format - Firebase Admin SDK expects FCM tokens, not Expo tokens
+  if (!token || typeof token !== "string") {
+    return { success: false, error: "Invalid token" };
+  }
+  
+  // Check if it's an Expo push token (starts with ExponentPushToken)
+  if (token.startsWith("ExponentPushToken")) {
+    console.warn("Expo push token not supported by Firebase Admin SDK, skipping notification");
+    return { success: false, error: "Expo token not supported by FCM" };
+  }
+
   const message = {
     token,
     notification: {
