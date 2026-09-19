@@ -2,6 +2,7 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const { Resend } = require("resend");
+const { supabaseAdmin } = require("../config/supabase");
 const db = require("../config/db");
 const { AppError, ErrorCodes } = require("../utils/errors");
 const { debug, info, warn, error: logError } = require("../utils/debugLogger");
@@ -212,14 +213,21 @@ exports.checkEmail = async (req, res) => {
       });
     }
 
-    const result = await db.query("SELECT id FROM users WHERE email = $1", [
-      email,
-    ]);
-    return res.json({ exists: result.rows.length > 0 });
+    // Check in Supabase Auth (real-time email availability)
+    const { data, error } = await supabaseAdmin.auth.admin.listUsers();
+    
+    if (error) {
+      throw error;
+    }
+
+    const userExists = data.users.some(user => user.email === email.toLowerCase());
+    
+    debug("Auth", "Email availability check", { email, exists: userExists });
+    return res.json({ exists: userExists });
   } catch (err) {
     logError(
       "Auth",
-      "Database error checking email",
+      "Error checking email availability",
       {
         error: err.message,
         stack: err.stack,
