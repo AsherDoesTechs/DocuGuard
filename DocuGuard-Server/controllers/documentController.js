@@ -279,7 +279,7 @@ exports.verifyDocument = async (req, res) => {
     res.status(500).json({
       error: "Server error verifying document",
       code: ErrorCodes.UNKNOWN_ERROR,
-      debug: process.env.NODE_ENV !== "production" ? err.message : undefined,
+      details: err.message,
     });
   }
 };
