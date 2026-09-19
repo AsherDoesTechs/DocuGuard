@@ -52,6 +52,7 @@ exports.createReminder = async (req, res) => {
     res.status(500).json({
       error: "Server error creating reminder",
       code: ErrorCodes.DOC_CREATE_FAILED,
+      details: err.message,
     });
   }
 };
