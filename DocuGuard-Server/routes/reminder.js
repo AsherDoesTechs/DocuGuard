@@ -8,6 +8,8 @@ router.use(authMiddleware);
 
 router.get("/", asyncHandler(reminderController.getReminders));
 router.post("/", asyncHandler(reminderController.createReminder));
+router.put("/:id", asyncHandler(reminderController.updateReminder));
+router.delete("/:id", asyncHandler(reminderController.deleteReminder));
 router.patch("/preferences", asyncHandler(reminderController.updateNotificationPrefs));
 
 module.exports = router;
