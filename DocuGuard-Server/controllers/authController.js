@@ -2,7 +2,6 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const { Resend } = require("resend");
-const { supabaseAdmin } = require("../config/supabase");
 const db = require("../config/db");
 const { AppError, ErrorCodes } = require("../utils/errors");
 const { debug, info, warn, error: logError } = require("../utils/debugLogger");
@@ -213,41 +212,16 @@ exports.checkEmail = async (req, res) => {
       });
     }
 
-    // Check in Supabase Auth by trying to get user by email
-    // Use listUsers with pagination to find the email
-    let userExists = false;
-    let page = 1;
-    const perPage = 1000;
-
-    while (!userExists) {
-      const { data, error } = await supabaseAdmin.auth.admin.listUsers({
-        page,
-        perPage,
-      });
-
-      if (error) {
-        throw error;
-      }
-
-      if (!data.users || data.users.length === 0) {
-        break;
-      }
-
-      userExists = data.users.some(user => user.email?.toLowerCase() === email.toLowerCase());
-
-      if (data.users.length < perPage) {
-        break;
-      }
-
-      page++;
-    }
-
-    debug("Auth", "Email availability check", { email, exists: userExists });
-    return res.json({ exists: userExists });
+    // Check local database for quick availability check
+    // (Actual registration will verify against Supabase Auth)
+    const result = await db.query("SELECT id FROM users WHERE email = $1", [
+      email,
+    ]);
+    return res.json({ exists: result.rows.length > 0 });
   } catch (err) {
     logError(
       "Auth",
-      "Error checking email availability",
+      "Database error checking email",
       {
         error: err.message,
         stack: err.stack,
