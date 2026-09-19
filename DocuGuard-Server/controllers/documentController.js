@@ -1,17 +1,27 @@
 const db = require("../config/db");
 const { generatePresignedUploadUrl } = require("../services/storageService");
 const { extractDocumentData } = require("../services/logicEngine");
-const { sendProcessingCompleteNotification, sendVerificationNotification } = require("../services/notificationService");
+const {
+  sendProcessingCompleteNotification,
+  sendVerificationNotification,
+} = require("../services/notificationService");
 const { ErrorCodes } = require("../utils/errorCodes");
 const { debug, info, warn, error: logError } = require("../utils/debugLogger");
 
 // Helper function for date validation (YYYY-MM-DD format)
 const isValidDateString = (dateStr) => {
-  if (!dateStr) return false;
+  if (!dateStr || typeof dateStr !== "string") return false;
   const regex = /^\d{4}-\d{2}-\d{2}$/;
   if (!regex.test(dateStr)) return false;
-  const date = new Date(dateStr);
-  return !isNaN(date.getTime());
+
+  const [year, month, day] = dateStr.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  );
 };
 
 // Get all documents for the authenticated user
@@ -28,12 +38,18 @@ exports.getAllDocuments = async (req, res) => {
       [userId],
     );
 
-    debug("Documents", "Documents fetched", { userId, count: result.rows.length });
+    debug("Documents", "Documents fetched", {
+      userId,
+      count: result.rows.length,
+    });
     res.json(result.rows);
   } catch (err) {
-    logError("Documents", "Error fetching documents", {
-      error: err.message, stack: err.stack, userId,
-    }, ErrorCodes.DOC_PROCESS_FAILED);
+    logError(
+      "Documents",
+      "Error fetching documents",
+      { error: err.message, stack: err.stack, userId },
+      ErrorCodes.DOC_PROCESS_FAILED,
+    );
     res.status(500).json({
       error: "Server error while fetching documents",
       code: ErrorCodes.DB_QUERY_FAILED,
@@ -47,7 +63,9 @@ exports.getUploadUrl = async (req, res) => {
     const { fileName, fileType } = req.query;
     if (!fileName || !fileType) {
       debug("Documents", "Upload URL request missing params", {
-        userId: req.user.userId, fileName: !!fileName, fileType: !!fileType,
+        userId: req.user.userId,
+        fileName: !!fileName,
+        fileType: !!fileType,
       });
       return res.status(400).json({
         error: "fileName and fileType are required query parameters.",
@@ -62,14 +80,22 @@ exports.getUploadUrl = async (req, res) => {
     );
 
     debug("Documents", "Upload URL generated", {
-      userId: req.user.userId, fileName,
+      userId: req.user.userId,
+      fileName,
     });
     res.json(result);
   } catch (err) {
-    logError("Documents", "Error generating upload URL", {
-      error: err.message, stack: err.stack,
-      fileName: req.query.fileName, fileType: req.query.fileType,
-    }, ErrorCodes.DOC_UPLOAD_FAILED);
+    logError(
+      "Documents",
+      "Error generating upload URL",
+      {
+        error: err.message,
+        stack: err.stack,
+        fileName: req.query.fileName,
+        fileType: req.query.fileType,
+      },
+      ErrorCodes.DOC_UPLOAD_FAILED,
+    );
     res.status(500).json({
       error: "Failed to generate upload URL",
       code: ErrorCodes.DOC_UPLOAD_FAILED,
@@ -162,7 +188,8 @@ exports.processDocument = async (req, res) => {
         [userId],
       );
 
-      const pushToken = userResult.rows[0]?.fcm_token || userResult.rows[0]?.expo_push_token;
+      const pushToken =
+        userResult.rows[0]?.fcm_token || userResult.rows[0]?.expo_push_token;
       if (pushToken && extractedData.title) {
         await sendProcessingCompleteNotification(
           pushToken,
@@ -181,7 +208,7 @@ exports.processDocument = async (req, res) => {
     });
   } catch (err) {
     console.error("Error processing document:", err);
-    
+
     // Update status to failed if we have documentId
     try {
       const { documentId } = req.body;
@@ -231,7 +258,10 @@ exports.verifyDocument = async (req, res) => {
     );
 
     if (result.rows.length === 0) {
-      warn("Documents", "Document not found for verification", { userId, documentId });
+      warn("Documents", "Document not found for verification", {
+        userId,
+        documentId,
+      });
       return res.status(404).json({
         error: "Document not found",
         code: ErrorCodes.DOC_NOT_FOUND,
@@ -250,17 +280,25 @@ exports.verifyDocument = async (req, res) => {
         try {
           await sendVerificationNotification(fcmToken, docResult.rows[0].title);
           debug("Documents", "Verification notification sent", {
-            userId, documentId,
+            userId,
+            documentId,
           });
         } catch (notifErr) {
           warn("Documents", "Failed to send verification notification", {
-            error: notifErr.message, userId, documentId,
+            error: notifErr.message,
+            userId,
+            documentId,
           });
         }
       } else {
-        debug("Documents", "Skipping verification notification - no valid FCM token", {
-          userId, documentId,
-        });
+        debug(
+          "Documents",
+          "Skipping verification notification - no valid FCM token",
+          {
+            userId,
+            documentId,
+          },
+        );
       }
     }
 
@@ -271,11 +309,17 @@ exports.verifyDocument = async (req, res) => {
       document: result.rows[0],
     });
   } catch (err) {
-    logError("Documents", "Error verifying document", {
-      error: err.message, stack: err.stack,
-      userId: req.user?.userId,
-      documentId: req.body?.documentId,
-    }, ErrorCodes.DOC_VALIDATION);
+    logError(
+      "Documents",
+      "Error verifying document",
+      {
+        error: err.message,
+        stack: err.stack,
+        userId: req.user?.userId,
+        documentId: req.body?.documentId,
+      },
+      ErrorCodes.DOC_VALIDATION,
+    );
     res.status(500).json({
       error: "Server error verifying document",
       code: ErrorCodes.UNKNOWN_ERROR,
@@ -309,9 +353,17 @@ exports.getDocumentById = async (req, res) => {
     debug("Documents", "Document fetched", { userId, docId });
     res.json(doc.rows[0]);
   } catch (err) {
-    logError("Documents", "Error fetching document", {
-      error: err.message, stack: err.stack, userId, docId,
-    }, ErrorCodes.DOC_NOT_FOUND);
+    logError(
+      "Documents",
+      "Error fetching document",
+      {
+        error: err.message,
+        stack: err.stack,
+        userId,
+        docId,
+      },
+      ErrorCodes.DOC_NOT_FOUND,
+    );
     res.status(500).json({
       error: "Server error fetching document details",
       code: ErrorCodes.DB_QUERY_FAILED,
@@ -344,7 +396,9 @@ exports.createDocument = async (req, res) => {
 
   if (!trimmedTitle || !trimmedIssuer || !trimmedDocNum) {
     debug("Documents", "Validation failed - missing required fields", {
-      userId, hasTitle: !!trimmedTitle, hasIssuer: !!trimmedIssuer,
+      userId,
+      hasTitle: !!trimmedTitle,
+      hasIssuer: !!trimmedIssuer,
       hasDocNum: !!trimmedDocNum,
     });
     return res.status(400).json({
@@ -398,45 +452,7 @@ exports.createDocument = async (req, res) => {
        RETURNING id, title, category, issuer, document_number AS "documentNumber", 
                  issue_date AS "issueDate", expiry_date AS "expiryDate", notes, status, enable_alerts AS "enableAlerts",
                  file_url AS "fileUrl", file_type AS "fileType", s3_key AS "s3Key",
-                 processing_status AS "processingStatus", risk_score AS "riskScore", risk_level AS "riskLevel"
-       `,
-      [
-        userId,
-        trimmedTitle,
-        sanitizedCategory,
-        trimmedIssuer,
-        trimmedDocNum,
-        issueDate,
-        expiryDate,
-        notes || "",
-        enableAlerts !== false,
-        s3Key || null,
-        fileUrl || null,
-        fileType || null,
-        "completed",
-      ],
-    );
-
-    info("Documents", "Document created", { userId, docId: newDoc.rows[0].id });
-    res.status(201).json({
-      message: "Document created successfully",
-      document: newDoc.rows[0],
-    });
-  } catch (err) {
-    logError("Documents", "Error creating document", {
-      error: err.message,
-      stack: err.stack,
-      userId,
-      body: req.body,
-    }, ErrorCodes.DOC_CREATE_FAILED);
-    res.status(500).json({
-      error: "Server error while creating document",
-      code: ErrorCodes.DOC_CREATE_FAILED,
-      details: err.message,
-    });
-  }
-                 s3_key AS "s3Key", file_url AS "fileUrl", file_type AS "fileType",
-                 processing_status AS "processingStatus"`,
+                 processing_status AS "processingStatus", risk_score AS "riskScore", risk_level AS "riskLevel"`,
       [
         userId,
         trimmedTitle,
@@ -454,20 +470,32 @@ exports.createDocument = async (req, res) => {
       ],
     );
 
-     res.status(201).json({
-       message: "Document created successfully",
-       document: newDoc.rows[0],
-     });
-     info("Documents", "Document created", { userId, docId: newDoc.rows[0].id });
-   } catch (err) {
-     logError("Documents", "Error creating document", {
-       error: err.message, stack: err.stack, userId,
-     }, ErrorCodes.DOC_CREATE_FAILED);
-     res.status(500).json({
-       error: "Server error while creating document",
-       code: ErrorCodes.DOC_CREATE_FAILED,
-     });
-   }
+    info("Documents", "Document created", {
+      userId,
+      docId: newDoc.rows[0].id,
+    });
+    res.status(201).json({
+      message: "Document created successfully",
+      document: newDoc.rows[0],
+    });
+  } catch (err) {
+    logError(
+      "Documents",
+      "Error creating document",
+      {
+        error: err.message,
+        stack: err.stack,
+        userId,
+        body: req.body,
+      },
+      ErrorCodes.DOC_CREATE_FAILED,
+    );
+    res.status(500).json({
+      error: "Server error while creating document",
+      code: ErrorCodes.DOC_CREATE_FAILED,
+      details: err.message,
+    });
+  }
 };
 
 // Update an existing document with strict validation & automations
@@ -493,7 +521,10 @@ exports.updateDocument = async (req, res) => {
 
   if (!trimmedTitle || !trimmedIssuer || !trimmedDocNum) {
     debug("Documents", "Update validation failed - missing required fields", {
-      userId, docId, hasTitle: !!trimmedTitle, hasIssuer: !!trimmedIssuer,
+      userId,
+      docId,
+      hasTitle: !!trimmedTitle,
+      hasIssuer: !!trimmedIssuer,
       hasDocNum: !!trimmedDocNum,
     });
     return res.status(400).json({
@@ -575,9 +606,17 @@ exports.updateDocument = async (req, res) => {
       document: updated.rows[0],
     });
   } catch (err) {
-    logError("Documents", "Error updating document", {
-      error: err.message, stack: err.stack, userId, docId,
-    }, ErrorCodes.DOC_UPDATE_FAILED);
+    logError(
+      "Documents",
+      "Error updating document",
+      {
+        error: err.message,
+        stack: err.stack,
+        userId,
+        docId,
+      },
+      ErrorCodes.DOC_UPDATE_FAILED,
+    );
     res.status(500).json({
       error: "Server error while updating document",
       code: ErrorCodes.DOC_UPDATE_FAILED,
@@ -649,7 +688,10 @@ exports.syncDocument = async (req, res) => {
         ],
       );
 
-      info("Documents", "Document synced (updated)", { userId, docId: existing.rows[0].id });
+      info("Documents", "Document synced (updated)", {
+        userId,
+        docId: existing.rows[0].id,
+      });
 
       res.json({
         message: "Document synced (updated)",
@@ -663,7 +705,7 @@ exports.syncDocument = async (req, res) => {
            s3_key, file_url, file_type, processing_status,
            risk_score, risk_level
          ) 
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) 
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CURRENT_TIMESTAMP, $11, $12, $13, $14, $15, $16) 
          RETURNING id, title, category, issuer, document_number AS "documentNumber", 
                    issue_date AS "issueDate", expiry_date AS "expiryDate", notes, status, enable_alerts AS "enableAlerts",
                    s3_key AS "s3Key", file_url AS "fileUrl", file_type AS "fileType",
@@ -680,7 +722,6 @@ exports.syncDocument = async (req, res) => {
           notes,
           enableAlerts ? true : false,
           status || "active",
-          new Date().toISOString(),
           s3Key,
           fileUrl,
           fileType,
@@ -690,7 +731,10 @@ exports.syncDocument = async (req, res) => {
         ],
       );
 
-      info("Documents", "Document synced (created)", { userId, docId: inserted.rows[0].id });
+      info("Documents", "Document synced (created)", {
+        userId,
+        docId: inserted.rows[0].id,
+      });
 
       res.status(201).json({
         message: "Document synced (created)",
@@ -698,9 +742,17 @@ exports.syncDocument = async (req, res) => {
       });
     }
   } catch (err) {
-    logError("Documents", "Error syncing document", {
-      error: err.message, stack: err.stack, userId, title,
-    }, ErrorCodes.SYNC_PARTIAL);
+    logError(
+      "Documents",
+      "Error syncing document",
+      {
+        error: err.message,
+        stack: err.stack,
+        userId,
+        title,
+      },
+      ErrorCodes.SYNC_PARTIAL,
+    );
     res.status(500).json({
       error: "Server error while syncing document",
       code: ErrorCodes.SYNC_PARTIAL,
@@ -729,9 +781,17 @@ exports.deleteDocument = async (req, res) => {
     info("Documents", "Document deleted", { userId, docId });
     res.json({ message: "Document deleted successfully" });
   } catch (err) {
-    logError("Documents", "Error deleting document", {
-      error: err.message, stack: err.stack, userId, docId,
-    }, ErrorCodes.DOC_DELETE_FAILED);
+    logError(
+      "Documents",
+      "Error deleting document",
+      {
+        error: err.message,
+        stack: err.stack,
+        userId,
+        docId,
+      },
+      ErrorCodes.DOC_DELETE_FAILED,
+    );
     res.status(500).json({
       error: "Server error while deleting document",
       code: ErrorCodes.DOC_DELETE_FAILED,
