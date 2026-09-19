@@ -93,7 +93,7 @@ exports.updateReminder = async (req, res) => {
            due_date = COALESCE($3, due_date), 
            severity = COALESCE($4, severity), 
            is_read = COALESCE($5, is_read)
-       WHERE id = $1 AND user_id = $2
+       WHERE id = $6 AND user_id = $7
        RETURNING id, title, description, due_date AS "dueDate", severity, is_read AS "read"`,
       [title, description, dueDate, severity, isRead, reminderId, userId],
     );
