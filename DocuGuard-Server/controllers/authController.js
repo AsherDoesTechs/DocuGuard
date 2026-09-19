@@ -132,6 +132,20 @@ exports.register = async (req, res, next) => {
 exports.login = async (req, res, next) => {
   const { email, password } = req.body;
 
+  // Validation
+  if (!email || !email.trim()) {
+    return res.status(400).json({
+      error: "Email is required",
+      code: ErrorCodes.AUTH_LOGIN_FAILED,
+    });
+  }
+  if (!password) {
+    return res.status(400).json({
+      error: "Password is required",
+      code: ErrorCodes.AUTH_LOGIN_FAILED,
+    });
+  }
+
   try {
     debug("Auth", "Login attempt", { email });
 
