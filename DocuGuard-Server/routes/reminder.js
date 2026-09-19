@@ -7,6 +7,7 @@ const { asyncHandler } = require("../utils/asyncHandler");
 router.use(authMiddleware);
 
 router.get("/", asyncHandler(reminderController.getReminders));
+router.post("/", asyncHandler(reminderController.createReminder));
 router.patch("/preferences", asyncHandler(reminderController.updateNotificationPrefs));
 
 module.exports = router;
