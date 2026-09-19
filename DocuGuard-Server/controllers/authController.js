@@ -213,15 +213,35 @@ exports.checkEmail = async (req, res) => {
       });
     }
 
-    // Check in Supabase Auth (real-time email availability)
-    const { data, error } = await supabaseAdmin.auth.admin.listUsers();
-    
-    if (error) {
-      throw error;
+    // Check in Supabase Auth by trying to get user by email
+    // Use listUsers with pagination to find the email
+    let userExists = false;
+    let page = 1;
+    const perPage = 1000;
+
+    while (!userExists) {
+      const { data, error } = await supabaseAdmin.auth.admin.listUsers({
+        page,
+        perPage,
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      if (!data.users || data.users.length === 0) {
+        break;
+      }
+
+      userExists = data.users.some(user => user.email?.toLowerCase() === email.toLowerCase());
+
+      if (data.users.length < perPage) {
+        break;
+      }
+
+      page++;
     }
 
-    const userExists = data.users.some(user => user.email === email.toLowerCase());
-    
     debug("Auth", "Email availability check", { email, exists: userExists });
     return res.json({ exists: userExists });
   } catch (err) {
