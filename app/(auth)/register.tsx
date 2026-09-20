@@ -93,16 +93,18 @@ export default function RegisterScreen() {
         setEmailAvailable(true);
       }
     } catch (err: any) {
-      if (err.code === "ECONNREFUSED") {
-        setNetworkStatusText(
-          "⚠️ Connection refused: Is Node.js server running?",
-        );
-      } else if (err.message?.includes("Network Error")) {
-        setNetworkStatusText("⚠️ Network error: Check IP address in api.ts");
+      // User-friendly error messages based on error type
+      const isNetworkError = 
+        err.code === "ECONNREFUSED" ||
+        err.message?.includes("Network Error") ||
+        err.message?.includes("timeout") ||
+        err.response?.status === 0;
+
+      if (isNetworkError) {
+        setNetworkStatusText("Cannot connect to server. Please check your internet connection and try again.");
       } else {
-        setNetworkStatusText(
-          `⚠️ Backend offline: ${err.message || "Uniqueness check skipped"}`,
-        );
+        // For other errors (4xx, 5xx), silently skip the check - don't block registration
+        setEmailAvailable(true);
       }
     } finally {
       setCheckingEmail(false);
