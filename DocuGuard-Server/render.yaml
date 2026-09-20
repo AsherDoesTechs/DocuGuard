@@ -40,6 +40,10 @@ services:
         sync: false
       - key: EMAIL_FROM
         sync: false
+      - key: APP_BASE_URL
+        sync: false
+      - key: APP_DEEPLINK_SCHEME
+        sync: false
       - key: AZURE_ENDPOINT
         sync: false
       - key: AZURE_KEY

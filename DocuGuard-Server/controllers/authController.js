@@ -9,6 +9,8 @@ const { debug, info, warn, error: logError } = require("../utils/debugLogger");
 // Initialize Resend
 const resend = new Resend(process.env.RESEND_API_KEY);
 const EMAIL_FROM = process.env.EMAIL_FROM || "DocuGuard <noreply@yourdomain.com>";
+const APP_BASE_URL = process.env.APP_BASE_URL || "https://docuguard-api-onoj.onrender.com";
+const APP_DEEPLINK_SCHEME = process.env.APP_DEEPLINK_SCHEME || "docuguard";
 
 // 1. Registration: Hash password, create verification token, save user, and send verification email
 exports.register = async (req, res, next) => {
@@ -76,7 +78,8 @@ exports.register = async (req, res, next) => {
       email: newUser.email,
     });
 
-    const verificationLink = `exp://localhost:8081/(auth)/verify-email?token=${verificationToken}`;
+    // Use web verification URL that works in email clients
+    const verificationLink = `${APP_BASE_URL}/auth/verify-email-web?token=${verificationToken}`;
 
     try {
       await resend.emails.send({
@@ -89,6 +92,7 @@ exports.register = async (req, res, next) => {
           <a href="${verificationLink}" style="padding: 10px 20px; background: #2563EB; color: #fff; text-decoration: none; border-radius: 5px; display: inline-block;">Verify Email</a>
           <p style="margin-top: 15px;">If the button doesn't work, copy and paste this link into your browser:</p>
           <p>${verificationLink}</p>
+          <p style="margin-top: 15px; font-size: 12px; color: #666;">This link will open the DocuGuard app to complete verification.</p>
         `,
       });
       debug("Auth", "Verification email sent", {
@@ -296,8 +300,93 @@ exports.verifyEmail = async (req, res, next) => {
     );
   }
 };
-
-// 5. Resend Verification Link
+304: 
+305: // 4b. Verify Email via Web Link (for email links)
+306: exports.verifyEmailWeb = async (req, res, next) => {
+307:   const { token } = req.query;
+308: 
+309:   if (!token) {
+310:     return res.status(400).send(`
+311:       <html><body style="font-family: Arial; text-align: center; padding: 50px;">
+312:       <h2 style="color: #dc2626;">Invalid Verification Link</h2>
+313:       <p>This verification link is missing the required token.</p>
+314:       <p><a href="${APP_BASE_URL}" style="color: #2563EB;">Return to DocuGuard</a></p>
+316:       </body></html>
+317:     `);
+318:   }
+319: 
+320:   try {
+321:     debug("Auth", "Web email verification attempt", { tokenLength: token?.length });
+322: 
+323:     const result = await db.query(
+324:       "SELECT id, email, name FROM users WHERE verification_token = $1 AND verification_expires_at > NOW()",
+325:       [token],
+326:     );
+327: 
+328:     if (result.rows.length === 0) {
+329:       warn("Auth", "Invalid or expired verification token (web)", {
+330:         tokenLength: token?.length,
+331:       });
+332:       return res.status(400).send(`
+333:         <html><body style="font-family: Arial; text-align: center; padding: 50px;">
+334:         <h2 style="color: #dc2626;">Invalid or Expired Link</h2>
+335:         <p>This verification link is invalid or has expired (24 hours).</p>
+336:         <p><a href="${APP_BASE_URL}/auth/register" style="color: #2563EB;">Register Again</a></p>
+337:         </body></html>
+338:       `);
+339:     }
+340: 
+341:     const user = result.rows[0];
+341: 
+342:     await db.query(
+343:       "UPDATE users SET is_verified = TRUE, verification_token = NULL, verification_expires_at = NULL WHERE id = $1",
+344:       [user.id],
+345:     );
+346: 
+347:     info("Auth", "Email verified successfully via web", {
+348:       userId: user.id,
+349:       email: user.email,
+350:     });
+351: 
+352:     // Redirect to app via deep link
+353:     const deepLink = `${APP_DEEPLINK_SCHEME}://verify-email?token=${token}&verified=true`;
+354:     return res.send(`
+355:       <html>
+356:       <head>
+357:         <title>Email Verified - DocuGuard</title>
+358:         <meta http-equiv="refresh" content="0; url=${deepLink}">
+359:         <style>
+360:           body { font-family: Arial; text-align: center; padding: 50px; }
+361:           .success { color: #16a34a; }
+362:         </style>
+363:       </head>
+364:       <body>
+365:         <h2 class="success">✅ Email Verified Successfully!</h2>
+366:         <p>Welcome to DocuGuard, ${user.name}!</p>
+366:         <p>Redirecting to app...</p>
+367:         <p>If not redirected, <a href="${deepLink}">click here</a> to open DocuGuard.</p>
+368:         <script>window.location.href = "${deepLink}";</script>
+369:       </body></html>
+370:     `);
+371:   } catch (err) {
+372:     logError(
+373:       "Auth",
+374:       "Web email verification error",
+375:       {
+376:         error: err.message,
+377:         stack: err.stack,
+378:       },
+379:       ErrorCodes.UNKNOWN_ERROR,
+379:     );
+380:     return res.status(500).send(`
+381:       <html><body style="font-family: Arial; text-align: center; padding: 50px;">
+382:       <h2 style="color: #dc2626;">Verification Error</h2>
+383:       <p>An error occurred during verification. Please try again.</p>
+384:       <p><a href="${APP_BASE_URL}/auth/register" style="color: #2563EB;">Register Again</a></p>
+385:       </body></html>
+386:     `);
+387:   }
+388: };
 exports.resendVerification = async (req, res) => {
   const { email } = req.body;
 
@@ -324,7 +413,8 @@ exports.resendVerification = async (req, res) => {
       [verificationToken, expiresAt, user.id],
     );
 
-    const verificationLink = `exp://localhost:8081/(auth)/verify-email?token=${verificationToken}`;
+    // Use web verification URL
+    const verificationLink = `${APP_BASE_URL}/auth/verify-email-web?token=${verificationToken}`;
 
     await resend.emails.send({
       from: EMAIL_FROM,
@@ -339,7 +429,10 @@ exports.resendVerification = async (req, res) => {
       `,
     });
 
-    console.log(`🔗 [DEV RESEND LINK]: ${verificationLink}`);
+    debug("Auth", "Verification email resent", {
+      to: email,
+      userId: user.id,
+    });
     return res.json({ message: "Verification link resent successfully!" });
   } catch (err) {
     console.error("Resend verification error:", err);
