@@ -11,6 +11,7 @@ import {
   getUnsyncedReminders,
 } from "../services/localDatabase";
 import { LocalDocument, LocalReminder, LocalUserProfile } from "../types/offline";
+import { formatCategoryForBackend } from "@/DocuGuard-Server/utils/categories";
 
 type SyncResult = {
   success: boolean;
@@ -45,7 +46,7 @@ export async function syncToCloud(): Promise<SyncResult> {
         } else {
           const payload: any = {
             title: doc.title,
-            category: doc.category,
+            category: formatCategoryForBackend(doc.category),
             issuer: doc.issuer,
             documentNumber: doc.documentNumber,
             issueDate: doc.issueDate,
