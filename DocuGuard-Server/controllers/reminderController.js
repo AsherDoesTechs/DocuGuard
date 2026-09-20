@@ -40,7 +40,7 @@ exports.createReminder = async (req, res) => {
       `INSERT INTO reminders (user_id, title, description, due_date, severity, is_read)
        VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING id, title, description, due_date AS "dueDate", severity, is_read AS "read"`,
-      [userId, title, description || "", dueDate, severity || "medium", isRead || false],
+      [userId, title, description || "", dueDate, severity || "Valid", isRead || false],
     );
 
     info("Reminders", "Reminder created", { userId, reminderId: result.rows[0].id });
