@@ -19,14 +19,14 @@ import { RefreshableContainer } from "@/components/ui/RefreshableContainer";
 import * as SecureStore from "expo-secure-store";
 import { getAllReminders, LocalReminder } from "../../services/localDatabase";
 
-type FilterType = "all" | "unread" | "urgent";
+type FilterType = "all" | "unread" | "expired" | "expiring";
 
 interface Reminder {
   id: number;
   title: string;
   description: string;
   dueDate: string;
-  severity: "info" | "warning" | "urgent";
+  severity: "Expired" | "Expiring Soon" | "Valid";
   read: boolean;
 }
 
@@ -45,7 +45,7 @@ export default function RemindersScreen() {
           title: r.title,
           description: r.description || "",
           dueDate: r.dueDate,
-          severity: (r.severity || "info") as "info" | "warning" | "urgent",
+          severity: (r.severity || "Valid") as "Expired" | "Expiring Soon" | "Valid",
           read: r.read,
         })),
       );
@@ -71,25 +71,33 @@ export default function RemindersScreen() {
 
   const filtered = reminders.filter((r) => {
     if (filter === "unread") return !r.read;
-    if (filter === "urgent") return r.severity === "urgent";
+    if (filter === "expired") return r.severity === "Expired";
+    if (filter === "expiring") return r.severity === "Expiring Soon";
     return true;
   });
 
   const unreadCount = reminders.filter((r) => !r.read).length;
 
   const getSeverityIcon = (s: string) =>
-    s === "urgent"
+    s === "Expired"
       ? "alert-circle"
-      : s === "warning"
+      : s === "Expiring Soon"
         ? "warning"
-        : "information-circle";
+        : "checkmark-circle";
 
   const getSeverityColor = (s: string) =>
-    s === "urgent"
+    s === "Expired"
       ? COLORS.danger
-      : s === "warning"
+      : s === "Expiring Soon"
         ? COLORS.warning
-        : COLORS.primary;
+        : COLORS.success;
+
+  const getSeverityLabel = (s: string) =>
+    s === "Expired"
+      ? "Expired"
+      : s === "Expiring Soon"
+        ? "Expiring Soon"
+        : "Valid";
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: COLORS.background }}>
@@ -126,7 +134,7 @@ export default function RemindersScreen() {
           </View>
 
           <View style={styles.filterTabs}>
-            {(["all", "unread", "urgent"] as FilterType[]).map((tab) => (
+            {(["all", "unread", "expired", "expiring"] as FilterType[]).map((tab) => (
               <TouchableOpacity
                 key={tab}
                 onPress={() => setFilter(tab)}
@@ -144,8 +152,10 @@ export default function RemindersScreen() {
                   {tab === "all"
                     ? "All"
                     : tab === "unread"
-                      ? `Unread${unreadCount > 0 ? ` (${unreadCount})` : ""}`
-                      : "Urgent"}
+                    ? `Unread${unreadCount > 0 ? ` (${unreadCount})` : ""}`
+                    : tab === "expired"
+                    ? "Expired"
+                    : "Expiring Soon"}
                 </Text>
               </TouchableOpacity>
             ))}
@@ -183,9 +193,26 @@ export default function RemindersScreen() {
                         <Text style={styles.reminderDesc}>
                           {reminder.description}
                         </Text>
-                        <Text style={styles.reminderDate}>
-                          Due: {formatShortDate(reminder.dueDate)}
-                        </Text>
+                        <View style={styles.reminderMeta}>
+                          <Text style={styles.reminderDate}>
+                            Due: {formatShortDate(reminder.dueDate)}
+                          </Text>
+                          <View style={styles.severityBadge}>
+                            <Ionicons
+                              name={getSeverityIcon(reminder.severity) as any}
+                              size={12}
+                              color={getSeverityColor(reminder.severity)}
+                            />
+                            <Text
+                              style={[
+                                styles.severityText,
+                                { color: getSeverityColor(reminder.severity) },
+                              ]}
+                            >
+                              {getSeverityLabel(reminder.severity)}
+                            </Text>
+                          </View>
+                        </View>
                       </View>
                     </View>
                   </View>
@@ -237,7 +264,18 @@ const styles = StyleSheet.create({
   reminderInfo: { flex: 1 },
   reminderTitle: { fontSize: 16, fontWeight: "600", color: COLORS.text },
   reminderDesc: { fontSize: 14, color: COLORS.textSecondary, marginTop: 4 },
-  reminderDate: { fontSize: 12, color: COLORS.textSecondary, marginTop: 8 },
+  reminderMeta: { marginTop: 8, gap: 8 },
+  reminderDate: { fontSize: 12, color: COLORS.textSecondary },
+  severityBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 8,
+    backgroundColor: "#f3f4f6",
+  },
+  severityText: { fontSize: 11, fontWeight: "600" },
   emptyText: {
     textAlign: "center",
     color: COLORS.textSecondary,

@@ -19,18 +19,28 @@ export default function VerifyEmailScreen() {
 
   const emailParam = (params.email as string) || "your Gmail inbox";
   const tokenParam = params.token as string;
+  const verifiedParam = params.verified === "true";
 
   const [status, setStatus] = useState<
     "pending" | "verifying" | "success" | "error"
-  >(tokenParam ? "verifying" : "pending");
+  >(verifiedParam ? "success" : tokenParam ? "verifying" : "pending");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [resending, setResending] = useState(false);
 
   useEffect(() => {
-    if (tokenParam) {
+    if (verifiedParam) {
+      // Already verified via web link, just save token if returned
+      setStatus("success");
+      Alert.alert("Success", "Your Gmail has been verified successfully!", [
+        {
+          text: "Continue",
+          onPress: () => router.replace("/(tabs)/documents" as any),
+        },
+      ]);
+    } else if (tokenParam) {
       verifyTokenWithBackend(tokenParam);
     }
-  }, [tokenParam]);
+  }, [tokenParam, verifiedParam]);
 
   const verifyTokenWithBackend = async (token: string) => {
     setStatus("verifying");

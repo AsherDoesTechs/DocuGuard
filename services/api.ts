@@ -149,6 +149,31 @@ export const auth = {
 };
 
 export const documents = {
+  getAll: async () => {
+    const response = await client.get("/documents");
+    return response.data;
+  },
+
+  getById: async (id: number) => {
+    const response = await client.get(`/documents/${id}`);
+    return response.data;
+  },
+
+  create: async (data: any) => {
+    const response = await client.post("/documents", data);
+    return response.data;
+  },
+
+  update: async (id: number, data: any) => {
+    const response = await client.put(`/documents/${id}`, data);
+    return response.data;
+  },
+
+  delete: async (id: number) => {
+    const response = await client.delete(`/documents/${id}`);
+    return response.data;
+  },
+
   getUploadUrl: async (fileName: string, fileType: string) => {
     const response = await client.get(`/documents/upload-url`, {
       params: { fileName, fileType },
@@ -172,7 +197,7 @@ export const documents = {
     return response.data;
   },
 
-   verifyDocument: async (documentId: number) => {
+  verifyDocument: async (documentId: number) => {
     const response = await client.post("/documents/verify", { documentId });
     return response.data;
   },

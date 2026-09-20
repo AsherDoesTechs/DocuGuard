@@ -64,7 +64,7 @@ export async function initDatabase() {
         title TEXT NOT NULL,
         description TEXT,
         due_date TEXT,
-        severity TEXT DEFAULT 'info',
+        severity TEXT DEFAULT 'Valid',
         is_read BOOLEAN DEFAULT 0,
         needs_sync BOOLEAN DEFAULT 0,
         created_at TEXT DEFAULT (datetime('now'))
@@ -473,7 +473,7 @@ export async function createReminder(reminder: Partial<LocalReminder>): Promise<
       reminder.title,
       reminder.description || "",
       reminder.dueDate,
-      reminder.severity || "info",
+      reminder.severity || "Valid",
       reminder.read ? 1 : 0,
       new Date().toISOString(),
     ],

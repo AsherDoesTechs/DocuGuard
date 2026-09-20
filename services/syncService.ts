@@ -41,9 +41,9 @@ export async function syncToCloud(): Promise<SyncResult> {
     for (const doc of unsyncedDocs) {
       try {
         if (doc.status === "deleted") {
-          await api.client.delete(`/documents/${doc.id}`);
+          await api.documents.delete(doc.id!);
         } else {
-          await api.client.post("/documents", {
+          const payload: any = {
             title: doc.title,
             category: doc.category,
             issuer: doc.issuer,
@@ -51,11 +51,16 @@ export async function syncToCloud(): Promise<SyncResult> {
             issueDate: doc.issueDate,
             expiryDate: doc.expiryDate,
             notes: doc.notes,
+            status: doc.status,
             enableAlerts: doc.enableAlerts,
             s3Key: doc.s3Key,
             fileUrl: doc.fileUrl,
             fileType: doc.fileType,
-          });
+            processingStatus: doc.processingStatus,
+            riskScore: doc.riskScore,
+            riskLevel: doc.riskLevel,
+          };
+          await api.documents.syncDocument(payload);
         }
         await markDocumentSynced(doc.id!);
         documentsSynced++;

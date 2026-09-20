@@ -23,6 +23,7 @@ import { Button, Card } from "@/components/ui";
 import { useForm } from "@/hooks/useForm";
 import { DOCUMENT_CATEGORIES, COLORS } from "@/constants";
 import { createDocument, updateDocument, logDocumentAction } from "../services/localDatabase";
+import { formatCategoryForBackend } from "@/DocuGuard-Server/utils/categories";
 
 type DocumentFormValues = {
   title: string;
@@ -192,9 +193,9 @@ async function saveDocument(
 ) {
   const token = await getStoredToken();
 
-   const payload: Record<string, any> = {
+const payload: Record<string, any> = {
     title: values.title.trim(),
-    category: values.category,
+    category: formatCategoryForBackend(values.category),
     issuer: values.issuer.trim(),
     documentNumber: values.documentNumber.trim().toUpperCase(),
     issueDate: values.issueDate,
