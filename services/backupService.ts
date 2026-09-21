@@ -1,4 +1,4 @@
-import * as FileSystem from "expo-file-system";
+import FileSystem from "expo-file-system";
 import * as Sharing from "expo-sharing";
 import { Alert } from "react-native";
 import {
@@ -32,21 +32,26 @@ export async function exportLocalBackup(): Promise<void> {
 
     const jsonContent = JSON.stringify(exportData, null, 2);
     const filename = `docuguard_backup_${new Date().toISOString().split("T")[0]}.json`;
+    const fileUri = `${(FileSystem as any).documentDirectory}${filename}`;
 
-    const file = new FileSystem.File(FileSystem.Paths.document, filename);
-    file.write(jsonContent);
+    await FileSystem.writeAsStringAsync(fileUri, jsonContent, {
+      encoding: FileSystem.EncodingType.UTF8,
+    });
 
     if (await Sharing.isAvailableAsync()) {
-      await Sharing.shareAsync(file.uri, {
+      await Sharing.shareAsync(fileUri, {
         mimeType: "application/json",
         dialogTitle: "Export DocuGuard Backup",
       });
     } else {
-      Alert.alert("Backup Created", `Backup saved to: ${file.uri}`);
+      Alert.alert("Backup Created", `Backup saved to: ${fileUri}`);
     }
   } catch (err: any) {
     console.error("Backup export failed:", err);
-    Alert.alert("Export Failed", err.message || "Could not create backup.");
+    Alert.alert(
+      "Export Failed",
+      "Could not create backup. Please try again.",
+    );
   }
 }
 
@@ -73,18 +78,22 @@ export async function exportDocumentArchive(): Promise<void> {
 
     const jsonContent = JSON.stringify(archive, null, 2);
     const filename = `docuguard_archive_${new Date().toISOString().split("T")[0]}.json`;
+    const fileUri = `${(FileSystem as any).documentDirectory}${filename}`;
 
-    const file = new FileSystem.File(FileSystem.Paths.document, filename);
-    file.write(jsonContent);
+    await FileSystem.writeAsStringAsync(fileUri, jsonContent, {
+      encoding: FileSystem.EncodingType.UTF8,
+    });
 
     if (await Sharing.isAvailableAsync()) {
-      await Sharing.shareAsync(file.uri, {
+      await Sharing.shareAsync(fileUri, {
         mimeType: "application/json",
         dialogTitle: "Export Document Archive",
       });
+    } else {
+      Alert.alert("Archive Created", `Archive saved to: ${fileUri}`);
     }
   } catch (err: any) {
     console.error("Archive export failed:", err);
-    Alert.alert("Export Failed", err.message || "Could not create archive.");
+    Alert.alert("Export Failed", "Could not create archive.");
   }
 }

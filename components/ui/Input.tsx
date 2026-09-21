@@ -12,7 +12,6 @@ import Colors from "../../constants/colors";
 import Spacing from "../../constants/spacing";
 
 interface InputProps {
-  // Changed label type from string to string | React.ReactNode
   label?: string | React.ReactNode;
   placeholder: string;
   value: string;
@@ -22,6 +21,8 @@ interface InputProps {
   error?: string;
   keyboardType?: KeyboardTypeOptions;
   style?: StyleProp<TextStyle>;
+  autoComplete?: string;
+  textContentType?: string;
 }
 
 export default function Input({
@@ -34,6 +35,8 @@ export default function Input({
   error,
   keyboardType,
   style,
+  autoComplete,
+  textContentType,
 }: InputProps) {
   return (
     <View style={styles.container}>
@@ -56,6 +59,8 @@ export default function Input({
         secureTextEntry={secureTextEntry}
         keyboardType={keyboardType}
         autoCapitalize="none"
+        autoComplete={autoComplete as any}
+        textContentType={textContentType as any}
       />
       {error && <Text style={styles.errorText}>{error}</Text>}
     </View>

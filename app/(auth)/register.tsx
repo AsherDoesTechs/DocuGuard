@@ -172,7 +172,16 @@ export default function RegisterScreen() {
           password: values.password,
         };
 
-        await api.auth.register(payload);
+        const response = await api.auth.register(payload);
+
+        if (response.emailSent === false) {
+          Alert.alert(
+            "Email Delivery Issue",
+            "Your account was created, but the verification email could not be sent. " +
+              "The server administrator has been notified. You can try resending from the next screen.",
+            [{ text: "Continue" }],
+          );
+        }
 
         router.replace({
           pathname: "/(auth)/verify-email",

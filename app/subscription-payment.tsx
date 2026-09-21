@@ -1,12 +1,14 @@
 import { API_BASE_URL } from "../services/api";
-import React, { useState, useEffect, useRef } from "react";
+import { COLORS } from "../constants";
+import { Toast } from "../components/ui/Toast";
+import type { ToastType } from "../components/ui/Toast";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   View,
   Text,
   TouchableOpacity,
   StyleSheet,
   TextInput,
-  Modal,
   Alert,
   ActivityIndicator,
   PanResponder,
@@ -14,7 +16,10 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import Animated, { ZoomIn, ZoomOut } from "react-native-reanimated";
+import Animated, {
+  FadeIn,
+  Easing,
+} from "react-native-reanimated";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as LocalAuthentication from "expo-local-authentication";
 
@@ -29,34 +34,47 @@ const DG = {
 export default function DocuGuardCheckout() {
   const router = useRouter();
   const [step, setStep] = useState(1);
-  const [timer, setTimer] = useState(5);
-  const [showSuccess, setShowSuccess] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [toast, setToast] = useState<{
+    visible: boolean;
+    message: string;
+    type: ToastType;
+  }>({ visible: false, message: "", type: "success" });
 
-  // 2-Layer Security State for Step 3
   const [sliderUnlocked, setSliderUnlocked] = useState(false);
   const slideAnim = useRef(new RNAnimated.Value(0)).current;
+  const slideTextAnim = useRef(new RNAnimated.Value(0)).current;
 
-  // Form State
-  const [formData, setFormData] = useState({
+  const formData = useRef({
     name: "",
     serial: "",
     card: "",
     expiry: "",
   });
 
-  // Countdown Redirect
   useEffect(() => {
-    let interval: any;
-    if (showSuccess && timer > 0) {
-      interval = setInterval(() => setTimer((prev) => prev - 1), 1000);
-    } else if (timer === 0) {
-      router.replace("/(tabs)/home" as any);
+    if (!sliderUnlocked) {
+      RNAnimated.loop(
+        RNAnimated.sequence([
+          RNAnimated.timing(slideTextAnim, {
+            toValue: 8,
+            duration: 1200,
+            easing: Easing.inOut(Easing.sin),
+            useNativeDriver: true,
+          }),
+          RNAnimated.timing(slideTextAnim, {
+            toValue: 0,
+            duration: 1200,
+            easing: Easing.inOut(Easing.sin),
+            useNativeDriver: true,
+          }),
+        ]),
+      ).start();
     }
-    return () => clearInterval(interval);
-  }, [showSuccess, timer]);
+    return () => slideTextAnim.stopAnimation();
+  }, [sliderUnlocked]);
 
-  // Slide to continue gesture handler
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => !sliderUnlocked,
@@ -66,15 +84,29 @@ export default function DocuGuardCheckout() {
         }
       },
       onPanResponderRelease: (_, gestureState) => {
-        if (gestureState.dx > 150) {
-          RNAnimated.timing(slideAnim, {
-            toValue: 200,
-            duration: 200,
-            useNativeDriver: false,
-          }).start(() => setSliderUnlocked(true));
+        if (gestureState.dx > 120) {
+          RNAnimated.sequence([
+            RNAnimated.timing(slideAnim, {
+              toValue: 200,
+              duration: 250,
+              easing: Easing.out(Easing.cubic),
+              useNativeDriver: false,
+            }),
+            RNAnimated.delay(100),
+            RNAnimated.timing(slideAnim, {
+              toValue: 0,
+              duration: 0,
+              useNativeDriver: false,
+            }),
+          ]).start(() => {
+            setSliderUnlocked(true);
+            slideAnim.setValue(0);
+          });
         } else {
           RNAnimated.spring(slideAnim, {
             toValue: 0,
+            friction: 6,
+            tension: 80,
             useNativeDriver: false,
           }).start();
         }
@@ -82,7 +114,41 @@ export default function DocuGuardCheckout() {
     }),
   ).current;
 
-  const handleBiometricVerification = async () => {
+  const validateStep = (s: number): boolean => {
+    if (s === 1) {
+      const d = formData.current;
+      if (!d.name.trim() || d.name.trim().length < 2) {
+        Alert.alert("Error", "Please enter your full legal name (min 2 characters).");
+        return false;
+      }
+      if (!d.serial.trim() || !/^[A-Z0-9]+$/i.test(d.serial.trim())) {
+        Alert.alert("Error", "Please enter a valid Document Serial Number.");
+        return false;
+      }
+      return true;
+    }
+    if (s === 2) {
+      const d = formData.current;
+      if (!d.card.trim() || d.card.trim().replace(/\s/g, "").length < 13) {
+        Alert.alert("Error", "Please enter a valid card number.");
+        return false;
+      }
+      if (!d.expiry.trim() || !/^\d{2}\/\d{2}$/.test(d.expiry.trim())) {
+        Alert.alert("Error", "Expiry must be in MM/YY format.");
+        return false;
+      }
+      const [mm, yy] = d.expiry.trim().split("/");
+      const month = parseInt(mm, 10);
+      if (month < 1 || month > 12) {
+        Alert.alert("Error", "Invalid expiry month.");
+        return false;
+      }
+      return true;
+    }
+    return true;
+  };
+
+  const handleBiometricVerification = useCallback(async () => {
     try {
       const hasHardware = await LocalAuthentication.hasHardwareAsync();
       const isEnrolled = await LocalAuthentication.isEnrolledAsync();
@@ -90,8 +156,9 @@ export default function DocuGuardCheckout() {
       if (!hasHardware || !isEnrolled) {
         Alert.alert(
           "Biometrics Unavailable",
-          "Your device doesn't support biometric security or no fingerprints are enrolled. Proceeding with passcode fallback.",
+          "Your device doesn't support biometric security or no fingerprints are enrolled.",
         );
+        return;
       }
 
       const auth = await LocalAuthentication.authenticateAsync({
@@ -112,37 +179,64 @@ export default function DocuGuardCheckout() {
       console.error("Biometric error:", err);
       Alert.alert("Error", "Could not process biometric scan.");
     }
-  };
+  }, []);
 
-  const handleFinish = async () => {
+  const redirectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleFinish = useCallback(async () => {
     setLoading(true);
+    setErrorMessage(null);
     try {
       const token = await AsyncStorage.getItem("userToken");
-      const res = await fetch(`${API_BASE_URL}/profile/subscription`, {
+      if (!token) {
+        throw new Error("Session expired. Please sign in again.");
+      }
+      const res = await fetch(`${API_BASE_URL}/subscription`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify(formData),
+        body: JSON.stringify(formData.current),
       });
 
       if (!res.ok) {
-        throw new Error("Failed to process payment on backend");
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || "Payment processing failed.");
       }
 
-      setShowSuccess(true);
+      setToast({
+        visible: true,
+        message: "Payment successful! Welcome aboard.",
+        type: "success",
+      });
+      if (redirectTimerRef.current) clearTimeout(redirectTimerRef.current);
+      redirectTimerRef.current = setTimeout(
+        () => router.replace("/(tabs)/home" as any),
+        1600,
+      );
     } catch (err: any) {
       console.error("Checkout error:", err.message);
-      setShowSuccess(true);
+      setErrorMessage(err.message || "Payment failed. Please try again.");
+      setToast({
+        visible: true,
+        message: err.message || "Payment failed. Please try again.",
+        type: "error",
+      });
+      if (redirectTimerRef.current) clearTimeout(redirectTimerRef.current);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  const handleNext = useCallback(() => {
+    if (!validateStep(step)) return;
+    setStep(step + 1);
+    setErrorMessage(null);
+  }, [step]);
 
   return (
     <View style={styles.container}>
-      {/* Header */}
       <View style={styles.header}>
         <Text style={styles.brand}>DocuGuard</Text>
         <TouchableOpacity onPress={() => router.back()}>
@@ -150,7 +244,6 @@ export default function DocuGuardCheckout() {
         </TouchableOpacity>
       </View>
 
-      {/* Dynamic Content */}
       <View style={styles.content}>
         <Text style={styles.stepTitle}>
           {step === 1
@@ -160,22 +253,38 @@ export default function DocuGuardCheckout() {
               : "Secure Gate"}
         </Text>
 
+        {errorMessage && (
+          <View style={styles.errorBanner}>
+            <Ionicons name="alert-circle" size={16} color={COLORS.danger} />
+            <Text style={styles.errorText}>{errorMessage}</Text>
+          </View>
+        )}
+
         {step === 1 && (
           <View style={styles.form}>
             <TextInput
               style={styles.input}
               placeholder="Legal Full Name"
               placeholderTextColor="#94A3B8"
-              value={formData.name}
-              onChangeText={(v) => setFormData({ ...formData, name: v })}
+              value={formData.current.name}
+              onChangeText={(v) =>
+                (formData.current.name = v.replace(/[^a-zA-Z\s]/g, ""))
+              }
+              autoCapitalize="words"
+              autoCorrect={false}
+              autoComplete="name"
             />
             <TextInput
               style={styles.input}
               placeholder="Document Serial Number"
               placeholderTextColor="#94A3B8"
               keyboardType="numeric"
-              value={formData.serial}
-              onChangeText={(v) => setFormData({ ...formData, serial: v })}
+              value={formData.current.serial}
+              onChangeText={(v) =>
+                (formData.current.serial = v.replace(/[^A-Z0-9]/gi, "").toUpperCase())
+              }
+              autoCapitalize="characters"
+              autoCorrect={false}
             />
           </View>
         )}
@@ -187,15 +296,35 @@ export default function DocuGuardCheckout() {
               placeholder="Card Number"
               placeholderTextColor="#94A3B8"
               keyboardType="number-pad"
-              value={formData.card}
-              onChangeText={(v) => setFormData({ ...formData, card: v })}
+              value={formData.current.card}
+              onChangeText={(v) => {
+                const cleaned = v.replace(/\D/g, "").slice(0, 16);
+                const parts = [];
+                for (let i = 0; i < cleaned.length; i += 4) {
+                  parts.push(cleaned.slice(i, i + 4));
+                }
+                formData.current.card = parts.join(" ");
+              }}
+              autoCorrect={false}
+              autoComplete="cc-number"
+              textContentType="creditCardNumber"
             />
             <TextInput
               style={styles.input}
               placeholder="MM/YY"
               placeholderTextColor="#94A3B8"
-              value={formData.expiry}
-              onChangeText={(v) => setFormData({ ...formData, expiry: v })}
+              value={formData.current.expiry}
+              onChangeText={(v) => {
+                let cleaned = v.replace(/\D/g, "").slice(0, 4);
+                if (cleaned.length >= 3) {
+                  cleaned = cleaned.slice(0, 2) + "/" + cleaned.slice(2);
+                }
+                formData.current.expiry = cleaned;
+              }}
+              keyboardType="number-pad"
+              autoCorrect={false}
+              autoComplete="cc-exp"
+              textContentType="creditCardExpiration"
             />
           </View>
         )}
@@ -215,13 +344,15 @@ export default function DocuGuardCheckout() {
                   >
                     <Ionicons name="chevron-forward" size={20} color="#fff" />
                   </RNAnimated.View>
-                  <Text style={styles.sliderText}>
-                    Slide right $\rightarrow$
-                  </Text>
+                  <RNAnimated.Text
+                    style={[styles.sliderText, { transform: [{ translateX: slideTextAnim }] }]}
+                  >
+                    Slide right → to unlock
+                  </RNAnimated.Text>
                 </View>
               </View>
             ) : (
-              <View style={styles.biometricContainer}>
+              <Animated.View entering={FadeIn.duration(300)} style={styles.biometricContainer}>
                 <Ionicons name="finger-print" size={80} color={DG.emerald} />
                 <Text style={styles.gateText}>
                   Layer 2: Biometric Verification Required
@@ -237,34 +368,19 @@ export default function DocuGuardCheckout() {
                     <Text style={styles.btnText}>SCAN FINGERPRINT</Text>
                   )}
                 </TouchableOpacity>
-              </View>
+              </Animated.View>
             )}
           </View>
         )}
-      </View>
+       </View>
 
-      {/* Success Modal with Countdown */}
-      <Modal visible={showSuccess} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <Animated.View
-            entering={ZoomIn}
-            exiting={ZoomOut}
-            style={styles.modal}
-          >
-            <Ionicons name="sparkles" size={80} color={DG.emerald} />
-            <Text style={styles.modalTitle}>Congratulations!</Text>
-            <Text style={styles.modalText}>
-              Payment successful. Redirecting to home in {timer}s...
-            </Text>
-          </Animated.View>
-        </View>
-      </Modal>
-
-      {/* Navigation */}
       <View style={styles.footer}>
         {step > 1 && (
           <TouchableOpacity
-            onPress={() => setStep(step - 1)}
+            onPress={() => {
+              setStep(step - 1);
+              setErrorMessage(null);
+            }}
             style={styles.backBtn}
           >
             <Text style={styles.backText}>BACK</Text>
@@ -272,27 +388,23 @@ export default function DocuGuardCheckout() {
         )}
         {step < 3 && (
           <TouchableOpacity
-            onPress={() => {
-              if (step === 1 && (!formData.name || !formData.serial)) {
-                return Alert.alert(
-                  "Error",
-                  "Please fill in all identity fields.",
-                );
-              }
-              if (step === 2 && (!formData.card || !formData.expiry)) {
-                return Alert.alert(
-                  "Error",
-                  "Please fill in all payment details.",
-                );
-              }
-              setStep(step + 1);
-            }}
+            onPress={handleNext}
             style={styles.nextBtn}
+            disabled={loading}
           >
-            <Text style={styles.btnText}>CONTINUE</Text>
+            <Text style={styles.btnText}>
+              {loading ? "..." : "CONTINUE"}
+            </Text>
           </TouchableOpacity>
         )}
       </View>
+
+      <Toast
+        visible={toast.visible}
+        message={toast.message}
+        type={toast.type}
+        onDismiss={() => setToast((t) => ({ ...t, visible: false }))}
+      />
     </View>
   );
 }
@@ -320,6 +432,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#E2E8F0",
     color: DG.navy,
+    fontSize: 16,
   },
   gate: { alignItems: "center", marginTop: 20 },
   sliderContainer: { width: "100%", alignItems: "center", marginTop: 30 },
@@ -343,6 +456,11 @@ const styles = StyleSheet.create({
     position: "absolute",
     zIndex: 2,
     left: 5,
+    shadowColor: DG.navy,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 5,
   },
   sliderText: {
     position: "absolute",
@@ -366,25 +484,6 @@ const styles = StyleSheet.create({
     width: "100%",
     alignItems: "center",
   },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.6)",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  modal: {
-    backgroundColor: "white",
-    padding: 40,
-    borderRadius: 24,
-    alignItems: "center",
-  },
-  modalTitle: {
-    fontSize: 24,
-    fontWeight: "800",
-    color: DG.emerald,
-    marginVertical: 15,
-  },
-  modalText: { color: DG.slate, textAlign: "center" },
   footer: { flexDirection: "row", gap: 10 },
   backBtn: {
     flex: 1,
@@ -402,4 +501,18 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   btnText: { color: "white", fontWeight: "800" },
+  errorBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FEE2E2",
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 16,
+    gap: 8,
+  },
+  errorText: {
+    flex: 1,
+    fontSize: 13,
+    color: "#991B1B",
+  },
 });

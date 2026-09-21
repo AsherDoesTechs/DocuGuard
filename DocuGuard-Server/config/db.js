@@ -1,10 +1,17 @@
 const { Pool } = require("pg");
 require("dotenv").config();
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+let connectionString = process.env.DATABASE_URL;
 
-  ssl: {
+if (!connectionString && process.env.DB_HOST) {
+  const ssl = process.env.DB_SSL === "false" ? false : { rejectUnauthorized: false };
+  connectionString = `postgresql://${encodeURIComponent(process.env.DB_USER)}:${encodeURIComponent(process.env.DB_PASSWORD)}@${process.env.DB_HOST}:${process.env.DB_PORT || 5432}/${process.env.DB_NAME || "postgres"}?sslmode=${ssl ? "require" : "disable"}`;
+}
+
+const pool = new Pool({
+  connectionString,
+
+  ssl: connectionString ? undefined : {
     rejectUnauthorized: false,
   },
 

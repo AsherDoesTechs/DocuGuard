@@ -301,3 +301,44 @@ Sep 11, 2026 (Nex Export Application)
   - Test it if it works
     Yes it Works Schedule a consultation meeting with Sir M.
     No Make it work so you can schedule a consultation meeting with the Adviser.
+
+Sep 11, 2026 (Production 1.0)
+
+- Document Creation works
+- OCR works
+- Profile works
+
+Sep 15, 2026 (Production 1.1)
+
+- Notification Works
+- many errors and bugs still known
+
+Sep 20, 2026 (Production 1.3)
+
+- Register Fields Removes invalid inputs
+- Datas are being sent to Cloud Supabase through Render
+- RemindersPage Do not Reflect Realtime Notify
+
+When i Press back on the phone it shows a duplication of Home Page but with another design thats causes a huge bug, because the realtime datas get lost and the vault access data are seen but it dissapeared also.
+
+could not load document details for editing.
+
+When reloaded the documents are not found.
+
+enable 2FA Authentication has no proper fields to input credentials.
+
+Sotrage used is not realistic a one document for 1gb???
+
+In profile page the Document Serial Number of the User must be shown under the type of tier logo like the standard. Or premium. Type.
+
+And also it must be autofilled in the renew subscription plan instsntly when filling up datas.
+
+Layer 1: Slide to Continue is not Promising it just looks like a simple UI It does not tells the user that security is really tight. Make the animation more clean and the design modern.
+
+After successful payment gateway done, it refreshes the whole app the documents have dissapeared some pages and fucntions do not work immediately
+
+Improve others that you can see
+
+Input autofill field datas or swipe to autofill the texts on the input fields for user datas efficiency
+
+Input proper lockup app to the docuguard when it leaves the app not always but frequent like the other functions on the app phone to ensure more security.

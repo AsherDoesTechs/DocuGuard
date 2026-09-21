@@ -2,8 +2,42 @@ import { Tabs } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { COLORS } from "@/constants";
 import { Platform } from "react-native";
+import { useAppLock, AppLockScreen } from "../../hooks/useAppLock";
+import { useEffect, useState } from "react";
 
 export default function TabsLayout() {
+  const { isLocked, biometricEnabled, unlockWithBiometric, unlockWithPassword } = useAppLock();
+  const [showLockScreen, setShowLockScreen] = useState(false);
+
+  useEffect(() => {
+    if (isLocked) {
+      setShowLockScreen(true);
+    }
+  }, [isLocked]);
+
+  const handleUnlock = async () => {
+    const success = await unlockWithBiometric();
+    if (success) {
+      setShowLockScreen(false);
+    }
+  };
+
+  const handleUsePassword = () => {
+    unlockWithPassword();
+    setShowLockScreen(false);
+  };
+
+  if (showLockScreen) {
+    return (
+      <AppLockScreen
+        isLocked={true}
+        biometricEnabled={biometricEnabled}
+        onUnlock={handleUnlock}
+        onUsePassword={handleUsePassword}
+      />
+    );
+  }
+
   return (
     <Tabs
       screenOptions={{
@@ -14,7 +48,6 @@ export default function TabsLayout() {
           backgroundColor: COLORS.surface,
           borderTopColor: COLORS.border,
           borderTopWidth: 1,
-          // This ensures the height accounts for the safe area on modern phones
           height: Platform.OS === "ios" ? 85 : 65,
           paddingBottom: Platform.OS === "ios" ? 25 : 10,
         },

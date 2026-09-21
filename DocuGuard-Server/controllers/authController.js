@@ -1,18 +1,14 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
-const { Resend } = require("resend");
 const db = require("../config/db");
 const { AppError, ErrorCodes } = require("../utils/errors");
 const { debug, info, warn, error: logError } = require("../utils/debugLogger");
-
-// Initialize Resend
-const resend = new Resend(process.env.RESEND_API_KEY);
-const EMAIL_FROM =
-  process.env.EMAIL_FROM || "DocuGuard <noreply@yourdomain.com>";
-const APP_BASE_URL =
-  process.env.APP_BASE_URL || "https://docuguard-api-onoj.onrender.com";
-const APP_DEEPLINK_SCHEME = process.env.APP_DEEPLINK_SCHEME || "docuguard";
+const {
+  sendVerificationEmail,
+  sendPasswordResetEmail,
+  APP_DEEPLINK_SCHEME,
+} = require("../config/email");
 
 // 1. Registration
 exports.register = async (req, res, next) => {
@@ -93,36 +89,32 @@ exports.register = async (req, res, next) => {
       email: newUser.email,
     });
 
-    const verificationLink = `${APP_BASE_URL}/auth/verify-email-web?token=${verificationToken}`;
+    let emailSent = true;
 
     try {
-      await resend.emails.send({
-        from: EMAIL_FROM,
-        to: email,
-        subject: "Verify Your Email - DocuGuard",
-        html: `
-          <h3>Welcome to DocuGuard, ${newUser.name}!</h3>
-          <p>Please click the button below to verify your email address and activate your account:</p>
-          <a href="${verificationLink}" style="padding: 10px 20px; background: #2563EB; color: #fff; text-decoration: none; border-radius: 5px; display: inline-block;">Verify Email</a>
-          <p style="margin-top: 15px;">If the button doesn't work, copy and paste this link into your browser:</p>
-          <p>${verificationLink}</p>
-        `,
-      });
+      await sendVerificationEmail(newUser.email, newUser.name, verificationToken);
       debug("Auth", "Verification email sent", {
-        to: email,
+        to: newUser.email,
         userId: newUser.id,
       });
     } catch (mailErr) {
-      warn("Auth", "Failed to send verification email", {
-        email,
-        error: mailErr.message,
-      });
+      emailSent = false;
+      logError(
+        "Auth",
+        "Failed to send verification email",
+        {
+          email: newUser.email,
+          userId: newUser.id,
+          error: mailErr.message,
+        },
+        ErrorCodes.UNKNOWN_ERROR,
+      );
     }
 
     res.status(201).json({
-      message:
-        "User registered successfully. Please check your email to verify your account.",
+      message: "User registered successfully. Please check your email to verify your account.",
       user: { id: newUser.id, email: newUser.email, name: newUser.name },
+      emailSent,
     });
   } catch (err) {
     logError(
@@ -361,78 +353,30 @@ exports.verifyEmailWeb = async (req, res) => {
           <title>Email Verified - DocuGuard</title>
           <meta http-equiv="refresh" content="0; url=${deepLink}">
         </head>
-        <body style="font-family: Arial; text-align: center; padding: 50px;">
-          <h2 style="color: #16a34a;">✅ Email Verified Successfully!</h2>
-          <p>Welcome, ${user.name}!</p>
-          <p><a href="${deepLink}">Click here to return to the app</a></p>
+        <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; text-align: center; padding: 0; margin: 0; background-color: #f3f4f6;">
+          <table style="max-width: 520px; margin: 48px auto; background: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 8px 32px rgba(0,0,0,0.08);">
+            <tr>
+              <td style="padding: 48px 32px; text-align: center;">
+                <div style="width: 80px; height: 80px; background: #DCFCE7; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px;">
+                  <svg width="36" height="36" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22Z" stroke="#16A34A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M9 12L11 14L15 10" stroke="#16A34A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </div>
+                <h1 style="margin: 0 0 12px; color: #111827; font-size: 24px; font-weight: 700;">Email Verified!</h1>
+                <p style="margin: 0 0 24px; color: #6B7280; font-size: 16px;">Welcome, <strong style="color: #111827;">${user.name}</strong>! Your email has been verified successfully.</p>
+                <p style="margin: 0; color: #9CA3AF; font-size: 14px;">You'll be redirected to the app automatically.</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding: 0 32px 32px; text-align: center;">
+                <a href="${deepLink}" style="display: inline-block; padding: 14px 28px; background: linear-gradient(135deg, #2563EB 0%, #1d4ED8 100%); color: #ffffff; text-decoration: none; border-radius: 10px; font-size: 15px; font-weight: 600;">Continue to DocuGuard</a>
+              </td>
+            </tr>
+          </table>
         </body>
       </html>
     `);
-  } catch (err) {
-    logError(
-      "Auth",
-      "Web email verification error",
-      { error: err.message, stack: err.stack },
-      ErrorCodes.UNKNOWN_ERROR,
-    );
-    return res.status(500).send("Verification Error");
-  }
-};
-
-  // 4b. Verify Email via Web Link
-  exports.verifyEmailWeb = async (req, res) => {
-    const { token } = req.query;
-
-    if (!token) {
-      return res.status(400).send(`
-        <html>
-          <body style="font-family: Arial; text-align: center; padding: 50px;">
-            <h2 style="color: #dc2626;">Invalid Verification Link</h2>
-            <p>This verification link is missing the required token.</p>
-          </body>
-        </html>
-      `);
-    }
-
-    try {
-      const result = await db.query(
-        "SELECT id, email, name FROM users WHERE verification_token = $1 AND verification_expires_at > NOW()",
-        [token],
-      );
-
-      if (result.rows.length === 0) {
-        return res.status(400).send(`
-          <html>
-            <body style="font-family: Arial; text-align: center; padding: 50px;">
-              <h2 style="color: #dc2626;">Invalid or Expired Link</h2>
-              <p>This link is invalid or has expired.</p>
-            </body>
-          </html>
-        `);
-      }
-
-      const user = result.rows[0];
-
-      await db.query(
-        "UPDATE users SET is_verified = TRUE, verification_token = NULL, verification_expires_at = NULL WHERE id = $1",
-        [user.id],
-      );
-
-      const deepLink = `${APP_DEEPLINK_SCHEME}://verify-email?token=${token}&verified=true`;
-
-      return res.send(`
-        <html>
-          <head>
-            <title>Email Verified - DocuGuard</title>
-            <meta http-equiv="refresh" content="0; url=${deepLink}">
-          </head>
-          <body style="font-family: Arial; text-align: center; padding: 50px;">
-            <h2 style="color: #16a34a;">✅ Email Verified Successfully!</h2>
-            <p>Welcome, ${user.name}!</p>
-            <p><a href="${deepLink}">Click here to return to the app</a></p>
-          </body>
-        </html>
-      `);
     } catch (err) {
       logError(
         "Auth",
@@ -443,52 +387,63 @@ exports.verifyEmailWeb = async (req, res) => {
       return res.status(500).send("Verification Error");
     }
   };
-exports.resendVerification = async (req, res) => {
-  const { email } = req.body;
+  exports.resendVerification = async (req, res) => {
+    const { email } = req.body;
 
-  try {
-    const result = await db.query(
-      "SELECT id, is_verified FROM users WHERE email = $1",
-      [email.trim().toLowerCase()],
-    );
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: "User not found with this email." });
+    try {
+      const result = await db.query(
+        "SELECT id, is_verified FROM users WHERE email = $1",
+        [email.trim().toLowerCase()],
+      );
+      if (result.rows.length === 0) {
+        return res.status(404).json({ error: "User not found with this email." });
+      }
+
+      const user = result.rows[0];
+      if (user.is_verified) {
+        return res.status(400).json({ error: "Email is already verified." });
+      }
+
+      const verificationToken = crypto.randomBytes(32).toString("hex");
+      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+      await db.query(
+        "UPDATE users SET verification_token = $1, verification_expires_at = $2 WHERE id = $3",
+        [verificationToken, expiresAt, user.id],
+      );
+
+      try {
+        await sendVerificationEmail(email, user.name || "there", verificationToken);
+        info("Auth", "Verification email resent", {
+          to: email,
+          userId: user.id,
+        });
+      } catch (mailErr) {
+        logError(
+          "Auth",
+          "Failed to resend verification email",
+          { email, userId: user.id, error: mailErr.message },
+          ErrorCodes.UNKNOWN_ERROR,
+        );
+        return res.status(500).json({
+          error: "Failed to resend verification email. Please check your Resend configuration and try again later.",
+          code: ErrorCodes.UNKNOWN_ERROR,
+        });
+      }
+
+      return res.json({ message: "Verification link resent successfully!" });
+    } catch (err) {
+      logError(
+        "Auth",
+        "Resend verification error",
+        { error: err.message, stack: err.stack },
+        ErrorCodes.UNKNOWN_ERROR,
+      );
+      return res
+        .status(500)
+        .json({ error: "Failed to resend verification link." });
     }
-
-    const user = result.rows[0];
-    if (user.is_verified) {
-      return res.status(400).json({ error: "Email is already verified." });
-    }
-
-    const verificationToken = crypto.randomBytes(32).toString("hex");
-    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
-
-    await db.query(
-      "UPDATE users SET verification_token = $1, verification_expires_at = $2 WHERE id = $3",
-      [verificationToken, expiresAt, user.id],
-    );
-
-    const verificationLink = `${APP_BASE_URL}/auth/verify-email-web?token=${verificationToken}`;
-
-    await resend.emails.send({
-      from: EMAIL_FROM,
-      to: email,
-      subject: "Verify Your Email - DocuGuard",
-      html: `
-        <h3>Verify Your Account</h3>
-        <p>Please click the button below to verify your email address:</p>
-        <a href="${verificationLink}" style="padding: 10px 20px; background: #2563EB; color: #fff; text-decoration: none; border-radius: 5px; display: inline-block;">Verify Email</a>
-      `,
-    });
-
-    return res.json({ message: "Verification link resent successfully!" });
-  } catch (err) {
-    console.error("Resend verification error:", err);
-    return res
-      .status(500)
-      .json({ error: "Failed to resend verification link." });
-  }
-};
+  };
 
 // 6. Request Password Reset
 exports.forgotPassword = async (req, res) => {
@@ -514,23 +469,29 @@ exports.forgotPassword = async (req, res) => {
       [email.trim().toLowerCase(), resetToken, expiresAt],
     );
 
-    const resetLink = `${APP_BASE_URL}/auth/reset-password-web?token=${resetToken}`;
-
-    await resend.emails.send({
-      from: EMAIL_FROM,
-      to: email,
-      subject: "Password Reset Request - DocuGuard",
-      html: `
-        <h3>Password Reset</h3>
-        <p>You requested a password reset. Click the button below to set a new password:</p>
-        <a href="${resetLink}" style="padding: 10px 20px; background: #DC2626; color: #fff; text-decoration: none; border-radius: 5px; display: inline-block;">Reset Password</a>
-        <p style="margin-top: 15px;">This link expires in 1 hour.</p>
-      `,
-    });
+    try {
+      await sendPasswordResetEmail(email, resetToken);
+      info("Auth", "Password reset email sent", { to: email });
+    } catch (mailErr) {
+      logError(
+        "Auth",
+        "Failed to send password reset email",
+        { email, error: mailErr.message },
+        ErrorCodes.UNKNOWN_ERROR,
+      );
+      return res
+        .status(500)
+        .json({ error: "Failed to send password reset email. Please try again later." });
+    }
 
     res.json({ message: "Password reset instructions sent successfully" });
   } catch (err) {
-    console.error("Password reset error:", err);
+    logError(
+      "Auth",
+      "Password reset error",
+      { error: err.message, stack: err.stack },
+      ErrorCodes.UNKNOWN_ERROR,
+    );
     res.status(500).json({ error: "Password reset failed" });
   }
 };

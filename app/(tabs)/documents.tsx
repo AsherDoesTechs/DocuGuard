@@ -155,12 +155,12 @@ export default function DocumentsScreen() {
                 <Text style={styles.emptyText}>No documents found.</Text>
               ) : (
                 filtered.map((doc: LocalDocument) => (
-                  <TouchableOpacity
-                    key={doc.id}
-                    onPress={() =>
-                      router.push(`/document-details/${doc.id}`)
-                    }
-                  >
+                    <TouchableOpacity
+                      key={doc.id}
+                      onPress={() =>
+                        router.push(`/document-details/${String(doc.id)}` as any)
+                      }
+                    >
                     <Card style={styles.docCard}>
                       <View style={styles.docCardContent}>
                         <View style={styles.docInfo}>

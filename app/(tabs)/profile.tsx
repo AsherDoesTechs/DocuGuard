@@ -1,5 +1,4 @@
-import { api } from "../../services/api";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   View,
   Text,
@@ -16,11 +15,15 @@ import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { Card } from "../../components/ui";
 import { SubscriptionView } from "../../components/ui/SubscriptionView";
+import { Toast } from "../../components/ui/Toast";
+import type { ToastType } from "../../components/ui/Toast";
 import { COLORS, Colors } from "@/constants";
 import { RefreshableContainer } from "@/components/ui/RefreshableContainer";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { api } from "../../services/api";
 import { getUserProfile, getAllDocuments } from "../../services/localDatabase";
 import { exportLocalBackup } from "../../services/backupService";
+import * as SecureStore from "expo-secure-store";
 
 type SettingsTab =
   | "none"
@@ -34,6 +37,7 @@ interface SubscriptionDetails {
   renewalDate: string;
   storageUsed: number;
   storageTotal: number;
+  serialNumber?: string;
 }
 
 interface UserProfile {
@@ -47,6 +51,7 @@ interface UserProfile {
   notifyExpiry: boolean;
   twoFactor: boolean;
   subscription: SubscriptionDetails;
+  serialNumber: string;
 }
 
 interface SettingRowProps {
@@ -103,6 +108,11 @@ export default function ProfileScreen() {
   const [activeTab, setActiveTab] = useState<SettingsTab>("none");
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState<UserProfile | null>(null);
+  const [toast, setToast] = useState<{
+    visible: boolean;
+    message: string;
+    type: ToastType;
+  }>({ visible: false, message: "", type: "success" });
 
   const [passwords, setPasswords] = useState({
     current: "",
@@ -110,15 +120,32 @@ export default function ProfileScreen() {
     confirm: "",
   });
   const [twoFactor, setTwoFactor] = useState(false);
+  const [twoFactorCode, setTwoFactorCode] = useState("");
   const [notifyEmail, setNotifyEmail] = useState(true);
   const [notifyPush, setNotifyPush] = useState(false);
   const [notifyExpiry, setNotifyExpiry] = useState(true);
   const [supportMessage, setSupportMessage] = useState("");
 
-  const fetchProfile = async () => {
+  const showToast = (message: string, type: ToastType = "success") => {
+    setToast({ visible: true, message, type });
+    setTimeout(
+      () => setToast((t) => ({ ...t, visible: false })),
+      3000,
+    );
+  };
+
+  const fetchProfile = useCallback(async () => {
     try {
       const localProfile = await getUserProfile();
       const localDocs = await getAllDocuments();
+
+      let serialNumber = "";
+      if (localProfile?.name) {
+        const nameParts = localProfile.name.trim().toUpperCase().split(" ");
+        const lastName = nameParts[nameParts.length - 1] || "USER";
+        const docCount = String(localDocs.length).padStart(4, "0");
+        serialNumber = `DG-${lastName.substring(0, 3)}-${docCount}`;
+      }
 
       if (localProfile) {
         setUser({
@@ -133,11 +160,13 @@ export default function ProfileScreen() {
           notifyPush: false,
           notifyExpiry: localProfile.notifyExpiry,
           twoFactor: localProfile.twoFactor,
+          serialNumber,
           subscription: {
             planName: "Free",
             renewalDate: "",
-            storageUsed: localDocs.length,
+            storageUsed: localDocs.length * 0.5,
             storageTotal: 50,
+            serialNumber,
           },
         });
         setTwoFactor(localProfile.twoFactor);
@@ -156,11 +185,13 @@ export default function ProfileScreen() {
           notifyPush: false,
           notifyExpiry: true,
           twoFactor: false,
+          serialNumber: `DG-USER-${String(localDocs.length).padStart(4, "0")}`,
           subscription: {
             planName: "Free",
             renewalDate: "",
-            storageUsed: localDocs.length,
+            storageUsed: localDocs.length * 0.5,
             storageTotal: 50,
+            serialNumber: `DG-USER-${String(localDocs.length).padStart(4, "0")}`,
           },
         });
       }
@@ -169,10 +200,18 @@ export default function ProfileScreen() {
       if (token) {
         try {
           const res = await api.client.get("/profile");
+          const subData = res.data.subscription || {};
           setUser((prev) => ({
             ...prev,
             ...res.data,
-            subscription: res.data.subscription || prev?.subscription,
+            serialNumber: res.data.serialNumber || prev?.serialNumber || serialNumber,
+            subscription: {
+              planName: subData.planName || prev?.subscription?.planName || "Free",
+              renewalDate: subData.renewalDate || prev?.subscription?.renewalDate || "",
+              storageUsed: subData.storageUsed ?? prev?.subscription?.storageUsed ?? localDocs.length * 0.5,
+              storageTotal: subData.storageTotal ?? prev?.subscription?.storageTotal ?? 50,
+              serialNumber: prev?.serialNumber || serialNumber,
+            },
           }));
           if (res.data.twoFactor !== undefined) setTwoFactor(res.data.twoFactor);
           if (res.data.notifyEmail !== undefined) setNotifyEmail(res.data.notifyEmail);
@@ -187,11 +226,11 @@ export default function ProfileScreen() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchProfile();
-  }, []);
+  }, [fetchProfile]);
 
   const handleDataReload = async () => {
     await fetchProfile();
@@ -201,6 +240,9 @@ export default function ProfileScreen() {
     if (passwords.new && passwords.new !== passwords.confirm) {
       return Alert.alert("Error", "New passwords do not match.");
     }
+    if (passwords.new && passwords.new.length < 6) {
+      return Alert.alert("Error", "Password must be at least 6 characters.");
+    }
     try {
       const token = await AsyncStorage.getItem("userToken");
       const res = await api.client.patch(
@@ -209,11 +251,10 @@ export default function ProfileScreen() {
           currentPassword: passwords.current,
           newPassword: passwords.new,
           twoFactor,
+          twoFactorCode: twoFactorCode || undefined,
         },
         {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
+          headers: { Authorization: `Bearer ${token}` },
         },
       );
 
@@ -221,8 +262,9 @@ export default function ProfileScreen() {
         throw new Error(res.data?.error || "Failed to update security");
       }
 
-      Alert.alert("Success", "Security settings updated");
+      showToast("Security settings updated successfully");
       setPasswords({ current: "", new: "", confirm: "" });
+      setTwoFactorCode("");
     } catch (err: any) {
       Alert.alert("Error", err.response?.data?.error || err.message);
     }
@@ -247,9 +289,7 @@ export default function ProfileScreen() {
           notifyExpiry: expiry,
         },
         {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
+          headers: { Authorization: `Bearer ${token}` },
         },
       );
     } catch (err) {
@@ -272,9 +312,9 @@ export default function ProfileScreen() {
       );
       if (res.status !== 200 && res.status !== 201)
         throw new Error("Failed to submit ticket");
-      Alert.alert("Sent", "Support team notified.");
+      showToast("Support team notified.");
       setSupportMessage("");
-    } catch (err) {
+    } catch (err: any) {
       Alert.alert("Error", "Could not submit support ticket.");
     }
   };
@@ -282,11 +322,8 @@ export default function ProfileScreen() {
   const handleExportToCloud = async () => {
     try {
       const res = await api.cloud.exportData();
-      Alert.alert(
-        "Cloud Export Complete",
-        "Your documents have been exported to Supabase cloud backup.",
-      );
-    } catch (err) {
+      showToast("Documents exported to cloud backup successfully.");
+    } catch (err: any) {
       Alert.alert(
         "Cloud Export Failed",
         "Could not export data to cloud. Try local backup instead.",
@@ -296,8 +333,9 @@ export default function ProfileScreen() {
 
   const handleLocalBackup = async () => {
     try {
+      showToast("Preparing your backup...");
       await exportLocalBackup();
-    } catch (err) {
+    } catch (err: any) {
       Alert.alert("Backup Failed", "Could not create local backup.");
     }
   };
@@ -309,6 +347,7 @@ export default function ProfileScreen() {
         text: "Sign Out",
         onPress: async () => {
           await AsyncStorage.removeItem("userToken");
+          await SecureStore.deleteItemAsync("userToken").catch(() => {});
           router.replace("/login" as any);
         },
         style: "destructive",
@@ -330,6 +369,9 @@ export default function ProfileScreen() {
         }}
       >
         <ActivityIndicator size="large" color={COLORS.primary} />
+        <Text style={{ marginTop: 12, color: COLORS.textSecondary, fontSize: 14 }}>
+          Loading your vault...
+        </Text>
       </SafeAreaView>
     );
   }
@@ -351,15 +393,22 @@ export default function ProfileScreen() {
               <View style={styles.userInfo}>
                 <Text style={styles.userName}>{user.name}</Text>
                 <Text style={styles.userEmail}>{user.email}</Text>
-                <View style={styles.securityLevel}>
-                  <Ionicons
-                    name="shield-checkmark"
-                    size={16}
-                    color={COLORS.primary}
-                  />
-                  <Text style={styles.securityLevelText}>
-                    {user.securityLevel}
-                  </Text>
+                <View style={styles.tierRow}>
+                  <View style={styles.securityLevel}>
+                    <Ionicons
+                      name="shield-checkmark"
+                      size={16}
+                      color={COLORS.primary}
+                    />
+                    <Text style={styles.securityLevelText}>
+                      {user.securityLevel}
+                    </Text>
+                  </View>
+                  {user.serialNumber ? (
+                    <Text style={styles.serialNumber}>
+                      {user.serialNumber}
+                    </Text>
+                  ) : null}
                 </View>
               </View>
             </View>
@@ -396,36 +445,66 @@ export default function ProfileScreen() {
                   <TextInput
                     style={styles.input}
                     placeholder="Current Password"
+                    placeholderTextColor="#999"
                     secureTextEntry
                     value={passwords.current}
                     onChangeText={(t) =>
                       setPasswords({ ...passwords, current: t })
                     }
+                    autoCorrect={false}
+                    autoComplete="current-password"
+                    textContentType="password"
                   />
                   <TextInput
                     style={styles.input}
-                    placeholder="New Password"
+                    placeholder="New Password (min 6 chars)"
+                    placeholderTextColor="#999"
                     secureTextEntry
                     value={passwords.new}
                     onChangeText={(t) => setPasswords({ ...passwords, new: t })}
+                    autoCorrect={false}
+                    autoComplete="new-password"
+                    textContentType="newPassword"
                   />
                   <TextInput
                     style={styles.input}
                     placeholder="Confirm New Password"
+                    placeholderTextColor="#999"
                     secureTextEntry
                     value={passwords.confirm}
                     onChangeText={(t) =>
                       setPasswords({ ...passwords, confirm: t })
                     }
+                    autoCorrect={false}
+                    autoComplete="new-password"
+                    textContentType="newPassword"
                   />
                   <View style={styles.switchRow}>
-                    <Text>Enable 2FA Authentication</Text>
+                    <Text style={{ fontSize: 14 }}>Enable 2FA Authentication</Text>
                     <Switch
                       value={twoFactor}
-                      onValueChange={setTwoFactor}
+                      onValueChange={(val) => {
+                        setTwoFactor(val);
+                        if (!val) setTwoFactorCode("");
+                      }}
                       trackColor={{ true: COLORS.primary }}
                     />
                   </View>
+                  {twoFactor && (
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Enter 2FA verification code"
+                      placeholderTextColor="#999"
+                      keyboardType="number-pad"
+                      maxLength={6}
+                      value={twoFactorCode}
+                      onChangeText={(t) => {
+                        const clean = t.replace(/[^0-9]/g, "").slice(0, 6);
+                        setTwoFactorCode(clean);
+                      }}
+                      autoCorrect={false}
+                    />
+                  )}
                   <TouchableOpacity
                     style={styles.primaryButton}
                     onPress={handleSaveSecurity}
@@ -445,7 +524,7 @@ export default function ProfileScreen() {
               {activeTab === "notifications" && (
                 <View style={styles.expandedContent}>
                   <View style={styles.switchRow}>
-                    <Text>Email Alerts</Text>
+                    <Text style={{ fontSize: 14 }}>Email Alerts</Text>
                     <Switch
                       value={notifyEmail}
                       onValueChange={(val) =>
@@ -454,7 +533,7 @@ export default function ProfileScreen() {
                     />
                   </View>
                   <View style={styles.switchRow}>
-                    <Text>Push Notifications</Text>
+                    <Text style={{ fontSize: 14 }}>Push Notifications</Text>
                     <Switch
                       value={notifyPush}
                       onValueChange={(val) =>
@@ -463,7 +542,7 @@ export default function ProfileScreen() {
                     />
                   </View>
                   <View style={styles.switchRow}>
-                    <Text>Expiry Alerts</Text>
+                    <Text style={{ fontSize: 14 }}>Expiry Alerts</Text>
                     <Switch
                       value={notifyExpiry}
                       onValueChange={(val) =>
@@ -513,6 +592,7 @@ export default function ProfileScreen() {
                     multiline
                     value={supportMessage}
                     onChangeText={setSupportMessage}
+                    autoCorrect={false}
                   />
                   <TouchableOpacity
                     style={styles.primaryButton}
@@ -558,6 +638,13 @@ export default function ProfileScreen() {
           <Text style={styles.version}>DocuGuard v1.0.0</Text>
         </ScrollView>
       </RefreshableContainer>
+
+      <Toast
+        visible={toast.visible}
+        message={toast.message}
+        type={toast.type}
+        onDismiss={() => setToast((t) => ({ ...t, visible: false }))}
+      />
     </SafeAreaView>
   );
 }
@@ -622,6 +709,11 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   userEmail: { fontSize: 15, color: COLORS.textSecondary, marginBottom: 12 },
+  tierRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
   securityLevel: {
     flexDirection: "row",
     alignItems: "center",
@@ -632,6 +724,16 @@ const styles = StyleSheet.create({
     borderRadius: 24,
   },
   securityLevelText: { fontSize: 14, fontWeight: "600", color: COLORS.primary },
+  serialNumber: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: COLORS.primary,
+    backgroundColor: `${COLORS.primary}10`,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    letterSpacing: 1,
+  },
   statsContainer: { flexDirection: "row", gap: 16, marginBottom: 28 },
   statCard: {
     flex: 1,

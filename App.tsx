@@ -3,7 +3,6 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { useFonts } from "expo-font";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect } from "react";
-import { Stack } from "expo-router";
 
 // Keep the splash screen visible while we fetch resources
 SplashScreen.preventAutoHideAsync();
@@ -26,18 +25,7 @@ export default function App() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <Stack
-          screenOptions={{
-            headerShown: false,
-          }}
-        >
-          <Stack.Screen name="(tabs)" />
-          <Stack.Screen name="(auth)" />
-          <Stack.Screen name="add-document" />
-          <Stack.Screen name="edit-document/[id]" />
-          <Stack.Screen name="document-details/[id]" />
-          <Stack.Screen name="biometric-login" />
-        </Stack>
+        {/* Navigation is handled by expo-router in app/_layout.tsx */}
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

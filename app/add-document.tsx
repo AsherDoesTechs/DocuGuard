@@ -334,6 +334,7 @@ type FieldProps = {
   keyboardType?: "default" | "number-pad";
   autoCapitalize?: "none" | "sentences" | "words" | "characters";
   autoCorrect?: boolean;
+  autoComplete?: string;
   onChangeText: (value: string) => void;
   onBlur?: () => void;
 };
@@ -351,6 +352,7 @@ function Field({
   autoCorrect = true,
   onChangeText,
   onBlur,
+  autoComplete,
 }: FieldProps) {
   return (
     <View style={styles.fieldContainer}>
@@ -370,6 +372,7 @@ function Field({
         keyboardType={keyboardType}
         autoCapitalize={autoCapitalize}
         autoCorrect={autoCorrect}
+        autoComplete={autoComplete as any}
         textAlignVertical={multiline ? "top" : "center"}
         style={[
           styles.input,
@@ -581,6 +584,7 @@ export default function AddDocumentScreen() {
               maxLength={MAX_TITLE_LENGTH}
               autoCapitalize="words"
               autoCorrect={false}
+              autoComplete="off"
               error={form.touched.title ? form.errors.title : undefined}
             />
 

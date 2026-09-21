@@ -105,6 +105,8 @@ export default function LoginScreen() {
           onBlur={form.handleBlur("email")}
           error={form.touched.email ? form.errors.email : undefined}
           keyboardType="email-address"
+          autoComplete="email"
+          textContentType="emailAddress"
         />
 
         <View style={styles.passwordWrapper}>
@@ -116,6 +118,8 @@ export default function LoginScreen() {
             onBlur={form.handleBlur("password")}
             error={form.touched.password ? form.errors.password : undefined}
             secureTextEntry={!showPassword}
+            autoComplete="password"
+            textContentType="password"
           />
           <TouchableOpacity
             style={styles.eyeIcon}
