@@ -7,7 +7,7 @@ services:
     region: oregon
     plan: free
     rootDir: DocuGuard-Server
-    buildCommand: npm install
+    buildCommand: cd .. && npm install && cd DocuGuard-Server && npm install
     startCommand: npm start
     healthCheckPath: /health
     envVars:
