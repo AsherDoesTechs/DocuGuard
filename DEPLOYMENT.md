@@ -168,6 +168,24 @@ curl https://your-app.onrender.com/documents \
 
 ## Troubleshooting
 
+### Server cannot find module 'zod' (shared validation schemas)
+
+`shared/validation/schemas.js` is located at the repository root — outside the
+`DocuGuard-Server` package — so Node's module resolution cannot reach
+`DocuGuard-Server/node_modules/zod` when loading it from the server.
+
+This is handled automatically by a `postinstall` hook in
+`DocuGuard-Server/package.json` that runs `npm install --prefix ../shared`,
+which installs `zod` into `shared/node_modules`. Because the hook runs as part
+of the normal `npm install` build step, the Render build command stays
+`npm install` (no dashboard change required).
+
+Do **not** remove `shared/package.json` or the `postinstall` script. If you ever
+run the server with `npm install --ignore-scripts`, also run
+`npm install --prefix ../shared` manually before starting.
+
+---
+
 ### Database Connection Issues
 - Verify `DB_SSL=true` for Render PostgreSQL
 - Check firewall: Render allows all IPs by default

@@ -1,0 +1,11 @@
+{
+  "name": "docuguard-shared",
+  "version": "1.0.0",
+  "description": "Shared validation schemas between the DocuGuard client and server",
+  "main": "validation/schemas.js",
+  "private": true,
+  "license": "ISC",
+  "dependencies": {
+    "zod": "^4.6.5"
+  }
+}

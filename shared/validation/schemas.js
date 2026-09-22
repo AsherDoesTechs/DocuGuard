@@ -79,29 +79,31 @@ const dateStringSchema = z
     );
   }, "Invalid date");
 
+const documentShape = {
+  title: z.string().min(1, "Document title is required").max(100, "Maximum 100 characters").trim(),
+  category: categorySchema,
+  issuer: z.string().min(1, "Issuer / organization is required").max(150, "Maximum 150 characters").trim(),
+  documentNumber: z
+    .string()
+    .min(1, "Document number is required")
+    .max(50, "Maximum 50 characters")
+    .regex(/^[A-Z0-9\/-]+$/, "Use only letters, numbers, - or /")
+    .transform((val) => val.toUpperCase()),
+  issueDate: dateStringSchema,
+  expiryDate: dateStringSchema,
+  notes: z.string().max(1000, "Maximum 1000 characters").trim().optional(),
+  enableAlerts: z.boolean().default(true),
+  status: z.enum(["active", "verified", "expired"]).default("active"),
+  processingStatus: z.enum(["pending", "uploading", "processing", "completed", "failed"]).default("completed"),
+  riskScore: z.number().min(0).max(100).default(0),
+  riskLevel: z.enum(["Low", "Medium", "High"]).default("Low"),
+  fileUrl: z.string().url().optional().nullable(),
+  fileType: z.string().optional().nullable(),
+  s3Key: z.string().optional().nullable(),
+};
+
 const documentSchema = z
-  .object({
-    title: z.string().min(1, "Document title is required").max(100, "Maximum 100 characters").trim(),
-    category: categorySchema,
-    issuer: z.string().min(1, "Issuer / organization is required").max(150, "Maximum 150 characters").trim(),
-    documentNumber: z
-      .string()
-      .min(1, "Document number is required")
-      .max(50, "Maximum 50 characters")
-      .regex(/^[A-Z0-9\/-]+$/, "Use only letters, numbers, - or /")
-      .transform((val) => val.toUpperCase()),
-    issueDate: dateStringSchema,
-    expiryDate: dateStringSchema,
-    notes: z.string().max(1000, "Maximum 1000 characters").trim().optional(),
-    enableAlerts: z.boolean().default(true),
-    status: z.enum(["active", "verified", "expired"]).default("active"),
-    processingStatus: z.enum(["pending", "uploading", "processing", "completed", "failed"]).default("completed"),
-    riskScore: z.number().min(0).max(100).default(0),
-    riskLevel: z.enum(["Low", "Medium", "High"]).default("Low"),
-    fileUrl: z.string().url().optional().nullable(),
-    fileType: z.string().optional().nullable(),
-    s3Key: z.string().optional().nullable(),
-  })
+  .object(documentShape)
   .refine((data) => new Date(data.issueDate) <= new Date(data.expiryDate), {
     message: "Expiry date must be after issue date",
     path: ["expiryDate"],
@@ -111,9 +113,12 @@ const documentSchema = z
     path: ["issueDate"],
   });
 
-const documentUpdateSchema = documentSchema.partial().extend({
-  id: z.number().int().positive(),
-});
+const documentUpdateSchema = z
+  .object(documentShape)
+  .partial()
+  .extend({
+    id: z.number().int().positive(),
+  });
 
 const documentSyncSchema = z.object({
   title: z.string().min(1).max(100).trim(),
