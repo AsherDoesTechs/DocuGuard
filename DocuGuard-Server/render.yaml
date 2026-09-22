@@ -6,8 +6,8 @@ services:
     runtime: node
     region: oregon
     plan: free
-    buildCommand: npm install
-    startCommand: npm start
+    buildCommand: cd DocuGuard-Server && npm install
+    startCommand: cd DocuGuard-Server && npm start
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV
