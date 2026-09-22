@@ -9,45 +9,30 @@ const {
   sendPasswordResetEmail,
   APP_DEEPLINK_SCHEME,
 } = require("../config/email");
+const {
+  registerSchema,
+  loginSchema,
+  verifyEmailSchema,
+  resendVerificationSchema,
+  forgotPasswordSchema,
+  resetPasswordSchema,
+  checkEmailSchema,
+  updateFcmTokenSchema,
+  validateSchema,
+} = require("../../shared/validation/schemas");
 
 // 1. Registration
 exports.register = async (req, res, next) => {
-  const { name, email, password } = req.body;
-
-  if (!name || !name.trim()) {
-    return res
-      .status(400)
-      .json({
-        error: "Name is required",
-        code: ErrorCodes.AUTH_REGISTER_FAILED,
-      });
-  }
-  if (!email || !email.trim()) {
-    return res
-      .status(400)
-      .json({
-        error: "Email is required",
-        code: ErrorCodes.AUTH_REGISTER_FAILED,
-      });
-  }
-  if (!password || password.length < 6) {
-    return res
-      .status(400)
-      .json({
-        error: "Password must be at least 6 characters",
-        code: ErrorCodes.AUTH_REGISTER_FAILED,
-      });
+  const validation = validateSchema(registerSchema, req.body);
+  if (!validation.success) {
+    return res.status(400).json({
+      error: Object.values(validation.errors).join(", "),
+      code: ErrorCodes.AUTH_REGISTER_FAILED,
+      details: validation.errors,
+    });
   }
 
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (!emailRegex.test(email)) {
-    return res
-      .status(400)
-      .json({
-        error: "Invalid email format",
-        code: ErrorCodes.AUTH_REGISTER_FAILED,
-      });
-  }
+  const { name, email, password } = validation.data;
 
   try {
     debug("Auth", "Registration attempt", { email });
@@ -135,21 +120,16 @@ exports.register = async (req, res, next) => {
 
 // 2. Login
 exports.login = async (req, res, next) => {
-  const { email, password } = req.body;
+  const validation = validateSchema(loginSchema, req.body);
+  if (!validation.success) {
+    return res.status(400).json({
+      error: Object.values(validation.errors).join(", "),
+      code: ErrorCodes.AUTH_LOGIN_FAILED,
+      details: validation.errors,
+    });
+  }
 
-  if (!email || !email.trim()) {
-    return res
-      .status(400)
-      .json({ error: "Email is required", code: ErrorCodes.AUTH_LOGIN_FAILED });
-  }
-  if (!password) {
-    return res
-      .status(400)
-      .json({
-        error: "Password is required",
-        code: ErrorCodes.AUTH_LOGIN_FAILED,
-      });
-  }
+  const { email, password } = validation.data;
 
   try {
     debug("Auth", "Login attempt", { email });
@@ -217,15 +197,16 @@ exports.login = async (req, res, next) => {
 // 3. Check Email Availability
 exports.checkEmail = async (req, res) => {
   try {
-    const { email } = req.query;
-    if (!email) {
-      return res
-        .status(400)
-        .json({
-          error: "Email parameter is required",
-          code: ErrorCodes.DOC_VALIDATION,
-        });
+    const validation = validateSchema(checkEmailSchema, req.query);
+    if (!validation.success) {
+      return res.status(400).json({
+        error: Object.values(validation.errors).join(", "),
+        code: ErrorCodes.DOC_VALIDATION,
+        details: validation.errors,
+      });
     }
+
+    const { email } = validation.data;
 
     const result = await db.query("SELECT id FROM users WHERE email = $1", [
       email.trim().toLowerCase(),
@@ -249,7 +230,16 @@ exports.checkEmail = async (req, res) => {
 
 // 4a. Verify Email (API / Deep Link)
 exports.verifyEmail = async (req, res, next) => {
-  const { token } = req.body;
+  const validation = validateSchema(verifyEmailSchema, req.body);
+  if (!validation.success) {
+    return res.status(400).json({
+      error: Object.values(validation.errors).join(", "),
+      code: ErrorCodes.AUTH_TOKEN_INVALID,
+      details: validation.errors,
+    });
+  }
+
+  const { token } = validation.data;
 
   try {
     debug("Auth", "Email verification attempt", { tokenLength: token?.length });
@@ -387,67 +377,85 @@ exports.verifyEmailWeb = async (req, res) => {
       return res.status(500).send("Verification Error");
     }
   };
-  exports.resendVerification = async (req, res) => {
-    const { email } = req.body;
+exports.resendVerification = async (req, res) => {
+  const validation = validateSchema(resendVerificationSchema, req.body);
+  if (!validation.success) {
+    return res.status(400).json({
+      error: Object.values(validation.errors).join(", "),
+      code: ErrorCodes.AUTH_REGISTER_FAILED,
+      details: validation.errors,
+    });
+  }
+
+  const { email } = validation.data;
+
+  try {
+    const result = await db.query(
+      "SELECT id, is_verified FROM users WHERE email = $1",
+      [email.trim().toLowerCase()],
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "User not found with this email." });
+    }
+
+    const user = result.rows[0];
+    if (user.is_verified) {
+      return res.status(400).json({ error: "Email is already verified." });
+    }
+
+    const verificationToken = crypto.randomBytes(32).toString("hex");
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+    await db.query(
+      "UPDATE users SET verification_token = $1, verification_expires_at = $2 WHERE id = $3",
+      [verificationToken, expiresAt, user.id],
+    );
 
     try {
-      const result = await db.query(
-        "SELECT id, is_verified FROM users WHERE email = $1",
-        [email.trim().toLowerCase()],
-      );
-      if (result.rows.length === 0) {
-        return res.status(404).json({ error: "User not found with this email." });
-      }
-
-      const user = result.rows[0];
-      if (user.is_verified) {
-        return res.status(400).json({ error: "Email is already verified." });
-      }
-
-      const verificationToken = crypto.randomBytes(32).toString("hex");
-      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
-
-      await db.query(
-        "UPDATE users SET verification_token = $1, verification_expires_at = $2 WHERE id = $3",
-        [verificationToken, expiresAt, user.id],
-      );
-
-      try {
-        await sendVerificationEmail(email, user.name || "there", verificationToken);
-        info("Auth", "Verification email resent", {
-          to: email,
-          userId: user.id,
-        });
-      } catch (mailErr) {
-        logError(
-          "Auth",
-          "Failed to resend verification email",
-          { email, userId: user.id, error: mailErr.message },
-          ErrorCodes.UNKNOWN_ERROR,
-        );
-        return res.status(500).json({
-          error: "Failed to resend verification email. Please check your Resend configuration and try again later.",
-          code: ErrorCodes.UNKNOWN_ERROR,
-        });
-      }
-
-      return res.json({ message: "Verification link resent successfully!" });
-    } catch (err) {
+      await sendVerificationEmail(email, user.name || "there", verificationToken);
+      info("Auth", "Verification email resent", {
+        to: email,
+        userId: user.id,
+      });
+    } catch (mailErr) {
       logError(
         "Auth",
-        "Resend verification error",
-        { error: err.message, stack: err.stack },
+        "Failed to resend verification email",
+        { email, userId: user.id, error: mailErr.message },
         ErrorCodes.UNKNOWN_ERROR,
       );
-      return res
-        .status(500)
-        .json({ error: "Failed to resend verification link." });
+      return res.status(500).json({
+        error: "Failed to resend verification email. Please check your Resend configuration and try again later.",
+        code: ErrorCodes.UNKNOWN_ERROR,
+      });
     }
-  };
+
+    return res.json({ message: "Verification link resent successfully!" });
+  } catch (err) {
+    logError(
+      "Auth",
+      "Resend verification error",
+      { error: err.message, stack: err.stack },
+      ErrorCodes.UNKNOWN_ERROR,
+    );
+    return res
+      .status(500)
+      .json({ error: "Failed to resend verification link." });
+  }
+};
 
 // 6. Request Password Reset
 exports.forgotPassword = async (req, res) => {
-  const { email } = req.body;
+  const validation = validateSchema(forgotPasswordSchema, req.body);
+  if (!validation.success) {
+    return res.status(400).json({
+      error: Object.values(validation.errors).join(", "),
+      code: ErrorCodes.AUTH_LOGIN_FAILED,
+      details: validation.errors,
+    });
+  }
+
+  const { email } = validation.data;
 
   try {
     const { rows } = await db.query("SELECT id FROM users WHERE email = $1", [
@@ -498,13 +506,16 @@ exports.forgotPassword = async (req, res) => {
 
 // 7. Reset Password
 exports.resetPassword = async (req, res) => {
-  const { token, newPassword } = req.body;
-
-  if (!newPassword || newPassword.length < 6) {
-    return res
-      .status(400)
-      .json({ error: "Password must be at least 6 characters long." });
+  const validation = validateSchema(resetPasswordSchema, req.body);
+  if (!validation.success) {
+    return res.status(400).json({
+      error: Object.values(validation.errors).join(", "),
+      code: ErrorCodes.AUTH_LOGIN_FAILED,
+      details: validation.errors,
+    });
   }
+
+  const { token, newPassword } = validation.data;
 
   const client = (await db.getClient) ? await db.getClient() : null;
 
@@ -551,7 +562,16 @@ exports.resetPassword = async (req, res) => {
 
 // 8. Update FCM Token
 exports.updateFcmToken = async (req, res) => {
-  const { fcmToken } = req.body;
+  const validation = validateSchema(updateFcmTokenSchema, req.body);
+  if (!validation.success) {
+    return res.status(400).json({
+      error: Object.values(validation.errors).join(", "),
+      code: ErrorCodes.AUTH_LOGIN_FAILED,
+      details: validation.errors,
+    });
+  }
+
+  const { fcmToken } = validation.data;
   try {
     await db.query("UPDATE users SET fcm_token = $1 WHERE id = $2", [
       fcmToken,

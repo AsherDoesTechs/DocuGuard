@@ -6,11 +6,9 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { usePushNotifications } from "../hooks/usePushNotifications";
 import { initDatabase } from "../services/localDatabase";
 import { checkAndScheduleAlerts } from "../services/notificationScheduler";
-import { useAppLock } from "../hooks/useAppLock";
 
 export default function RootLayout() {
   usePushNotifications();
-  useAppLock();
 
   useEffect(() => {
     initDatabase().catch((err) => {

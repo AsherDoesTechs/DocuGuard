@@ -4,6 +4,31 @@ import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
 import { router } from "expo-router";
 import Constants from "expo-constants";
+import {
+  loginSchema,
+  registerSchema,
+  verifyEmailSchema,
+  resendVerificationSchema,
+  forgotPasswordSchema,
+  documentSchema,
+  documentUpdateSchema,
+  documentSyncSchema,
+  uploadUrlSchema,
+  processDocumentSchema,
+  verifyDocumentSchema,
+  type LoginInput,
+  type RegisterInput,
+  type VerifyEmailInput,
+  type ResendVerificationInput,
+  type ForgotPasswordInput,
+  type DocumentInput,
+  type DocumentUpdateInput,
+  type DocumentSyncInput,
+  type UploadUrlInput,
+  type ProcessDocumentInput,
+  type VerifyDocumentInput,
+  validateSchemaOrThrow,
+} from "@/shared/validation";
 
 // Unified token key to match your app screens (AsyncStorage / SecureStore)
 const TOKEN_KEY = "userToken";
@@ -109,11 +134,8 @@ client.interceptors.response.use(
 
 // API Methods
 export const auth = {
-  login: async (credentials: {
-    email: string;
-    password: string;
-    rememberMe?: boolean;
-  }) => {
+  login: async (credentials: LoginInput) => {
+    validateSchemaOrThrow(loginSchema, credentials);
     const response = await client.post("/auth/login", credentials);
     if (response.data?.token) {
       await safeSetItem(TOKEN_KEY, response.data.token);
@@ -121,7 +143,8 @@ export const auth = {
     return response.data;
   },
 
-  register: async (credentials: any) => {
+  register: async (credentials: RegisterInput) => {
+    validateSchemaOrThrow(registerSchema, credentials);
     const response = await client.post("/auth/register", credentials);
     if (response.data?.token) {
       await safeSetItem(TOKEN_KEY, response.data.token);
@@ -129,7 +152,8 @@ export const auth = {
     return response.data;
   },
 
-  verifyEmail: async (data: { token: string }) => {
+  verifyEmail: async (data: VerifyEmailInput) => {
+    validateSchemaOrThrow(verifyEmailSchema, data);
     const response = await client.post("/auth/verify-email", data);
     if (response.data?.token) {
       await safeSetItem(TOKEN_KEY, response.data.token);
@@ -137,12 +161,14 @@ export const auth = {
     return response.data;
   },
 
-  resendVerification: async (data: { email: string }) => {
+  resendVerification: async (data: ResendVerificationInput) => {
+    validateSchemaOrThrow(resendVerificationSchema, data);
     const response = await client.post("/auth/resend-verification", data);
     return response.data;
   },
 
-  forgotPassword: async (credentials: { email: string }) => {
+  forgotPassword: async (credentials: ForgotPasswordInput) => {
+    validateSchemaOrThrow(forgotPasswordSchema, credentials);
     const response = await client.post("/auth/forgot-password", credentials);
     return response.data;
   },
@@ -155,26 +181,38 @@ export const documents = {
   },
 
   getById: async (id: number) => {
+    if (!Number.isInteger(id) || id <= 0) {
+      throw new Error("Invalid document ID");
+    }
     const response = await client.get(`/documents/${id}`);
     return response.data;
   },
 
-  create: async (data: any) => {
+  create: async (data: DocumentInput) => {
+    validateSchemaOrThrow(documentSchema, data);
     const response = await client.post("/documents", data);
     return response.data;
   },
 
-  update: async (id: number, data: any) => {
+  update: async (id: number, data: DocumentUpdateInput) => {
+    if (!Number.isInteger(id) || id <= 0) {
+      throw new Error("Invalid document ID");
+    }
+    validateSchemaOrThrow(documentUpdateSchema, { ...data, id });
     const response = await client.put(`/documents/${id}`, data);
     return response.data;
   },
 
   delete: async (id: number) => {
+    if (!Number.isInteger(id) || id <= 0) {
+      throw new Error("Invalid document ID");
+    }
     const response = await client.delete(`/documents/${id}`);
     return response.data;
   },
 
   getUploadUrl: async (fileName: string, fileType: string) => {
+    validateSchemaOrThrow(uploadUrlSchema, { fileName, fileType });
     const response = await client.get(`/documents/upload-url`, {
       params: { fileName, fileType },
     });
@@ -193,16 +231,19 @@ export const documents = {
   },
 
   processDocument: async (documentId: number) => {
+    validateSchemaOrThrow(processDocumentSchema, { documentId });
     const response = await client.post("/documents/process", { documentId });
     return response.data;
   },
 
   verifyDocument: async (documentId: number) => {
+    validateSchemaOrThrow(verifyDocumentSchema, { documentId });
     const response = await client.post("/documents/verify", { documentId });
     return response.data;
   },
 
-  syncDocument: async (payload: any) => {
+  syncDocument: async (payload: DocumentSyncInput) => {
+    validateSchemaOrThrow(documentSyncSchema, payload);
     const response = await client.post("/documents/sync", payload);
     return response.data;
   },

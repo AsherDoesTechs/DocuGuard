@@ -1,5 +1,8 @@
 const db = require("../config/db");
 const bcrypt = require("bcryptjs");
+const { ErrorCodes } = require("../utils/errorCodes");
+const { validateSchema, profileSchema } = require("../../shared/validation/schemas");
+const { z } = require("zod");
 
 // Get user profile data and live stats
 exports.getProfile = async (req, res) => {
@@ -40,7 +43,24 @@ exports.getProfile = async (req, res) => {
 // Update security settings (Password & 2FA)
 exports.updateSecurity = async (req, res) => {
   const userId = req.user.userId;
-  const { currentPassword, newPassword, twoFactor } = req.body;
+
+  const securitySchema = z.object({
+    currentPassword: z.string().min(1, "Current password is required"),
+    newPassword: z.string().min(6, "New password must be at least 6 characters").optional(),
+    twoFactor: z.boolean().optional(),
+    twoFactorCode: z.string().optional(),
+  });
+
+  const validation = validateSchema(securitySchema, req.body);
+  if (!validation.success) {
+    return res.status(400).json({
+      error: Object.values(validation.errors).join(", "),
+      code: ErrorCodes.PROFILE_UPDATE_FAILED,
+      details: validation.errors,
+    });
+  }
+
+  const { currentPassword, newPassword, twoFactor, twoFactorCode } = validation.data;
 
   try {
     if (newPassword) {
@@ -59,7 +79,7 @@ exports.updateSecurity = async (req, res) => {
       const hashedPassword = await bcrypt.hash(newPassword, salt);
 
       await db.query(
-        "UPDATE users SET password = $1, two_factor = $2 WHERE id = $1",
+        "UPDATE users SET password = $1, two_factor = $2 WHERE id = $3",
         [hashedPassword, twoFactor, userId],
       );
     } else {
@@ -79,7 +99,23 @@ exports.updateSecurity = async (req, res) => {
 // Update notification preferences
 exports.updatePreferences = async (req, res) => {
   const userId = req.user.userId;
-  const { notifyEmail, notifyPush, notifyExpiry } = req.body;
+
+  const prefsSchema = z.object({
+    notifyEmail: z.boolean().optional(),
+    notifyPush: z.boolean().optional(),
+    notifyExpiry: z.boolean().optional(),
+  });
+
+  const validation = validateSchema(prefsSchema, req.body);
+  if (!validation.success) {
+    return res.status(400).json({
+      error: Object.values(validation.errors).join(", "),
+      code: ErrorCodes.PROFILE_UPDATE_FAILED,
+      details: validation.errors,
+    });
+  }
+
+  const { notifyEmail, notifyPush, notifyExpiry } = validation.data;
 
   try {
     await db.query(
@@ -96,10 +132,21 @@ exports.updatePreferences = async (req, res) => {
 // Handle support tickets
 exports.submitSupportTicket = async (req, res) => {
   const userId = req.user.userId;
-  const { message } = req.body;
 
-  if (!message)
-    return res.status(400).json({ error: "Message cannot be empty" });
+  const supportSchema = z.object({
+    message: z.string().min(1, "Message cannot be empty").max(5000, "Message too long"),
+  });
+
+  const validation = validateSchema(supportSchema, req.body);
+  if (!validation.success) {
+    return res.status(400).json({
+      error: Object.values(validation.errors).join(", "),
+      code: ErrorCodes.PROFILE_UPDATE_FAILED,
+      details: validation.errors,
+    });
+  }
+
+  const { message } = validation.data;
 
   try {
     await db.query(
@@ -116,13 +163,24 @@ exports.submitSupportTicket = async (req, res) => {
 // Handle checkout & subscription upgrades
 exports.handleCheckoutSubscription = async (req, res) => {
   const userId = req.user.userId;
-  const { name, serial, card, expiry } = req.body;
 
-  if (!name || !serial || !card || !expiry) {
-    return res
-      .status(400)
-      .json({ error: "All checkout and verification fields are required." });
+  const checkoutSchema = z.object({
+    name: z.string().min(1, "Name is required").max(100, "Name too long"),
+    serial: z.string().min(1, "Serial number is required").max(50, "Serial too long"),
+    card: z.string().min(12, "Invalid card number").max(19, "Invalid card number"),
+    expiry: z.string().regex(/^\d{2}\/\d{2}$/, "Invalid expiry format (MM/YY)"),
+  });
+
+  const validation = validateSchema(checkoutSchema, req.body);
+  if (!validation.success) {
+    return res.status(400).json({
+      error: Object.values(validation.errors).join(", "),
+      code: ErrorCodes.PROFILE_UPDATE_FAILED,
+      details: validation.errors,
+    });
   }
+
+  const { name, serial, card, expiry } = validation.data;
 
   try {
     // Update user security level / subscription status upon successful mock payment

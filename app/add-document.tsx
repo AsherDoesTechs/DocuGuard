@@ -24,25 +24,15 @@ import { useForm } from "@/hooks/useForm";
 import { DOCUMENT_CATEGORIES, COLORS } from "@/constants";
 import { createDocument, updateDocument, logDocumentAction } from "../services/localDatabase";
 import { formatCategoryForBackend } from "@/DocuGuard-Server/utils/categories";
-
-type DocumentFormValues = {
-  title: string;
-  category: string;
-  issuer: string;
-  documentNumber: string;
-  issueDate: string;
-  expiryDate: string;
-  notes: string;
-};
-
-type DateField = "issueDate" | "expiryDate";
-type FormErrors = Partial<Record<keyof DocumentFormValues, string>>;
+import { documentSchema, type DocumentInput, validateSchema } from "@/shared/validation";
 
 const MAX_TITLE_LENGTH = 100;
 const MAX_ISSUER_LENGTH = 150;
 const MAX_DOCUMENT_NUMBER_LENGTH = 50;
 const MAX_NOTES_LENGTH = 1000;
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+
+type DateField = "issueDate" | "expiryDate";
 
 /* -------------------------------------------------------------------------- */
 /* Helpers                                                                    */
@@ -95,6 +85,37 @@ function isValidDate(value: string): boolean {
   return parseDate(value) !== null;
 }
 
+function getFileExtension(mimeType?: string): string {
+  if (!mimeType) return "";
+  if (mimeType === "application/pdf") return ".pdf";
+  if (mimeType.startsWith("image/")) return `.${mimeType.split("/")[1]}`;
+  return "";
+}
+
+function getFileTypeLabel(mimeType?: string): { label: string; icon: keyof typeof Ionicons.glyphMap } {
+  if (!mimeType) return { label: "File", icon: "document" };
+  if (mimeType === "application/pdf") return { label: "PDF", icon: "document" };
+  if (mimeType.startsWith("image/")) {
+    const imgType = mimeType.split("/")[1];
+    if (imgType === "png") return { label: "PNG", icon: "image" };
+    if (imgType === "jpeg" || imgType === "jpg") return { label: "JPG", icon: "image" };
+    if (imgType === "gif") return { label: "GIF", icon: "image" };
+    if (imgType === "webp") return { label: "WebP", icon: "image" };
+    return { label: "Image", icon: "image" };
+  }
+  if (mimeType === "text/plain") return { label: "TXT", icon: "document" };
+  if (mimeType.includes("word") || mimeType.includes("document"))
+    return { label: "DOC", icon: "document" };
+  return { label: "File", icon: "document" };
+}
+
+function ensureFileExtension(name: string, mimeType?: string): string {
+  const ext = getFileExtension(mimeType);
+  if (!ext) return name;
+  const baseName = name.replace(/\.[^/.]+$/, "");
+  return `${baseName}${ext}`;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Sanitizers                                                                 */
 /* -------------------------------------------------------------------------- */
@@ -118,69 +139,12 @@ function sanitizeNotes(value: string): string {
 /* Validation                                                                 */
 /* -------------------------------------------------------------------------- */
 
-function validate(values: DocumentFormValues): FormErrors {
-  const errors: FormErrors = {};
-
-  const title = values.title.trim();
-  const issuer = values.issuer.trim();
-  const documentNumber = values.documentNumber.trim();
-  const notes = values.notes.trim();
-
-  if (!title) {
-    errors.title = "Document title is required.";
-  } else if (title.length > MAX_TITLE_LENGTH) {
-    errors.title = `Maximum ${MAX_TITLE_LENGTH} characters.`;
+function validate(values: DocumentInput): Partial<Record<keyof DocumentInput, string>> {
+  const result = validateSchema(documentSchema, values);
+  if (result.success) {
+    return {};
   }
-
-  if (!values.category) {
-    errors.category = "Please select a category.";
-  }
-
-  if (!issuer) {
-    errors.issuer = "Issuer / organization is required.";
-  } else if (issuer.length > MAX_ISSUER_LENGTH) {
-    errors.issuer = `Maximum ${MAX_ISSUER_LENGTH} characters.`;
-  }
-
-  if (!documentNumber) {
-    errors.documentNumber = "Document number is required.";
-  } else if (documentNumber.length > MAX_DOCUMENT_NUMBER_LENGTH) {
-    errors.documentNumber = `Maximum ${MAX_DOCUMENT_NUMBER_LENGTH} characters.`;
-  } else if (!/^[A-Z0-9/-]+$/.test(documentNumber)) {
-    errors.documentNumber = "Use only letters, numbers, - or /.";
-  }
-
-  if (!values.issueDate) {
-    errors.issueDate = "Issue date is required.";
-  } else if (!isValidDate(values.issueDate)) {
-    errors.issueDate = "Please select a valid date.";
-  } else {
-    const issueDate = parseDate(values.issueDate);
-    if (issueDate && issueDate > getToday()) {
-      errors.issueDate = "Issue date cannot be in the future.";
-    }
-  }
-
-  if (!values.expiryDate) {
-    errors.expiryDate = "Expiry date is required.";
-  } else if (!isValidDate(values.expiryDate)) {
-    errors.expiryDate = "Please select a valid date.";
-  }
-
-  if (isValidDate(values.issueDate) && isValidDate(values.expiryDate)) {
-    const issueDate = parseDate(values.issueDate);
-    const expiryDate = parseDate(values.expiryDate);
-
-    if (issueDate && expiryDate && expiryDate <= issueDate) {
-      errors.expiryDate = "Expiry date must be after issue date.";
-    }
-  }
-
-  if (notes.length > MAX_NOTES_LENGTH) {
-    errors.notes = `Maximum ${MAX_NOTES_LENGTH} characters.`;
-  }
-
-  return errors;
+  return result.errors as Partial<Record<keyof DocumentInput, string>>;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -188,7 +152,7 @@ function validate(values: DocumentFormValues): FormErrors {
 /* -------------------------------------------------------------------------- */
 
 async function saveDocument(
-  values: DocumentFormValues,
+  values: DocumentInput,
   file: { name: string; uri: string; size: number; mimeType?: string } | null,
 ) {
   const token = await getStoredToken();
@@ -200,7 +164,7 @@ const payload: Record<string, any> = {
     documentNumber: values.documentNumber.trim().toUpperCase(),
     issueDate: values.issueDate,
     expiryDate: values.expiryDate,
-    notes: values.notes.trim(),
+    notes: values.notes?.trim() || "",
     status: "active",
     enableAlerts: true,
     processingStatus: "pending",
@@ -435,7 +399,7 @@ export default function AddDocumentScreen() {
     setSelectedFile(null);
   };
 
-  const form = useForm<DocumentFormValues>({
+const form = useForm<DocumentInput>({
     initialValues: {
       title: "",
       category: "other",
@@ -444,6 +408,14 @@ export default function AddDocumentScreen() {
       issueDate: "",
       expiryDate: "",
       notes: "",
+      enableAlerts: true,
+      status: "active",
+      processingStatus: "completed",
+      riskScore: 0,
+      riskLevel: "Low",
+      fileUrl: null,
+      fileType: null,
+      s3Key: null,
     },
     validate,
     onSubmit: async (values) => {
@@ -757,7 +729,7 @@ export default function AddDocumentScreen() {
             <Field
               label="Notes"
               placeholder="Add any additional notes..."
-              value={form.values.notes}
+              value={form.values.notes || ""}
               onChangeText={(value) => {
                 setSubmitError(null);
                 form.handleChange("notes")(sanitizeNotes(value));
@@ -788,15 +760,27 @@ export default function AddDocumentScreen() {
               ) : (
                 <View style={styles.selectedFileContainer}>
                   <View style={styles.selectedFileInfo}>
-                    <Ionicons
-                      name="document"
-                      size={24}
-                      color={COLORS.primary}
-                    />
+                    <View
+                      style={[
+                        styles.fileTypeBadge,
+                        { backgroundColor: `${COLORS.primary}15` },
+                      ]}
+                    >
+                      <Ionicons
+                        name={getFileTypeLabel(selectedFile.mimeType).icon}
+                        size={20}
+                        color={COLORS.primary}
+                      />
+                    </View>
                     <View style={styles.selectedFileDetails}>
-                      <Text style={styles.selectedFileName} numberOfLines={1}>
-                        {selectedFile.name}
-                      </Text>
+                      <View style={styles.fileNameRow}>
+                        <Text style={styles.selectedFileName} numberOfLines={1}>
+                          {ensureFileExtension(selectedFile.name, selectedFile.mimeType)}
+                        </Text>
+                        <Text style={styles.fileTypeChip}>
+                          {getFileTypeLabel(selectedFile.mimeType).label}
+                        </Text>
+                      </View>
                       <Text style={styles.selectedFileSize}>
                         {(selectedFile.size / 1024).toFixed(1)} KB
                       </Text>
@@ -955,10 +939,34 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   selectedFileDetails: { flex: 1 },
+  fileNameRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
   selectedFileName: {
     fontSize: 14,
     fontWeight: "600",
     color: COLORS.text,
+    flex: 1,
+  },
+  fileTypeChip: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: COLORS.primary,
+    backgroundColor: `${COLORS.primary}15`,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    overflow: "hidden",
+    letterSpacing: 0.5,
+  },
+  fileTypeBadge: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    justifyContent: "center",
+    alignItems: "center",
   },
   selectedFileSize: {
     fontSize: 12,

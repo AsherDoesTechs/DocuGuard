@@ -100,8 +100,8 @@ export default function DocumentDetailsScreen() {
         style: "destructive",
         onPress: async () => {
           try {
-            await deleteDocument(parseInt(document.id, 10));
-            router.replace("/(tabs)/documents" as any);
+          await deleteDocument(parseInt(document.id, 10));
+          router.back();
           } catch (err) {
             Alert.alert("Error", "Could not delete document.");
           }

@@ -1,13 +1,24 @@
-import { Tabs } from "expo-router";
+import { Tabs, usePathname } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { COLORS } from "@/constants";
 import { Platform } from "react-native";
 import { useAppLock, AppLockScreen } from "../../hooks/useAppLock";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
+import { TabBar } from "../../components/ui/TabBar";
+
+const TAB_ITEMS = [
+  { name: "index", icon: "home" as const, label: "Home" },
+  { name: "home", icon: "grid" as const, label: "Home" },
+  { name: "documents", icon: "document-text" as const, label: "Docs" },
+  { name: "reminders", icon: "notifications" as const, label: "Alerts" },
+  { name: "profile", icon: "person" as const, label: "Profile" },
+  { name: "sync", icon: "cloud-upload" as const, label: "Sync" },
+];
 
 export default function TabsLayout() {
   const { isLocked, biometricEnabled, unlockWithBiometric, unlockWithPassword } = useAppLock();
   const [showLockScreen, setShowLockScreen] = useState(false);
+  const pathname = usePathname();
 
   useEffect(() => {
     if (isLocked) {
@@ -15,17 +26,23 @@ export default function TabsLayout() {
     }
   }, [isLocked]);
 
-  const handleUnlock = async () => {
+  const handleUnlock = useCallback(async () => {
     const success = await unlockWithBiometric();
     if (success) {
       setShowLockScreen(false);
     }
-  };
+  }, [unlockWithBiometric]);
 
-  const handleUsePassword = () => {
+  const handleUsePassword = useCallback(() => {
     unlockWithPassword();
     setShowLockScreen(false);
-  };
+  }, [unlockWithPassword]);
+
+  const handleTabPress = useCallback((tabName: string) => {
+    // Navigation handled by expo-router Tabs
+  }, []);
+
+  const activeTabName = pathname.split("/").pop() || "index";
 
   if (showLockScreen) {
     return (
@@ -52,6 +69,13 @@ export default function TabsLayout() {
           paddingBottom: Platform.OS === "ios" ? 25 : 10,
         },
       }}
+      tabBar={(props) => (
+        <TabBar
+          tabs={TAB_ITEMS}
+          activeTab={activeTabName}
+          onTabPress={handleTabPress}
+        />
+      )}
     >
       <Tabs.Screen name="index" options={{ href: null }} />
       <Tabs.Screen

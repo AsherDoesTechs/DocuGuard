@@ -5,6 +5,7 @@ import { Input, Button, Card } from "../../components/ui";
 import { useForm } from "../../hooks/useForm";
 import { COLORS } from "../../constants";
 import { api } from "../../services/api";
+import { registerSchema, type RegisterInput, validateSchema } from "@/shared/validation";
 
 export default function RegisterScreen() {
   const router = useRouter();
@@ -111,48 +112,26 @@ export default function RegisterScreen() {
     }
   };
 
-  const validate = (values: any) => {
-    const errors: Record<string, string> = {};
-
-    if (!firstName.trim()) {
-      errors.firstName = "First name is required";
-    } else if (firstName.trim().length < 2) {
-      errors.firstName = "First name must be at least 2 characters";
-    } else if (firstName.trim().length > 50) {
-      errors.firstName = "First name must be under 50 characters";
+  const validate = (values: RegisterInput) => {
+    const fullName = `${firstName.trim()} ${lastName.trim()}`;
+    const fullEmail = `${emailUsername.trim().toLowerCase()}@gmail.com`;
+    
+    const valuesToValidate = {
+      name: fullName,
+      email: fullEmail,
+      password: values.password,
+      confirmPassword: values.confirmPassword,
+    };
+    
+    const result = validateSchema(registerSchema, valuesToValidate);
+    if (result.success) {
+      return {};
     }
-
-    if (!lastName.trim()) {
-      errors.lastName = "Last name is required";
-    } else if (lastName.trim().length < 2) {
-      errors.lastName = "Last name must be at least 2 characters";
-    } else if (lastName.trim().length > 50) {
-      errors.lastName = "Last name must be under 50 characters";
-    }
-
-    if (!emailUsername.trim()) {
-      errors.email = "Email address is required";
-    } else if (emailUsername.includes("@") || emailUsername.includes(" ")) {
-      errors.email = "Enter only your account name without @gmail.com";
-    } else if (emailError) {
-      errors.email = emailError;
-    }
-
-    if (!values.password) {
-      errors.password = "Password is required";
-    } else if (values.password.length < 6) {
-      errors.password = "Must be at least 6 characters";
-    }
-
-    if (values.password !== values.confirmPassword) {
-      errors.confirmPassword = "Passwords do not match";
-    }
-
-    return errors;
+    return result.errors as Partial<Record<keyof RegisterInput, string>>;
   };
 
-  const form = useForm({
-    initialValues: { password: "", confirmPassword: "" },
+  const form = useForm<RegisterInput>({
+    initialValues: { name: "", email: "", password: "", confirmPassword: "" },
     validate,
     onSubmit: async (values) => {
       setServerError(null);
@@ -294,7 +273,7 @@ export default function RegisterScreen() {
         <Input
           label="Confirm Password"
           placeholder="••••••••"
-          value={form.values.confirmPassword}
+          value={form.values.confirmPassword || ""}
           onChangeText={form.handleChange("confirmPassword")}
           onBlur={form.handleBlur("confirmPassword")}
           error={

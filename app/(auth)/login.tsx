@@ -14,9 +14,9 @@ import * as SecureStore from "expo-secure-store";
 import { Ionicons } from "@expo/vector-icons";
 import { Input, Button, Card } from "../../components/ui";
 import { useForm } from "../../hooks/useForm";
-import { isValidEmail } from "../../utils";
 import { COLORS } from "../../constants";
 import { api } from "../../services/api";
+import { loginSchema, type LoginInput, validateSchema } from "@/shared/validation";
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -53,19 +53,18 @@ export default function LoginScreen() {
     })();
   }, []);
 
-  const form = useForm({
-    initialValues: { email: "", password: "" },
-    validate: (values: any) => {
-      const errors: Record<string, string> = {};
-      if (!values.email) errors.email = "Email is required";
-      else if (!isValidEmail(values.email))
-        errors.email = "Invalid email format";
-      if (!values.password) errors.password = "Password is required";
-      return errors;
+  const form = useForm<LoginInput>({
+    initialValues: { email: "", password: "", rememberMe: false },
+    validate: (values: LoginInput) => {
+      const result = validateSchema(loginSchema, values);
+      if (result.success) {
+        return {};
+      }
+      return result.errors as Partial<Record<keyof LoginInput, string>>;
     },
     onSubmit: async (values) => {
       try {
-        const response = await api.auth.login({ ...values, rememberMe });
+        const response = await api.auth.login(values);
 
         // Save session token securely if returned from login API
         if (response?.data?.token) {

@@ -13,6 +13,9 @@ import {
   ActivityIndicator,
   PanResponder,
   Animated as RNAnimated,
+  ScrollView,
+  KeyboardAvoidingView,
+  Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
@@ -237,167 +240,193 @@ export default function DocuGuardCheckout() {
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.brand}>DocuGuard</Text>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Ionicons name="close" size={24} color={DG.navy} />
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.content}>
-        <Text style={styles.stepTitle}>
-          {step === 1
-            ? "Verify Identity"
-            : step === 2
-              ? "Payment Details"
-              : "Secure Gate"}
-        </Text>
-
-        {errorMessage && (
-          <View style={styles.errorBanner}>
-            <Ionicons name="alert-circle" size={16} color={COLORS.danger} />
-            <Text style={styles.errorText}>{errorMessage}</Text>
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 20}
+      >
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.header}>
+            <Text style={styles.brand}>DocuGuard</Text>
+            <TouchableOpacity onPress={() => router.back()}>
+              <Ionicons name="close" size={24} color={DG.navy} />
+            </TouchableOpacity>
           </View>
-        )}
 
-        {step === 1 && (
-          <View style={styles.form}>
-            <TextInput
-              style={styles.input}
-              placeholder="Legal Full Name"
-              placeholderTextColor="#94A3B8"
-              value={formData.current.name}
-              onChangeText={(v) =>
-                (formData.current.name = v.replace(/[^a-zA-Z\s]/g, ""))
-              }
-              autoCapitalize="words"
-              autoCorrect={false}
-              autoComplete="name"
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Document Serial Number"
-              placeholderTextColor="#94A3B8"
-              keyboardType="numeric"
-              value={formData.current.serial}
-              onChangeText={(v) =>
-                (formData.current.serial = v.replace(/[^A-Z0-9]/gi, "").toUpperCase())
-              }
-              autoCapitalize="characters"
-              autoCorrect={false}
-            />
-          </View>
-        )}
+          <View style={styles.content}>
+            <Text style={styles.stepTitle}>
+              {step === 1
+                ? "Verify Identity"
+                : step === 2
+                  ? "Payment Details"
+                  : "Secure Gate"}
+            </Text>
 
-        {step === 2 && (
-          <View style={styles.form}>
-            <TextInput
-              style={styles.input}
-              placeholder="Card Number"
-              placeholderTextColor="#94A3B8"
-              keyboardType="number-pad"
-              value={formData.current.card}
-              onChangeText={(v) => {
-                const cleaned = v.replace(/\D/g, "").slice(0, 16);
-                const parts = [];
-                for (let i = 0; i < cleaned.length; i += 4) {
-                  parts.push(cleaned.slice(i, i + 4));
-                }
-                formData.current.card = parts.join(" ");
-              }}
-              autoCorrect={false}
-              autoComplete="cc-number"
-              textContentType="creditCardNumber"
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="MM/YY"
-              placeholderTextColor="#94A3B8"
-              value={formData.current.expiry}
-              onChangeText={(v) => {
-                let cleaned = v.replace(/\D/g, "").slice(0, 4);
-                if (cleaned.length >= 3) {
-                  cleaned = cleaned.slice(0, 2) + "/" + cleaned.slice(2);
-                }
-                formData.current.expiry = cleaned;
-              }}
-              keyboardType="number-pad"
-              autoCorrect={false}
-              autoComplete="cc-exp"
-              textContentType="creditCardExpiration"
-            />
-          </View>
-        )}
+            {errorMessage && (
+              <View style={styles.errorBanner}>
+                <Ionicons name="alert-circle" size={16} color={COLORS.danger} />
+                <Text style={styles.errorText}>{errorMessage}</Text>
+              </View>
+            )}
 
-        {step === 3 && (
-          <View style={styles.gate}>
-            {!sliderUnlocked ? (
-              <View style={styles.sliderContainer}>
-                <Text style={styles.gateText}>Layer 1: Slide to Continue</Text>
-                <View style={styles.sliderTrack}>
-                  <RNAnimated.View
-                    style={[
-                      styles.sliderThumb,
-                      { transform: [{ translateX: slideAnim }] },
-                    ]}
-                    {...panResponder.panHandlers}
-                  >
-                    <Ionicons name="chevron-forward" size={20} color="#fff" />
-                  </RNAnimated.View>
-                  <RNAnimated.Text
-                    style={[styles.sliderText, { transform: [{ translateX: slideTextAnim }] }]}
-                  >
-                    Slide right → to unlock
-                  </RNAnimated.Text>
+            {step === 1 && (
+              <View style={styles.form}>
+                <View style={styles.fieldGroup}>
+                  <Text style={styles.fieldLabel}>Legal Full Name</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Enter your full legal name"
+                    placeholderTextColor="#94A3B8"
+                    value={formData.current.name}
+                    onChangeText={(v) =>
+                      (formData.current.name = v.replace(/[^a-zA-Z\s]/g, ""))
+                    }
+                    autoCapitalize="words"
+                    autoCorrect={false}
+                    autoComplete="name"
+                    textContentType="name"
+                  />
+                </View>
+                <View style={styles.fieldGroup}>
+                  <Text style={styles.fieldLabel}>Document Serial Number</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Enter document serial"
+                    placeholderTextColor="#94A3B8"
+                    keyboardType="numeric"
+                    value={formData.current.serial}
+                    onChangeText={(v) =>
+                      (formData.current.serial = v.replace(/[^A-Z0-9]/gi, "").toUpperCase())
+                    }
+                    autoCapitalize="characters"
+                    autoCorrect={false}
+                    autoComplete="off"
+                  />
                 </View>
               </View>
-            ) : (
-              <Animated.View entering={FadeIn.duration(300)} style={styles.biometricContainer}>
-                <Ionicons name="finger-print" size={80} color={DG.emerald} />
-                <Text style={styles.gateText}>
-                  Layer 2: Biometric Verification Required
-                </Text>
-                <TouchableOpacity
-                  style={styles.confirmBtn}
-                  onPress={handleBiometricVerification}
-                  disabled={loading}
-                >
-                  {loading ? (
-                    <ActivityIndicator color="#fff" />
-                  ) : (
-                    <Text style={styles.btnText}>SCAN FINGERPRINT</Text>
-                  )}
-                </TouchableOpacity>
-              </Animated.View>
+            )}
+
+            {step === 2 && (
+              <View style={styles.form}>
+                <View style={styles.fieldGroup}>
+                  <Text style={styles.fieldLabel}>Card Number</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="0000 0000 0000 0000"
+                    placeholderTextColor="#94A3B8"
+                    keyboardType="number-pad"
+                    value={formData.current.card}
+                    onChangeText={(v) => {
+                      const cleaned = v.replace(/\D/g, "").slice(0, 16);
+                      const parts = [];
+                      for (let i = 0; i < cleaned.length; i += 4) {
+                        parts.push(cleaned.slice(i, i + 4));
+                      }
+                      formData.current.card = parts.join(" ");
+                    }}
+                    autoCorrect={false}
+                    autoComplete="cc-number"
+                    textContentType="creditCardNumber"
+                  />
+                </View>
+                <View style={styles.fieldGroup}>
+                  <Text style={styles.fieldLabel}>Expiry Date (MM/YY)</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="MM / YY"
+                    placeholderTextColor="#94A3B8"
+                    value={formData.current.expiry}
+                    onChangeText={(v) => {
+                      let cleaned = v.replace(/\D/g, "").slice(0, 4);
+                      if (cleaned.length >= 3) {
+                        cleaned = cleaned.slice(0, 2) + "/" + cleaned.slice(2);
+                      }
+                      formData.current.expiry = cleaned;
+                    }}
+                    keyboardType="number-pad"
+                    autoCorrect={false}
+                    autoComplete="cc-exp"
+                    textContentType="creditCardExpiration"
+                  />
+                </View>
+              </View>
+            )}
+
+            {step === 3 && (
+              <View style={styles.gate}>
+                {!sliderUnlocked ? (
+                  <View style={styles.sliderContainer}>
+                    <Text style={styles.gateText}>Layer 1: Slide to Continue</Text>
+                    <View style={styles.sliderTrack}>
+                      <RNAnimated.View
+                        style={[
+                          styles.sliderThumb,
+                          { transform: [{ translateX: slideAnim }] },
+                        ]}
+                        {...panResponder.panHandlers}
+                      >
+                        <Ionicons name="chevron-forward" size={20} color="#fff" />
+                      </RNAnimated.View>
+                      <RNAnimated.Text
+                        style={[styles.sliderText, { transform: [{ translateX: slideTextAnim }] }]}
+                      >
+                        Slide right → to unlock
+                      </RNAnimated.Text>
+                    </View>
+                  </View>
+                ) : (
+                  <Animated.View entering={FadeIn.duration(300)} style={styles.biometricContainer}>
+                    <Ionicons name="finger-print" size={80} color={DG.emerald} />
+                    <Text style={styles.gateText}>
+                      Layer 2: Biometric Verification Required
+                    </Text>
+                    <TouchableOpacity
+                      style={styles.confirmBtn}
+                      onPress={handleBiometricVerification}
+                      disabled={loading}
+                    >
+                      {loading ? (
+                        <ActivityIndicator color="#fff" />
+                      ) : (
+                        <Text style={styles.btnText}>SCAN FINGERPRINT</Text>
+                      )}
+                    </TouchableOpacity>
+                  </Animated.View>
+                )}
+              </View>
             )}
           </View>
-        )}
-       </View>
 
-      <View style={styles.footer}>
-        {step > 1 && (
-          <TouchableOpacity
-            onPress={() => {
-              setStep(step - 1);
-              setErrorMessage(null);
-            }}
-            style={styles.backBtn}
-          >
-            <Text style={styles.backText}>BACK</Text>
-          </TouchableOpacity>
-        )}
-        {step < 3 && (
-          <TouchableOpacity
-            onPress={handleNext}
-            style={styles.nextBtn}
-            disabled={loading}
-          >
-            <Text style={styles.btnText}>
-              {loading ? "..." : "CONTINUE"}
-            </Text>
-          </TouchableOpacity>
-        )}
-      </View>
+          <View style={styles.footer}>
+            {step > 1 && (
+              <TouchableOpacity
+                onPress={() => {
+                  setStep(step - 1);
+                  setErrorMessage(null);
+                }}
+                style={styles.backBtn}
+              >
+                <Text style={styles.backText}>BACK</Text>
+              </TouchableOpacity>
+            )}
+            {step < 3 && (
+              <TouchableOpacity
+                onPress={handleNext}
+                style={styles.nextBtn}
+                disabled={loading}
+              >
+                <Text style={styles.btnText}>
+                  {loading ? "..." : "CONTINUE"}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
 
       <Toast
         visible={toast.visible}
@@ -410,14 +439,17 @@ export default function DocuGuardCheckout() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: DG.bg, padding: 25 },
+  container: { flex: 1, backgroundColor: DG.bg },
+  flex: { flex: 1 },
+  scrollContent: { padding: 25, paddingBottom: 40 },
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
-    marginTop: 40,
+    alignItems: "center",
+    marginBottom: 30,
   },
   brand: { fontSize: 20, fontWeight: "800", color: DG.navy },
-  content: { flex: 1, marginTop: 40 },
+  content: { marginBottom: 30 },
   stepTitle: {
     fontSize: 28,
     fontWeight: "900",
@@ -425,9 +457,18 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   form: { gap: 15 },
+  fieldGroup: { marginBottom: 8 },
+  fieldLabel: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#64748B",
+    marginBottom: 6,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
   input: {
     backgroundColor: DG.white,
-    padding: 18,
+    padding: 16,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: "#E2E8F0",
@@ -484,7 +525,7 @@ const styles = StyleSheet.create({
     width: "100%",
     alignItems: "center",
   },
-  footer: { flexDirection: "row", gap: 10 },
+  footer: { flexDirection: "row", gap: 10, marginTop: 10 },
   backBtn: {
     flex: 1,
     padding: 20,

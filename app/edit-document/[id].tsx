@@ -23,8 +23,9 @@ import {
 } from "../../services/localDatabase";
 import * as SecureStore from "expo-secure-store";
 import { api } from "../../services/api";
+import { documentUpdateSchema, type DocumentUpdateInput, validateSchema } from "@/shared/validation";
 
-interface DocumentValues {
+type EditDocumentValues = Omit<DocumentUpdateInput, "id"> & {
   title: string;
   category: string;
   issuer: string;
@@ -32,14 +33,28 @@ interface DocumentValues {
   issueDate: string;
   expiryDate: string;
   notes: string;
-}
+};
 
 export default function EditDocumentScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(true);
-  const [initialData, setInitialData] = useState<DocumentValues>({
-    title: "", category: "other", issuer: "", documentNumber: "", issueDate: "", expiryDate: "", notes: "",
+  const [initialData, setInitialData] = useState<EditDocumentValues>({
+    title: "", 
+    category: "other", 
+    issuer: "", 
+    documentNumber: "", 
+    issueDate: "", 
+    expiryDate: "", 
+    notes: "",
+    enableAlerts: true,
+    status: "active",
+    processingStatus: "completed",
+    riskScore: 0,
+    riskLevel: "Low",
+    fileUrl: null,
+    fileType: null,
+    s3Key: null,
   });
   const [useLocalData, setUseLocalData] = useState(false);
 
@@ -58,7 +73,7 @@ export default function EditDocumentScreen() {
       if (localDoc) {
         setInitialData({
           title: localDoc.title || "",
-          category: localDoc.category || "other",
+          category: (localDoc.category || "other") as "identification" | "financial" | "medical" | "legal" | "academic" | "other",
           issuer: localDoc.issuer || "",
           documentNumber: localDoc.documentNumber || "",
           issueDate: localDoc.issueDate ? localDoc.issueDate.split("T")[0] : "",
@@ -94,17 +109,17 @@ export default function EditDocumentScreen() {
     }
   };
 
-  const validate = (values: any) => {
-    const errors: Record<string, string> = {};
-    if (!values.title?.trim()) errors.title = "Document title is required";
-    if (!values.issuer?.trim()) errors.issuer = "Issuer is required";
-    if (!values.documentNumber?.trim()) errors.documentNumber = "Document number is required";
-    if (!values.issueDate) errors.issueDate = "Issue date is required";
-    if (!values.expiryDate) errors.expiryDate = "Expiry date is required";
-    return errors;
+  const validate = (values: EditDocumentValues): Partial<Record<keyof EditDocumentValues, string>> => {
+    const docId = parseInt(id as string, 10);
+    const valuesWithId = { ...values, id: docId } as DocumentUpdateInput;
+    const result = validateSchema(documentUpdateSchema, valuesWithId);
+    if (result.success) {
+      return {};
+    }
+    return result.errors as Partial<Record<keyof EditDocumentValues, string>>;
   };
 
-  const form = useForm({
+  const form = useForm<EditDocumentValues>({
     initialValues: initialData,
     validate,
     onSubmit: async (values) => {
@@ -115,7 +130,7 @@ export default function EditDocumentScreen() {
         await updateDocument(docId, {
           title: values.title.trim(), category: values.category, issuer: values.issuer.trim(),
           documentNumber: values.documentNumber.trim().toUpperCase(), issueDate: values.issueDate,
-          expiryDate: values.expiryDate, notes: values.notes.trim(),
+          expiryDate: values.expiryDate, notes: values.notes?.trim() || "",
         });
 
         if (!useLocalData) {
@@ -128,7 +143,7 @@ export default function EditDocumentScreen() {
                 body: JSON.stringify({
                   title: values.title.trim(), category: values.category, issuer: values.issuer.trim(),
                   documentNumber: values.documentNumber.trim().toUpperCase(), issueDate: values.issueDate,
-                  expiryDate: values.expiryDate, notes: values.notes.trim(),
+                  expiryDate: values.expiryDate, notes: values.notes?.trim() || "",
                 }),
               });
               if (!res.ok) throw new Error("Failed to update document");

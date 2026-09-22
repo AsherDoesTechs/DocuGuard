@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   View,
   StyleSheet,
@@ -6,6 +6,9 @@ import {
   TouchableOpacity,
   Alert,
   Image,
+  PanResponder,
+  Animated,
+  Text,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { COLORS } from "@/constants";
@@ -28,6 +31,53 @@ export const DocumentScannerComponent = ({
   onClose,
   onScanSuccess,
 }: DocumentScannerProps) => {
+  const [visibleState, setVisibleState] = useState(false);
+  const slideAnim = useState(new Animated.Value(0))[0];
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderMove: (_, gestureState) => {
+        if (gestureState.dy > 0) {
+          slideAnim.setValue(gestureState.dy);
+        }
+      },
+      onPanResponderRelease: (_, gestureState) => {
+        if (gestureState.dy > 100) {
+          onClose();
+        } else {
+          Animated.spring(slideAnim, {
+            toValue: 0,
+            useNativeDriver: true,
+          }).start();
+        }
+      },
+    }),
+  ).current;
+
+  useEffect(() => {
+    if (visible) {
+      setVisibleState(true);
+      slideAnim.setValue(0);
+      Animated.timing(slideAnim, {
+        toValue: 1,
+        duration: 300,
+        useNativeDriver: true,
+      }).start();
+      const timer = setTimeout(handleManualScan, 500);
+      return () => {
+        clearTimeout(timer);
+        Animated.timing(slideAnim, {
+          toValue: 1,
+          duration: 200,
+          useNativeDriver: true,
+        }).start();
+      };
+    } else {
+      setVisibleState(false);
+    }
+  }, [visible]);
+
   const handleManualScan = async () => {
     if (!ScannerPlugin || !ScannerPlugin.default) {
       Alert.alert(
@@ -38,13 +88,11 @@ export const DocumentScannerComponent = ({
     }
 
     try {
-      // Triggers the OS-level scanner UI
       const { scannedImages } = await ScannerPlugin.default.scanDocument();
 
       if (scannedImages && scannedImages.length > 0) {
         const imageUri = scannedImages[0];
 
-        // Zero-work metadata extraction
         Image.getSize(
           imageUri,
           (width, height) => {
@@ -56,7 +104,7 @@ export const DocumentScannerComponent = ({
           },
         );
       } else {
-        onClose(); // Close if user canceled the scan
+        onClose();
       }
     } catch (error) {
       console.error("Scanning error:", error);
@@ -64,32 +112,63 @@ export const DocumentScannerComponent = ({
     }
   };
 
-  // Auto-trigger the scan when the modal becomes visible
-  useEffect(() => {
-    if (visible) {
-      // Small timeout to allow the modal animation to settle before launching camera
-      const timer = setTimeout(handleManualScan, 500);
-      return () => clearTimeout(timer);
-    }
-  }, [visible]);
+  if (!visibleState) return null;
 
   return (
     <Modal
-      visible={visible}
-      animationType="fade"
-      presentationStyle="fullScreen"
+      visible={true}
+      animationType="none"
+      transparent
+      presentationStyle="overFullScreen"
     >
-      <View style={styles.container}>
-        {/* Placeholder UI while the native scanner camera is active */}
-        <TouchableOpacity style={styles.closeButton} onPress={onClose}>
-          <Ionicons name="close" size={32} color="#fff" />
+      <Animated.View
+        style={[
+          styles.modalOverlay,
+          { transform: [{ translateY: slideAnim }] },
+        ]}
+        {...panResponder.panHandlers}
+      >
+        <TouchableOpacity
+          style={styles.closeButton}
+          onPress={onClose}
+          hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
+          accessibilityLabel="Close scanner"
+        >
+          <View style={styles.closeButtonInner}>
+            <Ionicons name="close" size={28} color="#fff" />
+            <Text style={styles.closeLabel}>Close</Text>
+          </View>
         </TouchableOpacity>
-      </View>
+      </Animated.View>
     </Modal>
   );
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#000" },
-  closeButton: { position: "absolute", top: 50, left: 20, padding: 10 },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.6)",
+    justifyContent: "flex-end",
+  },
+  closeButton: {
+    alignSelf: "center",
+    marginBottom: 40,
+    padding: 10,
+  },
+  closeButtonInner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "rgba(255, 255, 255, 0.2)",
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 30,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.3)",
+  },
+  closeLabel: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "600",
+  },
 });

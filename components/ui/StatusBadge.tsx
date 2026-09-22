@@ -1,38 +1,78 @@
 import React from "react";
 import { View, Text, StyleSheet } from "react-native";
-import Colors from "../../constants/colors";
-import Spacing from "../../constants/spacing";
+import { COLORS } from "@/constants";
+import Spacing from "@/constants/spacing";
 
-// Supporting lowercase, uppercase, or whatever format your backend/mock data uses
 interface StatusBadgeProps {
-  status: "approved" | "pending" | "rejected" | string;
+  status: string;
   text?: string;
 }
 
+interface BadgeConfig {
+  bg: string;
+  text: string;
+  dot?: string;
+}
+
+const STATUS_CONFIG: Record<string, BadgeConfig> = {
+  approved: { bg: "#DCFCE7", text: COLORS.success, dot: COLORS.success },
+  verified: { bg: "#DCFCE7", text: COLORS.success, dot: COLORS.success },
+  active: { bg: "#DCFCE7", text: COLORS.success, dot: COLORS.success },
+  success: { bg: "#DCFCE7", text: COLORS.success, dot: COLORS.success },
+  stable: { bg: "#DCFCE7", text: COLORS.success, dot: COLORS.success },
+  low: { bg: "#DCFCE7", text: COLORS.success, dot: COLORS.success },
+  pending: { bg: "#FEF3C7", text: COLORS.warning, dot: COLORS.warning },
+  processing: { bg: "#FEF3C7", text: COLORS.warning, dot: COLORS.warning },
+  warning: { bg: "#FEF3C7", text: COLORS.warning, dot: COLORS.warning },
+  medium: { bg: "#FEF3C7", text: COLORS.warning, dot: COLORS.warning },
+  rejected: { bg: "#FEE2E2", text: COLORS.danger, dot: COLORS.danger },
+  expired: { bg: "#FEE2E2", text: COLORS.danger, dot: COLORS.danger },
+  danger: { bg: "#FEE2E2", text: COLORS.danger, dot: COLORS.danger },
+  critical: { bg: "#FEE2E2", text: COLORS.danger, dot: COLORS.danger },
+  high: { bg: "#FEE2E2", text: COLORS.danger, dot: COLORS.danger },
+  failed: { bg: "#FEE2E2", text: COLORS.danger, dot: COLORS.danger },
+};
+
+const LABEL_MAP: Record<string, string> = {
+  approved: "Approved",
+  verified: "Verified",
+  active: "Active",
+  success: "Verified",
+  stable: "Stable",
+  low: "Low",
+  pending: "Pending",
+  processing: "Processing",
+  warning: "Warning",
+  medium: "Medium",
+  rejected: "Rejected",
+  expired: "Expired",
+  danger: "Critical",
+  critical: "Critical",
+  high: "High",
+  failed: "Failed",
+};
 export default function StatusBadge({ status, text }: StatusBadgeProps) {
-  const normalizedStatus = status.toLowerCase();
-
-  // Dynamically set colors based on document status
-  let badgeStyle = styles.pendingBadge;
-  let textStyle = styles.pendingText;
-  let label = "Pending";
-
-  if (normalizedStatus === "approved" || normalizedStatus === "verified") {
-    badgeStyle = styles.approvedBadge;
-    textStyle = styles.approvedText;
-    label = "Approved";
-  } else if (
-    normalizedStatus === "rejected" ||
-    normalizedStatus === "expired"
-  ) {
-    badgeStyle = styles.rejectedBadge;
-    textStyle = styles.rejectedText;
-    label = "Rejected";
+  if (!status) {
+    return (
+      <View style={[styles.badge, { backgroundColor: "#FEF3C7" }]}>
+        <Text style={[styles.text, { color: COLORS.warning }]}>Unknown</Text>
+      </View>
+    );
   }
+  const normalized = status.toLowerCase().trim();
+  const config = STATUS_CONFIG[normalized] || {
+    bg: "#FEF3C7",
+    text: COLORS.warning,
+    dot: COLORS.warning,
+  };
+  const label = text || LABEL_MAP[normalized] || status;
 
   return (
-    <View style={[styles.badge, badgeStyle]}>
-      <Text style={[styles.text, textStyle]}>{text || label}</Text>
+    <View style={[styles.badge, { backgroundColor: config.bg }]}>
+      <View style={styles.row}>
+        <View style={[styles.dot, { backgroundColor: config.dot }]} />
+        <Text style={[styles.text, { color: config.text }]}>{label}</Text>
+      </View>
     </View>
   );
 }
@@ -41,35 +81,22 @@ const styles = StyleSheet.create({
   badge: {
     paddingHorizontal: Spacing.sm,
     paddingVertical: 4,
-    borderRadius: 999, // Perfect pill shape
+    borderRadius: 999,
     alignSelf: "flex-start",
+    overflow: "hidden",
+  },
+  row: {
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
+    gap: 5,
+  },
+  dot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
   },
   text: {
     fontSize: 12,
     fontWeight: "600",
-    textTransform: "capitalize",
-  },
-  // Approved State
-  approvedBadge: {
-    backgroundColor: "#DCFCE7", // Light green subtle background
-  },
-  approvedText: {
-    color: Colors.success,
-  },
-  // Pending State
-  pendingBadge: {
-    backgroundColor: "#FEF3C7", // Light amber subtle background
-  },
-  pendingText: {
-    color: Colors.warning,
-  },
-  // Rejected State
-  rejectedBadge: {
-    backgroundColor: "#FEE2E2", // Light red subtle background
-  },
-  rejectedText: {
-    color: Colors.error,
   },
 });

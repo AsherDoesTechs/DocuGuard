@@ -3,23 +3,22 @@ import { View, Text, StyleSheet, ScrollView, Alert } from "react-native";
 import { Link, useRouter } from "expo-router";
 import { Input, Button, Card } from "../../components/ui";
 import { useForm } from "../../hooks/useForm";
-import { isValidEmail } from "../../utils";
 import { COLORS } from "../../constants";
 import { api } from "../../services/api";
+import { forgotPasswordSchema, type ForgotPasswordInput, validateSchema } from "@/shared/validation";
 
-interface FormValues {
-  email: string;
-}
+interface FormValues extends ForgotPasswordInput {}
 
 export default function ForgotPasswordScreen() {
   const router = useRouter();
   const [serverError, setServerError] = useState<string | null>(null);
 
   const validate = (values: FormValues) => {
-    const errors: Record<string, string> = {};
-    if (!values.email) errors.email = "Email is required";
-    else if (!isValidEmail(values.email)) errors.email = "Invalid email format";
-    return errors;
+    const result = validateSchema(forgotPasswordSchema, values);
+    if (result.success) {
+      return {};
+    }
+    return result.errors as Partial<Record<keyof FormValues, string>>;
   };
 
   const form = useForm<FormValues>({

@@ -3,18 +3,30 @@ const router = express.Router();
 const db = require("../config/db");
 const authMiddleware = require("../middleware/auth");
 const { asyncHandler } = require("../utils/asyncHandler");
+const { z } = require("zod");
+const { validateSchema, ErrorCodes } = require("../utils/errors");
+
+const pushTokenSchema = z.object({
+  expoPushToken: z.string().optional(),
+  devicePushToken: z.string().optional(),
+}).refine((data) => data.expoPushToken || data.devicePushToken, {
+  message: "At least one push token is required",
+  path: ["expoPushToken"],
+});
 
 router.post("/push-token", authMiddleware, asyncHandler(async (req, res) => {
-  const { expoPushToken, devicePushToken } = req.body;
-  const userId = req.user.userId;
-
-  if (!expoPushToken && !devicePushToken) {
+  const validation = validateSchema(pushTokenSchema, req.body);
+  if (!validation.success) {
     return res.status(400).json({
       status: "fail",
       errorCode: "PUSH_TOKEN_MISSING",
-      error: "At least one push token is required.",
+      error: Object.values(validation.errors).join(", "),
+      details: validation.errors,
     });
   }
+
+  const { expoPushToken, devicePushToken } = validation.data;
+  const userId = req.user.userId;
 
   const updates = [];
   const values = [];

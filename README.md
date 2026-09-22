@@ -277,6 +277,8 @@ DocuGuard is being developed as a Bachelor of Science in Information Technology 
 
 ---
 
+eas build --platform android --profile preview
+
 # 📄 License
 
 This project is intended for academic and educational purposes. Future versions may be expanded for public or commercial use.

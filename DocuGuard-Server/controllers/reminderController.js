@@ -1,6 +1,8 @@
 const db = require("../config/db");
 const { ErrorCodes } = require("../utils/errorCodes");
 const { debug, info, warn, error: logError } = require("../utils/debugLogger");
+const { reminderSchema, validateSchema } = require("../../shared/validation/schemas");
+const { z } = require("zod");
 
 // Get all reminders for the user
 exports.getReminders = async (req, res) => {
@@ -25,22 +27,24 @@ exports.getReminders = async (req, res) => {
 
 // Create a new reminder
 exports.createReminder = async (req, res) => {
-  const userId = req.user.userId;
-  const { title, description, dueDate, severity, isRead } = req.body;
-
-  if (!title || !dueDate) {
+  const validation = validateSchema(reminderSchema, req.body);
+  if (!validation.success) {
     return res.status(400).json({
-      error: "Title and dueDate are required",
+      error: Object.values(validation.errors).join(", "),
       code: ErrorCodes.DOC_VALIDATION,
+      details: validation.errors,
     });
   }
+
+  const userId = req.user.userId;
+  const { title, description, dueDate, severity } = validation.data;
 
   try {
     const result = await db.query(
       `INSERT INTO reminders (user_id, title, description, due_date, severity, is_read)
        VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING id, title, description, due_date AS "dueDate", severity, is_read AS "read"`,
-      [userId, title, description || "", dueDate, severity || "Valid", isRead || false],
+      [userId, title, description || "", dueDate, severity || "Valid", false],
     );
 
     info("Reminders", "Reminder created", { userId, reminderId: result.rows[0].id });
@@ -61,6 +65,19 @@ exports.createReminder = async (req, res) => {
 exports.updateNotificationPrefs = async (req, res) => {
   const userId = req.user.userId;
   const { notificationsEnabled, fcmToken } = req.body;
+
+  const validation = validateSchema(z.object({
+    notificationsEnabled: z.boolean().optional(),
+    fcmToken: z.string().optional(),
+  }), req.body);
+  
+  if (!validation.success) {
+    return res.status(400).json({
+      error: Object.values(validation.errors).join(", "),
+      code: ErrorCodes.DOC_VALIDATION,
+      details: validation.errors,
+    });
+  }
 
   try {
     await db.query(
@@ -84,6 +101,15 @@ exports.updateReminder = async (req, res) => {
   const userId = req.user.userId;
   const reminderId = req.params.id;
   const { title, description, dueDate, severity, isRead } = req.body;
+
+  const validation = validateSchema(reminderSchema.partial(), req.body);
+  if (!validation.success) {
+    return res.status(400).json({
+      error: Object.values(validation.errors).join(", "),
+      code: ErrorCodes.DOC_VALIDATION,
+      details: validation.errors,
+    });
+  }
 
   try {
     const result = await db.query(

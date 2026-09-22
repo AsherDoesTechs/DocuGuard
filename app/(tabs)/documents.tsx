@@ -191,12 +191,6 @@ export default function DocumentsScreen() {
             </View>
           )}
         </ScrollView>
-        <TouchableOpacity
-          style={styles.floatingAddButton}
-          onPress={() => router.push("/add-document")}
-        >
-          <Ionicons name="add-circle" size={70} color={COLORS.primary} />
-        </TouchableOpacity>
       </RefreshableContainer>
     </SafeAreaView>
   );

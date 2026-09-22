@@ -128,10 +128,6 @@ export default function ProfileScreen() {
 
   const showToast = (message: string, type: ToastType = "success") => {
     setToast({ visible: true, message, type });
-    setTimeout(
-      () => setToast((t) => ({ ...t, visible: false })),
-      3000,
-    );
   };
 
   const fetchProfile = useCallback(async () => {

@@ -5,11 +5,9 @@ import { Input, Button, Card } from "../../components/ui";
 import { useForm } from "../../hooks/useForm";
 import { COLORS } from "../../constants";
 import { api } from "../../services/api";
+import { resetPasswordSchema, type ResetPasswordInput, validateSchema } from "@/shared/validation";
 
-interface ResetFormValues {
-  password: string;
-  confirmPassword: string;
-}
+interface FormValues extends ResetPasswordInput {}
 
 export default function ResetPasswordScreen() {
   const router = useRouter();
@@ -18,23 +16,15 @@ export default function ResetPasswordScreen() {
 
   const [serverError, setServerError] = useState<string | null>(null);
 
-  const validate = (values: ResetFormValues) => {
-    const errors: Record<string, string> = {};
-    if (!values.password) {
-      errors.password = "New password is required";
-    } else if (values.password.length < 6) {
-      errors.password = "Password must be at least 6 characters";
+  const validate = (values: FormValues) => {
+    const result = validateSchema(resetPasswordSchema, values);
+    if (result.success) {
+      return {};
     }
-
-    if (!values.confirmPassword) {
-      errors.confirmPassword = "Confirm password is required";
-    } else if (values.password !== values.confirmPassword) {
-      errors.confirmPassword = "Passwords do not match";
-    }
-    return errors;
+    return result.errors as Partial<Record<keyof FormValues, string>>;
   };
 
-  const form = useForm<ResetFormValues>({
+  const form = useForm<FormValues>({
     initialValues: { password: "", confirmPassword: "" },
     validate,
     onSubmit: async (values) => {

@@ -7,22 +7,15 @@ const {
 } = require("../services/notificationService");
 const { ErrorCodes } = require("../utils/errorCodes");
 const { debug, info, warn, error: logError } = require("../utils/debugLogger");
-
-// Helper function for date validation (YYYY-MM-DD format)
-const isValidDateString = (dateStr) => {
-  if (!dateStr || typeof dateStr !== "string") return false;
-  const regex = /^\d{4}-\d{2}-\d{2}$/;
-  if (!regex.test(dateStr)) return false;
-
-  const [year, month, day] = dateStr.split("-").map(Number);
-  const date = new Date(Date.UTC(year, month - 1, day));
-
-  return (
-    date.getUTCFullYear() === year &&
-    date.getUTCMonth() === month - 1 &&
-    date.getUTCDate() === day
-  );
-};
+const {
+  documentSchema,
+  documentUpdateSchema,
+  documentSyncSchema,
+  uploadUrlSchema,
+  processDocumentSchema,
+  verifyDocumentSchema,
+  validateSchema,
+} = require("../../shared/validation/schemas");
 
 // Get all documents for the authenticated user
 exports.getAllDocuments = async (req, res) => {
@@ -60,18 +53,21 @@ exports.getAllDocuments = async (req, res) => {
 // Get presigned upload URL (S3 Integration)
 exports.getUploadUrl = async (req, res) => {
   try {
-    const { fileName, fileType } = req.query;
-    if (!fileName || !fileType) {
+    const validation = validateSchema(uploadUrlSchema, req.query);
+    if (!validation.success) {
       debug("Documents", "Upload URL request missing params", {
         userId: req.user.userId,
-        fileName: !!fileName,
-        fileType: !!fileType,
+        fileName: !!req.query.fileName,
+        fileType: !!req.query.fileType,
       });
       return res.status(400).json({
-        error: "fileName and fileType are required query parameters.",
+        error: Object.values(validation.errors).join(", "),
         code: ErrorCodes.DOC_INVALID_FILE_TYPE,
+        details: validation.errors,
       });
     }
+
+    const { fileName, fileType } = validation.data;
 
     const result = await generatePresignedUploadUrl(
       req.user.userId,
@@ -106,16 +102,17 @@ exports.getUploadUrl = async (req, res) => {
 // Process document with OCR/AI
 exports.processDocument = async (req, res) => {
   try {
-    const userId = req.user.userId;
-    const { documentId } = req.body;
-
-    if (!documentId) {
-      debug("Documents", "Process request missing documentId", { userId });
+    const validation = validateSchema(processDocumentSchema, req.body);
+    if (!validation.success) {
       return res.status(400).json({
-        error: "documentId is required.",
+        error: Object.values(validation.errors).join(", "),
         code: ErrorCodes.DOC_VALIDATION,
+        details: validation.errors,
       });
     }
+
+    const userId = req.user.userId;
+    const { documentId } = validation.data;
 
     const docResult = await db.query(
       `SELECT id, s3_key, file_url FROM documents WHERE id = $1 AND user_id = $2`,
@@ -232,17 +229,19 @@ exports.processDocument = async (req, res) => {
 // Verify a document
 exports.verifyDocument = async (req, res) => {
   try {
-    const userId = req.user.userId;
-    const { documentId } = req.body;
-
-    debug("Documents", "Verification request", { userId, documentId });
-
-    if (!documentId) {
+    const validation = validateSchema(verifyDocumentSchema, req.body);
+    if (!validation.success) {
       return res.status(400).json({
-        error: "documentId is required.",
+        error: Object.values(validation.errors).join(", "),
         code: ErrorCodes.DOC_VALIDATION,
+        details: validation.errors,
       });
     }
+
+    const userId = req.user.userId;
+    const { documentId } = validation.data;
+
+    debug("Documents", "Verification request", { userId, documentId });
 
     const docResult = await db.query(
       `SELECT title FROM documents WHERE id = $1 AND user_id = $2`,
@@ -373,6 +372,15 @@ exports.getDocumentById = async (req, res) => {
 
 // Create a new document with strict validation & automations
 exports.createDocument = async (req, res) => {
+  const validation = validateSchema(documentSchema, req.body);
+  if (!validation.success) {
+    return res.status(400).json({
+      error: Object.values(validation.errors).join(", "),
+      code: ErrorCodes.DOC_VALIDATION,
+      details: validation.errors,
+    });
+  }
+
   const userId = req.user.userId;
   const {
     title,
@@ -386,60 +394,7 @@ exports.createDocument = async (req, res) => {
     s3Key,
     fileUrl,
     fileType,
-  } = req.body;
-
-  // 1. Sanitize & Check Required Fields
-  const trimmedTitle = typeof title === "string" ? title.trim() : "";
-  const trimmedIssuer = typeof issuer === "string" ? issuer.trim() : "";
-  const trimmedDocNum =
-    typeof documentNumber === "string" ? documentNumber.trim() : "";
-
-  if (!trimmedTitle || !trimmedIssuer || !trimmedDocNum) {
-    debug("Documents", "Validation failed - missing required fields", {
-      userId,
-      hasTitle: !!trimmedTitle,
-      hasIssuer: !!trimmedIssuer,
-      hasDocNum: !!trimmedDocNum,
-    });
-    return res.status(400).json({
-      error:
-        "Validation failed: Title, issuer, and document number are required and cannot be empty.",
-      code: ErrorCodes.DOC_VALIDATION,
-    });
-  }
-
-  // 2. Validate Date Formats and Logic
-  if (!isValidDateString(issueDate) || !isValidDateString(expiryDate)) {
-    return res.status(400).json({
-      error:
-        "Validation failed: Issue date and expiry date must follow the YYYY-MM-DD format.",
-      code: ErrorCodes.DOC_VALIDATION,
-    });
-  }
-
-  const parsedIssueDate = new Date(issueDate);
-  const parsedExpiryDate = new Date(expiryDate);
-
-  if (parsedIssueDate > parsedExpiryDate) {
-    return res.status(400).json({
-      error:
-        "Validation failed: Issue date cannot be later than the expiry date.",
-      code: ErrorCodes.DOC_VALIDATION,
-    });
-  }
-
-  // 3. Category Validation against allowed types
-  const validCategories = [
-    "identification",
-    "financial",
-    "medical",
-    "legal",
-    "academic",
-    "other",
-  ];
-  const sanitizedCategory = validCategories.includes(category)
-    ? category
-    : "other";
+  } = validation.data;
 
   try {
     const newDoc = await db.query(
@@ -455,10 +410,10 @@ exports.createDocument = async (req, res) => {
                  processing_status AS "processingStatus", risk_score AS "riskScore", risk_level AS "riskLevel"`,
       [
         userId,
-        trimmedTitle,
-        sanitizedCategory,
-        trimmedIssuer,
-        trimmedDocNum,
+        title,
+        category,
+        issuer,
+        documentNumber,
         issueDate,
         expiryDate,
         typeof notes === "string" ? notes.trim() : null,
@@ -500,6 +455,15 @@ exports.createDocument = async (req, res) => {
 
 // Update an existing document with strict validation & automations
 exports.updateDocument = async (req, res) => {
+  const validation = validateSchema(documentUpdateSchema, { ...req.body, id: parseInt(req.params.id) });
+  if (!validation.success) {
+    return res.status(400).json({
+      error: Object.values(validation.errors).join(", "),
+      code: ErrorCodes.DOC_VALIDATION,
+      details: validation.errors,
+    });
+  }
+
   const userId = req.user.userId;
   const docId = req.params.id;
   const {
@@ -511,61 +475,7 @@ exports.updateDocument = async (req, res) => {
     expiryDate,
     notes,
     enableAlerts,
-  } = req.body;
-
-  // 1. Sanitize & Check Required Fields
-  const trimmedTitle = typeof title === "string" ? title.trim() : "";
-  const trimmedIssuer = typeof issuer === "string" ? issuer.trim() : "";
-  const trimmedDocNum =
-    typeof documentNumber === "string" ? documentNumber.trim() : "";
-
-  if (!trimmedTitle || !trimmedIssuer || !trimmedDocNum) {
-    debug("Documents", "Update validation failed - missing required fields", {
-      userId,
-      docId,
-      hasTitle: !!trimmedTitle,
-      hasIssuer: !!trimmedIssuer,
-      hasDocNum: !!trimmedDocNum,
-    });
-    return res.status(400).json({
-      error:
-        "Validation failed: Title, issuer, and document number are required and cannot be empty.",
-      code: ErrorCodes.DOC_VALIDATION,
-    });
-  }
-
-  // 2. Validate Date Formats and Logic
-  if (!isValidDateString(issueDate) || !isValidDateString(expiryDate)) {
-    return res.status(400).json({
-      error:
-        "Validation failed: Issue date and expiry date must follow the YYYY-MM-DD format.",
-      code: ErrorCodes.DOC_VALIDATION,
-    });
-  }
-
-  const parsedIssueDate = new Date(issueDate);
-  const parsedExpiryDate = new Date(expiryDate);
-
-  if (parsedIssueDate > parsedExpiryDate) {
-    return res.status(400).json({
-      error:
-        "Validation failed: Issue date cannot be later than the expiry date.",
-      code: ErrorCodes.DOC_VALIDATION,
-    });
-  }
-
-  // 3. Category Validation against allowed types
-  const validCategories = [
-    "identification",
-    "financial",
-    "medical",
-    "legal",
-    "academic",
-    "other",
-  ];
-  const sanitizedCategory = validCategories.includes(category)
-    ? category
-    : "other";
+  } = validation.data;
 
   try {
     const updated = await db.query(
@@ -579,10 +489,10 @@ exports.updateDocument = async (req, res) => {
                  s3_key AS "s3Key", file_url AS "fileUrl", file_type AS "fileType",
                  processing_status AS "processingStatus"`,
       [
-        trimmedTitle,
-        sanitizedCategory,
-        trimmedIssuer,
-        trimmedDocNum,
+        title,
+        category,
+        issuer,
+        documentNumber,
         issueDate,
         expiryDate,
         typeof notes === "string" ? notes.trim() : null,
@@ -626,6 +536,15 @@ exports.updateDocument = async (req, res) => {
 
 // Sync a document from local database to cloud
 exports.syncDocument = async (req, res) => {
+  const validation = validateSchema(documentSyncSchema, req.body);
+  if (!validation.success) {
+    return res.status(400).json({
+      error: Object.values(validation.errors).join(", "),
+      code: ErrorCodes.SYNC_PARTIAL,
+      details: validation.errors,
+    });
+  }
+
   const userId = req.user.userId;
   const {
     title,
@@ -643,7 +562,7 @@ exports.syncDocument = async (req, res) => {
     processingStatus,
     riskScore,
     riskLevel,
-  } = req.body;
+  } = validation.data;
 
   debug("Documents", "Sync document request", { userId, title });
 
