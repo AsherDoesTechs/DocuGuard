@@ -26,10 +26,14 @@ import { COLORS, Spacing } from "@/constants";
 
 const APP_LOCK_DELAY = 30000;
 
+const FINGERPRINT_KEY = "docuguard.fingerprint.enrolled";
+const FINGERPRINT_SERVICE = "docuguard.fingerprint";
+
 export function useAppLock() {
   const [isLocked, setIsLocked] = useState(false);
   const [lastActiveTime, setLastActiveTime] = useState<number>(Date.now());
   const [biometricEnabled, setBiometricEnabled] = useState(false);
+  const [fingerprintEnrolled, setFingerprintEnrolled] = useState(false);
   const mountedRef = useRef(true);
 
   const checkBiometricSupport = useCallback(async () => {
@@ -37,10 +41,26 @@ export function useAppLock() {
       const hasHardware = await LocalAuthentication.hasHardwareAsync();
       const isEnrolled = await LocalAuthentication.isEnrolledAsync();
       const token = await SecureStore.getItemAsync("userToken");
-      setBiometricEnabled(hasHardware && isEnrolled && !!token);
+      // Only enable biometric unlock if a fingerprint was specifically enrolled
+      // for DocuGuard. requireAuthentication ties the value to the enrolled
+      // fingerprint set, so it becomes inaccessible if the user adds a new
+      // fingerprint or removes the enrolled one.
+      let enrolled = false;
+      try {
+        const stored = await SecureStore.getItemAsync(FINGERPRINT_KEY, {
+          requireAuthentication: false,
+          keychainService: FINGERPRINT_SERVICE,
+        });
+        enrolled = !!stored && hasHardware && isEnrolled;
+      } catch (err) {
+        enrolled = false;
+      }
+      setBiometricEnabled(hasHardware && isEnrolled && !!token && enrolled);
+      setFingerprintEnrolled(enrolled);
     } catch (err) {
       console.warn("Biometric check failed:", err);
       setBiometricEnabled(false);
+      setFingerprintEnrolled(false);
     }
   }, []);
 
@@ -57,6 +77,9 @@ export function useAppLock() {
       if (nextAppState === "background" || nextAppState === "inactive") {
         setLastActiveTime(Date.now());
       } else if (nextAppState === "active") {
+        // Re-check fingerprint enrollment state in case the user enrolled
+        // or removed a fingerprint while the app was in the background.
+        checkBiometricSupport();
         const now = Date.now();
         const timeAway = now - lastActiveTime;
         if (timeAway > APP_LOCK_DELAY && biometricEnabled) {
@@ -65,7 +88,7 @@ export function useAppLock() {
         setLastActiveTime(now);
       }
     },
-    [lastActiveTime, biometricEnabled],
+    [lastActiveTime, biometricEnabled, checkBiometricSupport],
   );
 
   useEffect(() => {
@@ -77,22 +100,36 @@ export function useAppLock() {
     try {
       const hasHardware = await LocalAuthentication.hasHardwareAsync();
       const isEnrolled = await LocalAuthentication.isEnrolledAsync();
-      if (!hasHardware || !isEnrolled) return false;
-      const result = await LocalAuthentication.authenticateAsync({
+      if (!hasHardware || !isEnrolled || !fingerprintEnrolled) return false;
+
+      // Verify the fingerprint locally first
+      const authResult = await LocalAuthentication.authenticateAsync({
         promptMessage: "Unlock DocuGuard to access your vault",
         fallbackLabel: "Use Passcode",
         disableDeviceFallback: false,
       });
-      if (result.success) {
+      if (!authResult.success) return false;
+
+      // Then verify the fingerprint against the specific enrolled fingerprint
+      // stored in SecureStore with requireAuthentication. This value is tied to
+      // the exact fingerprint set, so it cannot be read by a different fingerprint.
+      try {
+        await SecureStore.getItemAsync(FINGERPRINT_KEY, {
+          requireAuthentication: true,
+          keychainService: FINGERPRINT_SERVICE,
+          authenticationPrompt: "Confirm fingerprint to unlock DocuGuard",
+        });
         setIsLocked(false);
         return true;
+      } catch (err) {
+        console.error("Fingerprint verification against stored value failed:", err);
+        return false;
       }
-      return false;
     } catch (err) {
       console.error("Biometric unlock failed:", err);
       return false;
     }
-  }, []);
+  }, [fingerprintEnrolled]);
 
   const unlockWithPassword = useCallback(() => {
     router.replace("/(auth)/login" as any);

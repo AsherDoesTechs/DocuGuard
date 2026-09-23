@@ -19,6 +19,9 @@ export interface LocalDocument {
   needsSync: boolean;
   createdAt?: string;
   updatedAt?: string;
+  authenticity?: "real" | "replica" | "fake";
+  authenticityScore?: number;
+  authenticityReason?: string;
 }
 
 export interface LocalReminder {

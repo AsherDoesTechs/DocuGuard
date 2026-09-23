@@ -68,8 +68,14 @@ const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
 const dateStringSchema = z
   .string()
-  .regex(DATE_REGEX, "Date must be in YYYY-MM-DD format")
+  .optional()
+  .transform((val) => (val && val.trim() !== "" ? val : ""))
   .refine((val) => {
+    if (!val || val === "") return true;
+    return DATE_REGEX.test(val);
+  }, "Date must be in YYYY-MM-DD format")
+  .refine((val) => {
+    if (!val || val === "") return true;
     const [year, month, day] = val.split("-").map(Number);
     const date = new Date(Date.UTC(year, month - 1, day));
     return (
@@ -104,14 +110,21 @@ const documentShape = {
 
 const documentSchema = z
   .object(documentShape)
-  .refine((data) => new Date(data.issueDate) <= new Date(data.expiryDate), {
-    message: "Expiry date must be after issue date",
-    path: ["expiryDate"],
-  })
-  .refine((data) => new Date(data.issueDate) <= new Date(), {
-    message: "Issue date cannot be in the future",
-    path: ["issueDate"],
-  });
+  .refine(
+    (data) => {
+      if (!data.issueDate || data.issueDate === "") return true;
+      if (!data.expiryDate || data.expiryDate === "") return true;
+      return new Date(data.issueDate) <= new Date(data.expiryDate);
+    },
+    { message: "Expiry date must be after issue date", path: ["expiryDate"] },
+  )
+  .refine(
+    (data) => {
+      if (!data.issueDate || data.issueDate === "") return true;
+      return new Date(data.issueDate) <= new Date();
+    },
+    { message: "Issue date cannot be in the future", path: ["issueDate"] },
+  );
 
 const documentUpdateSchema = z
   .object(documentShape)

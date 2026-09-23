@@ -97,6 +97,42 @@ export async function initDatabase() {
       )
     `);
 
+    // User settings table for document preferences, appearance, and privacy
+    await database.execAsync(`
+      CREATE TABLE IF NOT EXISTS user_settings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER DEFAULT 1,
+        default_category TEXT DEFAULT 'other',
+        auto_backup BOOLEAN DEFAULT 1,
+        reminder_before_days INTEGER DEFAULT 7,
+        reminder_30days BOOLEAN DEFAULT 1,
+        reminder_7days BOOLEAN DEFAULT 1,
+        reminder_1day BOOLEAN DEFAULT 1,
+        reminder_on_day BOOLEAN DEFAULT 1,
+        theme_mode TEXT DEFAULT 'system',
+        font_size TEXT DEFAULT 'medium',
+        biometric_lock BOOLEAN DEFAULT 0,
+        data_exported_at TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now'))
+      )
+    `);
+
+    // Active login sessions table
+    await database.execAsync(`
+      CREATE TABLE IF NOT EXISTS login_sessions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER DEFAULT 1,
+        device_name TEXT,
+        platform TEXT,
+        ip_address TEXT,
+        location TEXT,
+        is_current BOOLEAN DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now')),
+        last_active TEXT DEFAULT (datetime('now'))
+      )
+    `);
+
     await database.execAsync(`
       CREATE TABLE IF NOT EXISTS document_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -347,6 +383,137 @@ export async function getUserProfile(): Promise<LocalUserProfile | null> {
      FROM user_profile WHERE id = 1`,
   );
   return row;
+}
+
+// User settings operations
+export interface LocalUserSettings {
+  id?: number;
+  userId?: number;
+  defaultCategory?: string;
+  autoBackup?: boolean;
+  reminderBeforeDays?: number;
+  reminder30days?: boolean;
+  reminder7days?: boolean;
+  reminder1day?: boolean;
+  reminderOnDay?: boolean;
+  themeMode?: string;
+  fontSize?: string;
+  biometricLock?: boolean;
+  dataExportedAt?: string;
+}
+
+export async function getUserSettings(): Promise<LocalUserSettings | null> {
+  const row = await querySingle<LocalUserSettings>(
+    `SELECT id, user_id AS "userId", default_category AS "defaultCategory",
+            auto_backup AS "autoBackup", reminder_before_days AS "reminderBeforeDays",
+            reminder_30days AS "reminder30days", reminder_7days AS "reminder7days",
+            reminder_1day AS "reminder1day", reminder_on_day AS "reminderOnDay",
+            theme_mode AS "themeMode", font_size AS "fontSize",
+            biometric_lock AS "biometricLock", data_exported_at AS "dataExportedAt"
+     FROM user_settings WHERE user_id = 1 LIMIT 1`,
+  );
+  return row;
+}
+
+export async function saveUserSettings(settings: Partial<LocalUserSettings>): Promise<number> {
+  const existing = await getUserSettings();
+  if (existing) {
+    await run(`
+      UPDATE user_settings SET
+        default_category = COALESCE(?, default_category),
+        auto_backup = COALESCE(?, auto_backup),
+        reminder_before_days = COALESCE(?, reminder_before_days),
+        reminder_30days = COALESCE(?, reminder_30days),
+        reminder_7days = COALESCE(?, reminder_7days),
+        reminder_1day = COALESCE(?, reminder_1day),
+        reminder_on_day = COALESCE(?, reminder_on_day),
+        theme_mode = COALESCE(?, theme_mode),
+        font_size = COALESCE(?, font_size),
+        biometric_lock = COALESCE(?, biometric_lock),
+        data_exported_at = COALESCE(?, data_exported_at),
+        updated_at = datetime('now')
+      WHERE user_id = 1
+    `, [
+      settings.defaultCategory,
+      settings.autoBackup !== undefined ? (settings.autoBackup ? 1 : 0) : null,
+      settings.reminderBeforeDays,
+      settings.reminder30days !== undefined ? (settings.reminder30days ? 1 : 0) : null,
+      settings.reminder7days !== undefined ? (settings.reminder7days ? 1 : 0) : null,
+      settings.reminder1day !== undefined ? (settings.reminder1day ? 1 : 0) : null,
+      settings.reminderOnDay !== undefined ? (settings.reminderOnDay ? 1 : 0) : null,
+      settings.themeMode,
+      settings.fontSize,
+      settings.biometricLock !== undefined ? (settings.biometricLock ? 1 : 0) : null,
+      settings.dataExportedAt,
+    ]);
+    return existing.id || 1;
+  }
+  const result = await run(`
+    INSERT INTO user_settings
+      (user_id, default_category, auto_backup, reminder_before_days,
+       reminder_30days, reminder_7days, reminder_1day, reminder_on_day,
+       theme_mode, font_size, biometric_lock, data_exported_at)
+    VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `, [
+    settings.defaultCategory || 'other',
+    settings.autoBackup !== undefined ? (settings.autoBackup ? 1 : 0) : 1,
+    settings.reminderBeforeDays || 7,
+    settings.reminder30days !== undefined ? (settings.reminder30days ? 1 : 0) : 1,
+    settings.reminder7days !== undefined ? (settings.reminder7days ? 1 : 0) : 1,
+    settings.reminder1day !== undefined ? (settings.reminder1day ? 1 : 0) : 1,
+    settings.reminderOnDay !== undefined ? (settings.reminderOnDay ? 1 : 0) : 1,
+    settings.themeMode || 'system',
+    settings.fontSize || 'medium',
+    settings.biometricLock !== undefined ? (settings.biometricLock ? 1 : 0) : 0,
+    settings.dataExportedAt || null,
+  ]);
+  return result.lastInsertRowId as number;
+}
+
+// Login sessions operations
+export interface LocalLoginSession {
+  id?: number;
+  userId?: number;
+  deviceName?: string;
+  platform?: string;
+  ipAddress?: string;
+  location?: string;
+  isCurrent?: boolean;
+  createdAt?: string;
+  lastActive?: string;
+}
+
+export async function getLoginSessions(): Promise<LocalLoginSession[]> {
+  const rows = await queryAll<LocalLoginSession>(`
+    SELECT id, user_id AS "userId", device_name AS "deviceName",
+            platform, ip_address AS "ipAddress", location,
+            is_current AS "isCurrent", created_at AS "createdAt",
+            last_active AS "lastActive"
+    FROM login_sessions ORDER BY is_current DESC, last_active DESC
+  `);
+  return rows;
+}
+
+export async function addLoginSession(session: Partial<LocalLoginSession>): Promise<number> {
+  const result = await run(`
+    INSERT INTO login_sessions
+      (user_id, device_name, platform, ip_address, location, is_current, created_at, last_active)
+    VALUES (1, ?, ?, ?, ?, 1, datetime('now'), datetime('now'))
+  `, [
+    session.deviceName || 'Unknown Device',
+    session.platform || 'iOS',
+    session.ipAddress || '127.0.0.1',
+    session.location || 'Unknown Location',
+  ]);
+  return result.lastInsertRowId as number;
+}
+
+export async function terminateLoginSession(sessionId: number): Promise<void> {
+  await run(`DELETE FROM login_sessions WHERE id = ?`, [sessionId]);
+}
+
+export async function terminateAllOtherSessions(currentSessionId: number): Promise<void> {
+  await run(`DELETE FROM login_sessions WHERE id != ?`, [currentSessionId]);
 }
 
 // Sync operations

@@ -46,15 +46,14 @@ export default function DocuGuardCheckout() {
   }>({ visible: false, message: "", type: "success" });
 
   const [sliderUnlocked, setSliderUnlocked] = useState(false);
-  const slideAnim = useRef(new RNAnimated.Value(0)).current;
-  const slideTextAnim = useRef(new RNAnimated.Value(0)).current;
-
-  const formData = useRef({
+  const [formData, setFormData] = useState({
     name: "",
     serial: "",
     card: "",
     expiry: "",
   });
+  const slideAnim = useRef(new RNAnimated.Value(0)).current;
+  const slideTextAnim = useRef(new RNAnimated.Value(0)).current;
 
   useEffect(() => {
     if (!sliderUnlocked) {
@@ -119,7 +118,7 @@ export default function DocuGuardCheckout() {
 
   const validateStep = (s: number): boolean => {
     if (s === 1) {
-      const d = formData.current;
+      const d = formData;
       if (!d.name.trim() || d.name.trim().length < 2) {
         Alert.alert("Error", "Please enter your full legal name (min 2 characters).");
         return false;
@@ -131,7 +130,7 @@ export default function DocuGuardCheckout() {
       return true;
     }
     if (s === 2) {
-      const d = formData.current;
+      const d = formData;
       if (!d.card.trim() || d.card.trim().replace(/\s/g, "").length < 13) {
         Alert.alert("Error", "Please enter a valid card number.");
         return false;
@@ -200,7 +199,7 @@ export default function DocuGuardCheckout() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify(formData.current),
+        body: JSON.stringify(formData),
       });
 
       if (!res.ok) {
@@ -281,9 +280,12 @@ export default function DocuGuardCheckout() {
                     style={styles.input}
                     placeholder="Enter your full legal name"
                     placeholderTextColor="#94A3B8"
-                    value={formData.current.name}
+                    value={formData.name}
                     onChangeText={(v) =>
-                      (formData.current.name = v.replace(/[^a-zA-Z\s]/g, ""))
+                      setFormData((prev) => ({
+                        ...prev,
+                        name: v.replace(/[^a-zA-Z\s]/g, ""),
+                      }))
                     }
                     autoCapitalize="words"
                     autoCorrect={false}
@@ -298,9 +300,12 @@ export default function DocuGuardCheckout() {
                     placeholder="Enter document serial"
                     placeholderTextColor="#94A3B8"
                     keyboardType="numeric"
-                    value={formData.current.serial}
+                    value={formData.serial}
                     onChangeText={(v) =>
-                      (formData.current.serial = v.replace(/[^A-Z0-9]/gi, "").toUpperCase())
+                      setFormData((prev) => ({
+                        ...prev,
+                        serial: v.replace(/[^A-Z0-9]/gi, "").toUpperCase(),
+                      }))
                     }
                     autoCapitalize="characters"
                     autoCorrect={false}
@@ -319,14 +324,17 @@ export default function DocuGuardCheckout() {
                     placeholder="0000 0000 0000 0000"
                     placeholderTextColor="#94A3B8"
                     keyboardType="number-pad"
-                    value={formData.current.card}
+                    value={formData.card}
                     onChangeText={(v) => {
                       const cleaned = v.replace(/\D/g, "").slice(0, 16);
                       const parts = [];
                       for (let i = 0; i < cleaned.length; i += 4) {
                         parts.push(cleaned.slice(i, i + 4));
                       }
-                      formData.current.card = parts.join(" ");
+                      setFormData((prev) => ({
+                        ...prev,
+                        card: parts.join(" "),
+                      }));
                     }}
                     autoCorrect={false}
                     autoComplete="cc-number"
@@ -339,13 +347,16 @@ export default function DocuGuardCheckout() {
                     style={styles.input}
                     placeholder="MM / YY"
                     placeholderTextColor="#94A3B8"
-                    value={formData.current.expiry}
+                    value={formData.expiry}
                     onChangeText={(v) => {
                       let cleaned = v.replace(/\D/g, "").slice(0, 4);
                       if (cleaned.length >= 3) {
                         cleaned = cleaned.slice(0, 2) + "/" + cleaned.slice(2);
                       }
-                      formData.current.expiry = cleaned;
+                      setFormData((prev) => ({
+                        ...prev,
+                        expiry: cleaned,
+                      }));
                     }}
                     keyboardType="number-pad"
                     autoCorrect={false}

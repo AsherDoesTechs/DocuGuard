@@ -155,8 +155,16 @@ export default function HomeScreen() {
 
   const status = getRiskStatus(summary.safetyScore);
 
+  const TAB_ORDER = ["home", "documents", "reminders", "profile", "sync"];
+
   const swipeX = useRef(new Animated.Value(0)).current;
   const swipeDirection = useRef<"left" | "right" | null>(null);
+
+  const navigateToTab = (tabName: string) => {
+    swipeX.setValue(0);
+    swipeDirection.current = null;
+    router.push("/(tabs)/" + tabName as any);
+  };
 
   const panResponder = useRef(
     PanResponder.create({
@@ -165,27 +173,28 @@ export default function HomeScreen() {
       },
       onPanResponderRelease: (_, gestureState) => {
         const { dx } = gestureState;
+        const currentIndex = TAB_ORDER.indexOf("home");
+
         if (dx < -60) {
+          // swipe left -> next tab
           swipeDirection.current = "left";
+          const nextIndex = (currentIndex + 1) % TAB_ORDER.length;
+          const nextTab = TAB_ORDER[nextIndex];
           Animated.timing(swipeX, {
             toValue: -100,
-            duration: 200,
+            duration: 220,
             useNativeDriver: true,
-          }).start(() => {
-            swipeX.setValue(0);
-            swipeDirection.current = null;
-            router.push("/(tabs)/documents" as any);
-          });
+          }).start(() => navigateToTab(nextTab));
         } else if (dx > 60) {
+          // swipe right -> previous tab
           swipeDirection.current = "right";
+          const prevIndex = (currentIndex - 1 + TAB_ORDER.length) % TAB_ORDER.length;
+          const prevTab = TAB_ORDER[prevIndex];
           Animated.timing(swipeX, {
             toValue: 100,
-            duration: 200,
+            duration: 220,
             useNativeDriver: true,
-          }).start(() => {
-            swipeX.setValue(0);
-            swipeDirection.current = null;
-          });
+          }).start(() => navigateToTab(prevTab));
         } else {
           Animated.timing(swipeX, {
             toValue: 0,

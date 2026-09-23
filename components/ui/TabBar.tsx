@@ -26,7 +26,6 @@ interface TabBarProps {
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 const TAB_COUNT = 5;
 const TAB_WIDTH = SCREEN_WIDTH / TAB_COUNT;
-const INDICATOR_WIDTH = TAB_WIDTH - 32;
 
 export const TabBar: React.FC<TabBarProps> = React.memo(
   ({ tabs, activeTab, onTabPress }) => {
@@ -35,12 +34,6 @@ export const TabBar: React.FC<TabBarProps> = React.memo(
     const safeActiveTab = tabs.find((t) => t.name === activeTab)
       ? activeTab
       : tabs[0].name;
-
-    const indicatorPosition = useRef(
-      new RNAnimated.Value(
-        tabs.findIndex((t) => t.name === safeActiveTab) * TAB_WIDTH,
-      ),
-    ).current;
 
     const scaleValues = useRef<Record<string, RNAnimated.Value>>({}).current;
     tabs.forEach((tab) => {
@@ -54,28 +47,18 @@ export const TabBar: React.FC<TabBarProps> = React.memo(
         if (tab.name === activeTab) return;
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
-        const currentIndex = tabs.findIndex((t) => t.name === activeTab);
-        const newIndex = tabs.findIndex((t) => t.name === tab.name);
-
-        RNAnimated.parallel([
-          RNAnimated.timing(indicatorPosition, {
-            toValue: newIndex * TAB_WIDTH,
-            duration: 300,
+        RNAnimated.sequence([
+          RNAnimated.timing(scaleValues[tab.name], {
+            toValue: 1.15,
+            duration: 150,
             useNativeDriver: true,
           }),
-          RNAnimated.sequence([
-            RNAnimated.timing(scaleValues[tab.name], {
-              toValue: 1.15,
-              duration: 150,
-              useNativeDriver: true,
-            }),
-            RNAnimated.spring(scaleValues[tab.name], {
-              toValue: 1,
-              friction: 5,
-              tension: 100,
-              useNativeDriver: true,
-            }),
-          ]),
+          RNAnimated.spring(scaleValues[tab.name], {
+            toValue: 1,
+            friction: 5,
+            tension: 100,
+            useNativeDriver: true,
+          }),
         ]).start();
 
         if (scaleValues[activeTab]) {
@@ -88,21 +71,11 @@ export const TabBar: React.FC<TabBarProps> = React.memo(
 
         onTabPress(tab.name);
       },
-      [tabs, activeTab, indicatorPosition, scaleValues, onTabPress],
+      [tabs, activeTab, scaleValues, onTabPress],
     );
-
-    const activeIndex = tabs.findIndex((t) => t.name === activeTab);
 
     return (
       <View style={styles.container}>
-        <RNAnimated.View
-          style={[
-            styles.activeIndicator,
-            {
-              transform: [{ translateX: indicatorPosition }],
-            },
-          ]}
-        />
         {tabs.map((tab) => {
           const isActive = activeTab === tab.name;
           const tabScale = scaleValues[tab.name] || new RNAnimated.Value(1);
@@ -176,14 +149,6 @@ const styles = StyleSheet.create({
   labelActive: {
     color: COLORS.primary,
     fontWeight: "700",
-  },
-  activeIndicator: {
-    position: "absolute",
-    top: 2,
-    width: INDICATOR_WIDTH,
-    height: 3,
-    backgroundColor: COLORS.primary,
-    borderRadius: 2,
   },
   activeDot: {
     position: "absolute",

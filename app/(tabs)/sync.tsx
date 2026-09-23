@@ -5,7 +5,6 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Alert,
   ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -21,15 +20,15 @@ import {
   getUnsyncedReminders,
 } from "../../services/localDatabase";
 import { LocalDocument, LocalReminder } from "@/types/offline";
+import { useAlert } from "@/components/ui/AlertService";
 
 export default function SyncScreen() {
   const router = useRouter();
   const [syncing, setSyncing] = useState(false);
   const [lastSync, setLastSync] = useState<string | null>(null);
   const [pendingDocs, setPendingDocs] = useState<LocalDocument[]>([]);
-  const [pendingReminders, setPendingReminders] = useState<LocalReminder[]>(
-    [],
-  );
+  const [pendingReminders, setPendingReminders] = useState<LocalReminder[]>([]);
+  const { alert } = useAlert();
 
   const fetchPending = async () => {
     const docs = await getUnsyncedDocuments();
@@ -51,12 +50,16 @@ export default function SyncScreen() {
   const handleSync = async () => {
     const token = await SecureStore.getItemAsync("userToken");
     if (!token) {
-      Alert.alert(
+      alert(
         "Authentication Required",
         "Please sign in to sync with the cloud.",
-        [
-          { text: "Sign In", onPress: () => router.replace("/login" as any) },
-        ],
+        {
+          type: "warning",
+          buttons: [
+            { text: "Cancel", style: "cancel" },
+            { text: "Sign In", onPress: () => router.replace("/login" as any) },
+          ],
+        }
       );
       return;
     }
@@ -105,18 +108,20 @@ export default function SyncScreen() {
       await fetchPending();
 
       if (errors.length > 0) {
-        Alert.alert(
+        alert(
           "Sync Complete",
           `Synced ${syncedCount} of ${unsyncedDocs.length + unsyncedReminders.length} items. Some errors occurred:\n\n${errors.join("\n")}`,
+          { type: "warning" }
         );
       } else {
-        Alert.alert(
+        alert(
           "Sync Complete",
           `Successfully synced ${syncedCount} document(s) and ${unsyncedReminders.length} reminder(s).`,
+          { type: "success" }
         );
       }
     } catch (err: any) {
-      Alert.alert("Sync Failed", err.message || "Could not sync to cloud.");
+      alert("Sync Failed", err.message || "Could not sync to cloud.", { type: "error" });
     } finally {
       setSyncing(false);
     }

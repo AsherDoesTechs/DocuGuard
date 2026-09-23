@@ -39,7 +39,9 @@ import {
   createDocument,
   updateDocument,
   logDocumentAction,
+  getAllDocuments,
 } from "../services/localDatabase";
+import { getUserProfile } from "../services/localDatabase";
 
 const MAX_TITLE_LENGTH = 100;
 const MAX_ISSUER_LENGTH = 150;
@@ -124,6 +126,184 @@ function getFileTypeLabel(mimeType?: string): { label: string; icon: keyof typeo
   return { label: "File", icon: "document" };
 }
 
+/* -------------------------------------------------------------------------- */
+/* Smart Suggestions                                                           */
+/* -------------------------------------------------------------------------- */
+
+interface Suggestion {
+  field: keyof DocumentInput;
+  value: string;
+  source: string;
+  confidence: number;
+}
+
+function buildSuggestions(
+  values: DocumentInput,
+  previousDocs: Array<{
+    title?: string;
+    issuer?: string;
+    documentNumber?: string;
+    category?: string;
+    issueDate?: string;
+    expiryDate?: string;
+    notes?: string;
+  }>,
+  profile: { name?: string; email?: string } | null,
+): Suggestion[] {
+  const suggestions: Suggestion[] = [];
+
+  const title = values.title?.trim().toLowerCase() || "";
+  const issuer = values.issuer?.trim().toLowerCase() || "";
+  const docNum = values.documentNumber?.trim().toLowerCase() || "";
+
+  // Match issuer against previously saved issuers
+  if (issuer && !values.issuer) {
+    const matches = previousDocs
+      .filter((d) => d.issuer && d.issuer.trim().toLowerCase() === issuer)
+      .map((d) => d.issuer!.trim());
+    if (matches.length > 0) {
+      const unique = Array.from(new Set(matches));
+      suggestions.push({
+        field: "issuer",
+        value: unique[0],
+        source: `${matches.length} previous document${matches.length > 1 ? "s" : ""}`,
+        confidence: 95,
+      });
+    }
+  }
+
+  // Match document number prefix against previous document numbers
+  if (docNum && !values.documentNumber) {
+    const prefixMatches = previousDocs
+      .filter((d) => d.documentNumber && d.documentNumber.toLowerCase().startsWith(docNum))
+      .map((d) => d.documentNumber!.trim());
+    if (prefixMatches.length > 0) {
+      const unique = Array.from(new Set(prefixMatches));
+      suggestions.push({
+        field: "documentNumber",
+        value: unique[0],
+        source: "matches previous document number",
+        confidence: 90,
+      });
+    }
+  }
+
+  // Suggest category based on title keywords
+  if (title && !values.category) {
+    const keywordMap: Record<string, string> = {
+      passport: "passport",
+      license: "license",
+      insurance: "insurance",
+      certificate: "certificate",
+      visa: "visa",
+      "driver license": "license",
+      "health insurance": "insurance",
+      "car insurance": "insurance",
+      "home insurance": "insurance",
+      "birth certificate": "certificate",
+      "marriage certificate": "certificate",
+      "vaccination": "certificate",
+    };
+    for (const [keyword, category] of Object.entries(keywordMap)) {
+      if (title.includes(keyword)) {
+        suggestions.push({
+          field: "category",
+          value: category,
+          source: `detected "${keyword}" in title`,
+          confidence: 85,
+        });
+        break;
+      }
+    }
+  }
+
+  // Suggest issuer based on title keywords
+  if (title && !values.issuer) {
+    const issuerKeywords: Record<string, string> = {
+      passport: "Department of State",
+      "driver license": "Department of Motor Vehicles",
+      dmv: "Department of Motor Vehicles",
+      "social security": "Social Security Administration",
+      ssa: "Social Security Administration",
+      irs: "Internal Revenue Service",
+      "internal revenue": "Internal Revenue Service",
+      "state farm": "State Farm",
+      geico: "GEICO",
+      allstate: "Allstate",
+      "farmers insurance": "Farmers Insurance",
+    };
+    for (const [keyword, issuerName] of Object.entries(issuerKeywords)) {
+      if (title.includes(keyword)) {
+        suggestions.push({
+          field: "issuer",
+          value: issuerName,
+          source: `detected "${keyword}" in title`,
+          confidence: 80,
+        });
+        break;
+      }
+    }
+  }
+
+  // Suggest notes from previous similar documents
+  if (title && !values.notes) {
+    const similar = previousDocs
+      .filter(
+        (d) =>
+          d.title &&
+          d.title.trim().toLowerCase() === title &&
+          d.notes &&
+          d.notes.trim().length > 0,
+      )
+      .map((d) => d.notes!.trim());
+    if (similar.length > 0) {
+      suggestions.push({
+        field: "notes",
+        value: similar[0],
+        source: "from a previous similar document",
+        confidence: 70,
+      });
+    }
+  }
+
+  // Suggest issue date as today if no value set
+  if (!values.issueDate) {
+    const today = new Date();
+    const yyyy = today.getFullYear();
+    const mm = String(today.getMonth() + 1).padStart(2, "0");
+    const dd = String(today.getDate()).padStart(2, "0");
+    suggestions.push({
+      field: "issueDate",
+      value: `${yyyy}-${mm}-${dd}`,
+      source: "today's date",
+      confidence: 60,
+    });
+  }
+
+  return suggestions
+    .filter((s) => !values[s.field] || (values[s.field] as string).trim() === "")
+    .sort((a, b) => b.confidence - a.confidence);
+}
+
+function applySuggestions(
+  values: DocumentInput,
+  suggestions: Suggestion[],
+): DocumentInput {
+  const next = { ...values };
+  for (const s of suggestions) {
+    if (!next[s.field] || (next[s.field] as string).trim() === "") {
+      (next as any)[s.field] = s.value;
+    }
+  }
+  return next;
+}
+
+function getFillAllSummary(suggestions: Suggestion[]): string {
+  if (suggestions.length === 0) return "No suggestions available";
+  const fields = Array.from(new Set(suggestions.map((s) => s.field)));
+  return `Fill ${fields.length} field${fields.length > 1 ? "s" : ""} from suggestions`;
+}
+
 function ensureFileExtension(name: string, mimeType?: string): string {
   const ext = getFileExtension(mimeType);
   if (!ext) return name;
@@ -168,6 +348,21 @@ function normalizeScannedData(
     ? Math.max(0, Math.min(100, Math.round(extracted.confidence)))
     : 0;
 
+  const authScore = Number.isFinite(extracted.authenticityScore)
+    ? Math.max(0, Math.min(100, Math.round(extracted.authenticityScore)))
+    : 0;
+
+  const validAuthenticity =
+    extracted.authenticity === "real" ||
+    extracted.authenticity === "replica" ||
+    extracted.authenticity === "fake"
+      ? extracted.authenticity
+      : authScore >= 80
+        ? "real"
+        : authScore >= 50
+          ? "replica"
+          : "fake";
+
   return {
     title: sanitizeText(extracted.title || "", MAX_TITLE_LENGTH),
     issuer: sanitizeText(extracted.issuer || "", MAX_ISSUER_LENGTH),
@@ -176,6 +371,9 @@ function normalizeScannedData(
     expiryDate: isValidDate(extracted.expiryDate || "") ? extracted.expiryDate : "",
     category: mappedCategory,
     confidence,
+    authenticity: validAuthenticity,
+    authenticityScore: authScore,
+    authenticityReason: extracted.authenticityReason || "",
   };
 }
 
@@ -434,7 +632,25 @@ export default function AddDocumentScreen() {
     expiryDate: string;
     category: string;
     confidence: number;
+    authenticity: "real" | "replica" | "fake";
+    authenticityScore: number;
+    authenticityReason: string;
   } | null>(null);
+  const [previousDocs, setPreviousDocs] = useState<
+    Array<{
+      title?: string;
+      issuer?: string;
+      documentNumber?: string;
+      category?: string;
+      issueDate?: string;
+      expiryDate?: string;
+      notes?: string;
+    }>
+  >([]);
+  const [userProfile, setUserProfile] = useState<{ name?: string; email?: string } | null>(null);
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [fillAllApplied, setFillAllApplied] = useState(false);
 
   const processScannedData = async () => {
     const scannedUri = params.scannedImageUri as string | undefined;
@@ -488,6 +704,83 @@ export default function AddDocumentScreen() {
     } catch (err) {
       Alert.alert("Error", "Could not select file. Please try again.");
     }
+  };
+
+  const loadSuggestionData = async () => {
+    try {
+      const [docs, profile] = await Promise.all([
+        getAllDocuments(),
+        getUserProfile(),
+      ]);
+      setPreviousDocs(
+        docs.map((d) => ({
+          title: d.title,
+          issuer: d.issuer,
+          documentNumber: d.documentNumber,
+          category: d.category,
+          issueDate: d.issueDate,
+          expiryDate: d.expiryDate,
+          notes: d.notes,
+        })),
+      );
+      setUserProfile(
+        profile
+          ? { name: profile.name, email: profile.email }
+          : null,
+      );
+    } catch (err) {
+      console.error("Failed to load suggestion data:", err);
+    }
+  };
+
+  const computeSuggestions = () => {
+    const next = buildSuggestions(form.values, previousDocs, userProfile);
+    setSuggestions(next);
+    return next;
+  };
+
+  const refreshSuggestions = () => {
+    const next = computeSuggestions();
+    setShowSuggestions(next.length > 0);
+    return next;
+  };
+
+  const applySuggestion = (suggestion: Suggestion) => {
+    setSubmitError(null);
+    form.handleChange(suggestion.field)(suggestion.value);
+    setSuggestions((prev) => prev.filter((s) => s.field !== suggestion.field));
+    setFillAllApplied(false);
+    showToast(
+      `Applied ${suggestion.field} from ${suggestion.source}`,
+      "success",
+    );
+  };
+
+  const applyFillAll = () => {
+    const next = computeSuggestions();
+    if (next.length === 0) {
+      showToast("No suggestions available right now", "info");
+      return;
+    }
+    setSubmitError(null);
+    for (const s of next) {
+      form.handleChange(s.field)(s.value);
+    }
+    setSuggestions([]);
+    setFillAllApplied(true);
+    showToast(
+      `Filled ${next.length} field${next.length > 1 ? "s" : ""} from suggestions`,
+      "success",
+    );
+  };
+
+  const dismissSuggestions = () => {
+    setShowSuggestions(false);
+    setSuggestions([]);
+  };
+
+  const showToast = (message: string, type: ToastType = "success") => {
+    setToast({ visible: true, message, type });
   };
 
   const removeSelectedFile = () => {
@@ -572,6 +865,33 @@ const form = useForm<DocumentInput>({
       mounted = false;
     };
   }, [router]);
+
+  useEffect(() => {
+    loadSuggestionData();
+  }, []);
+
+  useEffect(() => {
+    // Refresh suggestions whenever form values change
+    if (!form.values.title && !form.values.issuer && !form.values.documentNumber) {
+      setSuggestions([]);
+      setShowSuggestions(false);
+      return;
+    }
+    const timer = setTimeout(() => {
+      const next = computeSuggestions();
+      setSuggestions(next);
+      setShowSuggestions(next.length > 0);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [
+    form.values.title,
+    form.values.issuer,
+    form.values.documentNumber,
+    form.values.category,
+    form.values.issueDate,
+    form.values.expiryDate,
+    form.values.notes,
+  ]);
 
   function openDatePicker(field: DateField) {
     setDatePicker(field);
@@ -839,6 +1159,85 @@ const form = useForm<DocumentInput>({
               multiline
               error={form.touched.notes ? form.errors.notes : undefined}
             />
+            {showSuggestions && suggestions.length > 0 && (
+              <View style={styles.suggestionsCard}>
+                <View style={styles.suggestionsHeader}>
+                  <View style={styles.suggestionsTitleRow}>
+                    <Ionicons
+                      name="sparkles"
+                      size={16}
+                      color={COLORS.primary}
+                    />
+                    <Text style={styles.suggestionsTitle}>Smart Suggestions</Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={dismissSuggestions}
+                    hitSlop={8}
+                  >
+                    <Ionicons
+                      name="close"
+                      size={16}
+                      color={COLORS.textSecondary}
+                    />
+                  </TouchableOpacity>
+                </View>
+                {suggestions.map((suggestion, idx) => (
+                  <TouchableOpacity
+                    key={`${suggestion.field}-${idx}`}
+                    style={styles.suggestionRow}
+                    onPress={() => applySuggestion(suggestion)}
+                  >
+                    <View style={styles.suggestionIcon}>
+                      <Ionicons
+                        name="chevron-forward"
+                        size={14}
+                        color={COLORS.primary}
+                      />
+                    </View>
+                    <View style={styles.suggestionInfo}>
+                      <Text style={styles.suggestionField}>
+                        {suggestion.field
+                          .replace(/([A-Z])/g, " $1")
+                          .replace(/^./, (c) => c.toUpperCase())
+                          .trim()}
+                      </Text>
+                      <Text style={styles.suggestionValue} numberOfLines={1}>
+                        {suggestion.value}
+                      </Text>
+                      <Text style={styles.suggestionSource}>
+                        {suggestion.source} ({suggestion.confidence}%)
+                      </Text>
+                    </View>
+                    <Ionicons
+                      name="add-circle-outline"
+                      size={18}
+                      color={COLORS.primary}
+                    />
+                  </TouchableOpacity>
+                ))}
+                <TouchableOpacity
+                  style={styles.fillAllButton}
+                  onPress={applyFillAll}
+                >
+                  <Ionicons
+                    name="checkmark-done-circle"
+                    size={18}
+                    color="#fff"
+                  />
+                  <Text style={styles.fillAllButtonText}>Fill All</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+            {fillAllApplied && (
+              <View style={styles.appliedBadge}>
+                <Ionicons
+                  name="checkmark-circle"
+                  size={14}
+                  color={COLORS.success}
+                />
+                <Text style={styles.appliedText}>Suggestions applied</Text>
+              </View>
+            )}
 
             <View style={styles.fieldContainer}>
               <Text style={styles.fieldLabel}>Document File</Text>
@@ -951,24 +1350,57 @@ const form = useForm<DocumentInput>({
           />
           {scannedData && (
             <View style={styles.scannerPreviewData}>
-              {scannedData.title && (
-                <Text style={styles.scannerPreviewLabel}>
-                  Title: {scannedData.title}
+              {scannedData.confidence > 0 && (
+                <Text style={styles.scannerConfidence}>
+                  Confidence: {scannedData.confidence}%
                 </Text>
               )}
-              {scannedData.issuer && (
-                <Text style={styles.scannerPreviewLabel}>
-                  Issuer: {scannedData.issuer}
-                </Text>
+              {scannedData.authenticity && (
+                <View style={styles.authenticityRow}>
+                  <Ionicons
+                    name={
+                      scannedData.authenticity === "real"
+                        ? "shield-checkmark"
+                        : scannedData.authenticity === "replica"
+                          ? "warning"
+                          : "alert-circle"
+                    }
+                    size={16}
+                    color={
+                      scannedData.authenticity === "real"
+                        ? COLORS.success
+                        : scannedData.authenticity === "replica"
+                          ? COLORS.warning
+                          : COLORS.danger
+                    }
+                  />
+                  <Text
+                    style={[
+                      styles.authenticityText,
+                      {
+                        color:
+                          scannedData.authenticity === "real"
+                            ? COLORS.success
+                            : scannedData.authenticity === "replica"
+                              ? COLORS.warning
+                              : COLORS.danger,
+                      },
+                    ]}
+                  >
+                    {scannedData.authenticity === "real"
+                      ? "Authentic"
+                      : scannedData.authenticity === "replica"
+                        ? "Replica"
+                        : "Suspected Fake"}{" "}
+                    ({scannedData.authenticityScore}%)
+                  </Text>
+                </View>
               )}
-              {scannedData.documentNumber && (
-                <Text style={styles.scannerPreviewLabel}>
-                  Number: {scannedData.documentNumber}
+              {scannedData.authenticityReason ? (
+                <Text style={styles.authenticityReason} numberOfLines={2}>
+                  {scannedData.authenticityReason}
                 </Text>
-              )}
-              <Text style={styles.scannerConfidence}>
-                Confidence: {scannedData.confidence}%
-              </Text>
+              ) : null}
             </View>
           )}
         </Card>
@@ -994,6 +1426,9 @@ const form = useForm<DocumentInput>({
               expiryDate: extracted.expiryDate,
               category: extracted.category,
               confidence: extracted.confidence,
+              authenticity: extracted.authenticity,
+              authenticityScore: extracted.authenticityScore,
+              authenticityReason: extracted.authenticityReason,
             });
             setTimeout(() => {
               form.handleChange("title")(extracted.title);
@@ -1231,5 +1666,108 @@ const styles = StyleSheet.create({
     color: COLORS.success,
     fontWeight: "600",
     marginTop: 4,
+  },
+  authenticityRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 6,
+    gap: 6,
+  },
+  authenticityText: {
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  authenticityReason: {
+    fontSize: 11,
+    color: COLORS.textSecondary,
+    marginTop: 6,
+    fontStyle: "italic",
+  },
+  suggestionsCard: {
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1,
+    borderColor: `${COLORS.primary}20`,
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 18,
+  },
+  suggestionsHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  suggestionsTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  suggestionsTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: COLORS.primary,
+  },
+  suggestionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    backgroundColor: "#fff",
+    borderRadius: 10,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  suggestionIcon: {
+    marginRight: 10,
+  },
+  suggestionInfo: {
+    flex: 1,
+  },
+  suggestionField: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: COLORS.text,
+    textTransform: "capitalize",
+  },
+  suggestionValue: {
+    fontSize: 14,
+    color: COLORS.text,
+    marginTop: 2,
+  },
+  suggestionSource: {
+    fontSize: 11,
+    color: COLORS.textSecondary,
+    marginTop: 2,
+  },
+  fillAllButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: COLORS.primary,
+    borderRadius: 10,
+    height: 44,
+    marginTop: 4,
+  },
+  fillAllButtonText: {
+    color: "#fff",
+    fontWeight: "700",
+    fontSize: 14,
+  },
+  appliedBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    backgroundColor: `${COLORS.success}15`,
+    borderRadius: 8,
+    paddingVertical: 8,
+    marginBottom: 18,
+  },
+  appliedText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: COLORS.success,
   },
 });

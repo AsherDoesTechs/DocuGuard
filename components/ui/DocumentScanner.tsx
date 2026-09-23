@@ -4,7 +4,6 @@ import {
   StyleSheet,
   Modal,
   TouchableOpacity,
-  Alert,
   Image,
   PanResponder,
   Animated,
@@ -13,6 +12,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { COLORS } from "@/constants";
+import { useAlert } from "./AlertService";
 
 let ScannerPlugin: any = null;
 try {
@@ -27,8 +27,6 @@ interface DocumentScannerProps {
   onScanSuccess: (data: { uri: string; width: number; height: number }) => void;
 }
 
-const STABILIZATION_SECONDS = 5;
-
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
@@ -38,7 +36,7 @@ function filterValidImageUris(scannedImages: unknown): string[] {
   return scannedImages.filter(isNonEmptyString);
 }
 
-type ScannerPhase = "stabilizing" | "capturing" | "success";
+type ScannerPhase = "capturing" | "success";
 
 export const DocumentScannerComponent = ({
   visible,
@@ -47,21 +45,16 @@ export const DocumentScannerComponent = ({
 }: DocumentScannerProps) => {
   const [visibleState, setVisibleState] = useState(false);
   const slideAnim = useRef(new Animated.Value(0)).current;
-  const progressAnim = useRef(new Animated.Value(0)).current;
 
-  const [phase, setPhase] = useState<ScannerPhase>("stabilizing");
-  const [countdown, setCountdown] = useState(STABILIZATION_SECONDS);
+  const [phase, setPhase] = useState<ScannerPhase>("capturing");
   const [scanning, setScanning] = useState(false);
 
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closedRef = useRef(false);
 
+  const { alert } = useAlert();
+
   const clearTimers = () => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    }
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current);
       timeoutRef.current = null;
@@ -77,8 +70,7 @@ export const DocumentScannerComponent = ({
   const open = () => {
     setVisibleState(true);
     setScanning(false);
-    setPhase("stabilizing");
-    setCountdown(STABILIZATION_SECONDS);
+    setPhase("capturing");
     closedRef.current = false;
     slideAnim.setValue(0);
     Animated.timing(slideAnim, {
@@ -88,42 +80,16 @@ export const DocumentScannerComponent = ({
     }).start();
   };
 
-  const beginStabilization = () => {
-    if (closedRef.current) return;
-    setPhase("stabilizing");
-    setCountdown(STABILIZATION_SECONDS);
-    let remaining = STABILIZATION_SECONDS;
-
-    Animated.timing(progressAnim, {
-      toValue: 1,
-      duration: STABILIZATION_SECONDS * 1000,
-      useNativeDriver: false,
-    }).start();
-
-    intervalRef.current = setInterval(() => {
-      remaining -= 1;
-      if (remaining <= 0) {
-        clearTimers();
-        setCountdown(0);
-        if (!closedRef.current) {
-          captureDocument();
-        }
-      } else {
-        setCountdown(remaining);
-      }
-    }, 1000);
-  };
-
   const captureDocument = async () => {
     setPhase("capturing");
     setScanning(true);
 
     if (!ScannerPlugin || !ScannerPlugin.default) {
       setScanning(false);
-      Alert.alert(
+      alert(
         "Scanner Unavailable",
         "Native module not linked. Build a development client.",
-        [{ text: "OK", onPress: onClose }],
+        { type: "error", buttons: [{ text: "OK", onPress: onClose }] }
       );
       return;
     }
@@ -137,10 +103,10 @@ export const DocumentScannerComponent = ({
 
       if (validImages.length === 0) {
         setScanning(false);
-        Alert.alert(
+        alert(
           "Scan Failed",
           "No valid image was captured. Please try again.",
-          [{ text: "OK", onPress: onClose }],
+          { type: "error", buttons: [{ text: "OK", onPress: onClose }] }
         );
         return;
       }
@@ -152,7 +118,7 @@ export const DocumentScannerComponent = ({
       const finish = (width: number, height: number) => {
         timeoutRef.current = setTimeout(() => {
           setScanning(false);
-          setPhase("stabilizing");
+          setPhase("capturing");
           if (!closedRef.current) {
             onScanSuccess({ uri: imageUri, width, height });
           }
@@ -166,10 +132,10 @@ export const DocumentScannerComponent = ({
       );
     } catch (error) {
       setScanning(false);
-      Alert.alert(
+      alert(
         "Scanning Error",
         "Something went wrong while capturing the document.",
-        [{ text: "OK", onPress: onClose }],
+        { type: "error", buttons: [{ text: "OK", onPress: onClose }] }
       );
     }
   };
@@ -177,7 +143,7 @@ export const DocumentScannerComponent = ({
   useEffect(() => {
     if (visible) {
       open();
-      timeoutRef.current = setTimeout(() => beginStabilization(), 600);
+      timeoutRef.current = setTimeout(() => captureDocument(), 600);
       return () => {
         closedRef.current = true;
         clearTimers();
@@ -187,7 +153,7 @@ export const DocumentScannerComponent = ({
       clearTimers();
       setVisibleState(false);
       setScanning(false);
-      setPhase("stabilizing");
+      setPhase("capturing");
     }
   }, [visible]);
 
@@ -196,7 +162,7 @@ export const DocumentScannerComponent = ({
     clearTimers();
     setVisibleState(false);
     setScanning(false);
-    setPhase("stabilizing");
+    setPhase("capturing");
     onClose();
   };
 
@@ -238,31 +204,6 @@ export const DocumentScannerComponent = ({
         {...panResponder.panHandlers}
       >
         <View style={styles.stabilizationContent}>
-          {phase === "stabilizing" && (
-            <View style={styles.instructionBox}>
-              <Ionicons name="scan-circle-outline" size={36} color="#fff" />
-              <Text style={styles.instructionTitle}>Please stop moving</Text>
-
-              <Text style={styles.instructionSubtitle}>
-                Capturing the information in {countdown > 0 ? countdown : "…"}
-              </Text>
-
-              <View style={styles.progressTrack}>
-                <Animated.View
-                  style={[
-                    styles.progressFill,
-                    {
-                      width: progressAnim.interpolate({
-                        inputRange: [0, 1],
-                        outputRange: ["0%", "100%"],
-                      }),
-                    },
-                  ]}
-                />
-              </View>
-            </View>
-          )}
-
           {phase === "capturing" && (
             <View style={styles.instructionBox}>
               <Ionicons name="scan-outline" size={36} color="#fff" />
@@ -335,19 +276,6 @@ const styles = StyleSheet.create({
   },
   activityIndicator: {
     marginTop: 16,
-  },
-  progressTrack: {
-    marginTop: 16,
-    width: 160,
-    height: 5,
-    backgroundColor: "rgba(255, 255, 255, 0.25)",
-    borderRadius: 4,
-    overflow: "hidden",
-  },
-  progressFill: {
-    height: "100%",
-    backgroundColor: COLORS.success,
-    borderRadius: 4,
   },
   closeButton: {
     alignSelf: "center",

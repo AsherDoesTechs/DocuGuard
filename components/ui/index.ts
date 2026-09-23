@@ -9,4 +9,6 @@ export { default as Header } from "./Header";
 export { default as Loading } from "./Loading";
 export { default as SearchBar } from "./SearchBar";
 export { Toast } from "./Toast";
+export { AlertModal, AlertProvider, showAlert, useAlert, alertHelpers } from "./AlertService";
 export type { ToastType, ToastProps } from "./Toast";
+export type { AlertButton, AlertType, AlertModalProps } from "./AlertModal";

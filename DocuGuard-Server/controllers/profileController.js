@@ -201,3 +201,188 @@ exports.handleCheckoutSubscription = async (req, res) => {
     res.status(500).json({ error: "Server error processing payment" });
   }
 };
+
+// Get user settings (document preferences, appearance, privacy)
+exports.getUserSettings = async (req, res) => {
+  const userId = req.user.userId;
+  try {
+    const settingsRes = await db.query(
+      `SELECT default_category AS "defaultCategory", auto_backup AS "autoBackup",
+              reminder_before_days AS "reminderBeforeDays",
+              reminder_30days AS "reminder30days", reminder_7days AS "reminder7days",
+              reminder_1day AS "reminder1day", reminder_on_day AS "reminderOnDay",
+              theme_mode AS "themeMode", font_size AS "fontSize",
+              biometric_lock AS "biometricLock", data_exported_at AS "dataExportedAt"
+       FROM user_settings WHERE user_id = $1 LIMIT 1`,
+      [userId],
+    );
+
+    const sessionsRes = await db.query(
+      `SELECT id, device_name AS "deviceName", platform, ip_address AS "ipAddress",
+              location, is_current AS "isCurrent", created_at AS "createdAt",
+              last_active AS "lastActive"
+       FROM login_sessions WHERE user_id = $1 ORDER BY is_current DESC, last_active DESC`,
+      [userId],
+    );
+
+    res.json({
+      settings: settingsRes.rows[0] || null,
+      sessions: sessionsRes.rows || [],
+    });
+  } catch (err) {
+    console.error("Error fetching user settings:", err);
+    res.status(500).json({ error: "Server error fetching settings" });
+  }
+};
+
+// Update user settings
+exports.updateUserSettings = async (req, res) => {
+  const userId = req.user.userId;
+
+  const settingsSchema = z.object({
+    defaultCategory: z.string().optional(),
+    autoBackup: z.boolean().optional(),
+    reminderBeforeDays: z.number().int().min(1).max(30).optional(),
+    reminder30days: z.boolean().optional(),
+    reminder7days: z.boolean().optional(),
+    reminder1day: z.boolean().optional(),
+    reminderOnDay: z.boolean().optional(),
+    themeMode: z.string().optional(),
+    fontSize: z.string().optional(),
+    biometricLock: z.boolean().optional(),
+  });
+
+  const validation = validateSchema(settingsSchema, req.body);
+  if (!validation.success) {
+    return res.status(400).json({
+      error: Object.values(validation.errors).join(", "),
+      code: ErrorCodes.PROFILE_UPDATE_FAILED,
+      details: validation.errors,
+    });
+  }
+
+  const data = validation.data;
+
+  try {
+    const existing = await db.query(
+      `SELECT id FROM user_settings WHERE user_id = $1 LIMIT 1`,
+      [userId],
+    );
+
+    if (existing.rows.length > 0) {
+      const fields: string[] = [];
+      const values: any[] = [];
+      let idx = 1;
+
+      const map: Record<string, string> = {
+        defaultCategory: "default_category",
+        autoBackup: "auto_backup",
+        reminderBeforeDays: "reminder_before_days",
+        reminder30days: "reminder_30days",
+        reminder7days: "reminder_7days",
+        reminder1day: "reminder_1day",
+        reminderOnDay: "reminder_on_day",
+        themeMode: "theme_mode",
+        fontSize: "font_size",
+        biometricLock: "biometric_lock",
+      };
+
+      for (const [key, col] of Object.entries(map)) {
+        if (data[key as keyof typeof data] !== undefined) {
+          fields.push(`${col} = $${idx++}`);
+          values.push(data[key as keyof typeof data]);
+        }
+      }
+
+      if (fields.length === 0) {
+        return res.json({ message: "No changes to save" });
+      }
+
+      fields.push(`updated_at = CURRENT_TIMESTAMP`);
+      values.push(userId);
+
+      await db.query(
+        `UPDATE user_settings SET ${fields.join(", ")} WHERE user_id = $${idx}`,
+        values,
+      );
+    } else {
+      await db.query(
+        `INSERT INTO user_settings
+          (user_id, default_category, auto_backup, reminder_before_days,
+           reminder_30days, reminder_7days, reminder_1day, reminder_on_day,
+           theme_mode, font_size, biometric_lock)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        [
+          userId,
+          data.defaultCategory || "other",
+          data.autoBackup !== undefined ? data.autoBackup : true,
+          data.reminderBeforeDays || 7,
+          data.reminder30days !== undefined ? data.reminder30days : true,
+          data.reminder7days !== undefined ? data.reminder7days : true,
+          data.reminder1day !== undefined ? data.reminder1day : true,
+          data.reminderOnDay !== undefined ? data.reminderOnDay : true,
+          data.themeMode || "system",
+          data.fontSize || "medium",
+          data.biometricLock !== undefined ? data.biometricLock : false,
+        ],
+      );
+    }
+
+    res.json({ message: "Settings updated successfully" });
+  } catch (err) {
+    console.error("Error updating user settings:", err);
+    res.status(500).json({ error: "Server error updating settings" });
+  }
+};
+
+// Get active login sessions
+exports.getLoginSessions = async (req, res) => {
+  const userId = req.user.userId;
+  try {
+    const sessionsRes = await db.query(
+      `SELECT id, device_name AS "deviceName", platform, ip_address AS "ipAddress",
+              location, is_current AS "isCurrent", created_at AS "createdAt",
+              last_active AS "lastActive"
+       FROM login_sessions WHERE user_id = $1 ORDER BY is_current DESC, last_active DESC`,
+      [userId],
+    );
+    res.json({ sessions: sessionsRes.rows || [] });
+  } catch (err) {
+    console.error("Error fetching login sessions:", err);
+    res.status(500).json({ error: "Server error fetching sessions" });
+  }
+};
+
+// Terminate a specific session
+exports.terminateSession = async (req, res) => {
+  const userId = req.user.userId;
+  const { sessionId } = req.params;
+  try {
+    const result = await db.query(
+      `DELETE FROM login_sessions WHERE id = $1 AND user_id = $2 AND is_current = false`,
+      [sessionId, userId],
+    );
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "Session not found or cannot terminate current session" });
+    }
+    res.json({ message: "Session terminated" });
+  } catch (err) {
+    console.error("Error terminating session:", err);
+    res.status(500).json({ error: "Server error terminating session" });
+  }
+};
+
+// Terminate all other sessions
+exports.terminateAllOtherSessions = async (req, res) => {
+  const userId = req.user.userId;
+  try {
+    const result = await db.query(
+      `DELETE FROM login_sessions WHERE user_id = $1 AND is_current = false`,
+      [userId],
+    );
+    res.json({ message: `Terminated ${result.rowCount} other session(s)` });
+  } catch (err) {
+    console.error("Error terminating other sessions:", err);
+    res.status(500).json({ error: "Server error terminating sessions" });
+  }
+};

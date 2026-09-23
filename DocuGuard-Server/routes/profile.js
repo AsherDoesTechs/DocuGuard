@@ -11,5 +11,10 @@ router.patch("/security", asyncHandler(profileController.updateSecurity));
 router.patch("/preferences", asyncHandler(profileController.updatePreferences));
 router.post("/support", asyncHandler(profileController.submitSupportTicket));
 router.post("/subscription", asyncHandler(profileController.handleCheckoutSubscription));
+router.get("/settings", asyncHandler(profileController.getUserSettings));
+router.patch("/settings", asyncHandler(profileController.updateUserSettings));
+router.get("/sessions", asyncHandler(profileController.getLoginSessions));
+router.delete("/sessions/:sessionId", asyncHandler(profileController.terminateSession));
+router.delete("/sessions", asyncHandler(profileController.terminateAllOtherSessions));
 
 module.exports = router;
