@@ -7,6 +7,7 @@ const { asyncHandler } = require("../utils/asyncHandler");
 router.use(authMiddleware);
 
 router.get("/", asyncHandler(profileController.getProfile));
+router.patch("/", asyncHandler(profileController.updateProfile));
 router.patch("/security", asyncHandler(profileController.updateSecurity));
 router.patch("/preferences", asyncHandler(profileController.updatePreferences));
 router.post("/support", asyncHandler(profileController.submitSupportTicket));
@@ -16,5 +17,9 @@ router.patch("/settings", asyncHandler(profileController.updateUserSettings));
 router.get("/sessions", asyncHandler(profileController.getLoginSessions));
 router.delete("/sessions/:sessionId", asyncHandler(profileController.terminateSession));
 router.delete("/sessions", asyncHandler(profileController.terminateAllOtherSessions));
+router.patch("/appearance", asyncHandler(profileController.updateAppearance));
+router.patch("/privacy", asyncHandler(profileController.updatePrivacy));
+router.get("/export", asyncHandler(profileController.exportUserData));
+router.delete("/", asyncHandler(profileController.deleteAccount));
 
 module.exports = router;

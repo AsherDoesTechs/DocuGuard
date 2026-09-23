@@ -30,6 +30,15 @@ CREATE TABLE IF NOT EXISTS login_sessions (
     last_active TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Add missing columns to users table for new features
+ALTER TABLE users 
+ADD COLUMN IF NOT EXISTS theme_mode TEXT DEFAULT 'system',
+ADD COLUMN IF NOT EXISTS font_size TEXT DEFAULT 'medium',
+ADD COLUMN IF NOT EXISTS reduced_motion BOOLEAN DEFAULT FALSE,
+ADD COLUMN IF NOT EXISTS analytics_enabled BOOLEAN DEFAULT FALSE,
+ADD COLUMN IF NOT EXISTS crash_reports_enabled BOOLEAN DEFAULT TRUE,
+ADD COLUMN IF NOT EXISTS data_sharing_enabled BOOLEAN DEFAULT FALSE;
+
 -- Index for faster lookups
 CREATE INDEX IF NOT EXISTS idx_user_settings_user_id ON user_settings(user_id);
 CREATE INDEX IF NOT EXISTS idx_login_sessions_user_id ON login_sessions(user_id);

@@ -3,6 +3,7 @@ const bcrypt = require("bcryptjs");
 const { ErrorCodes } = require("../utils/errorCodes");
 const { validateSchema, profileSchema } = require("../../shared/validation/schemas");
 const { z } = require("zod");
+const { Readable } = require("stream");
 
 // Get user profile data and live stats
 exports.getProfile = async (req, res) => {
@@ -384,5 +385,260 @@ exports.terminateAllOtherSessions = async (req, res) => {
   } catch (err) {
     console.error("Error terminating other sessions:", err);
     res.status(500).json({ error: "Server error terminating sessions" });
+  }
+};
+
+// Update personal info (name, email)
+exports.updateProfile = async (req, res) => {
+  const userId = req.user.userId;
+  const profileUpdateSchema = z.object({
+    name: z.string().min(1, "Name is required").max(100).optional(),
+    email: z.string().email("Invalid email address").optional(),
+  });
+
+  const validation = validateSchema(profileUpdateSchema, req.body);
+  if (!validation.success) {
+    return res.status(400).json({
+      error: Object.values(validation.errors).join(", "),
+      code: ErrorCodes.PROFILE_UPDATE_FAILED,
+      details: validation.errors,
+    });
+  }
+
+  const { name, email } = validation.data;
+
+  try {
+    const fields = [];
+    const values = [];
+    let idx = 1;
+
+    if (name !== undefined) {
+      fields.push(`name = $${idx++}`);
+      values.push(name);
+    }
+    if (email !== undefined) {
+      // Check if email is already taken
+      const existing = await db.query(
+        `SELECT id FROM users WHERE email = $1 AND id != $2`,
+        [email, userId],
+      );
+      if (existing.rows.length > 0) {
+        return res.status(400).json({ error: "Email already in use" });
+      }
+      fields.push(`email = $${idx++}`);
+      values.push(email);
+    }
+
+    if (fields.length === 0) {
+      return res.json({ message: "No changes to save" });
+    }
+
+    fields.push(`updated_at = CURRENT_TIMESTAMP`);
+    values.push(userId);
+
+    await db.query(
+      `UPDATE users SET ${fields.join(", ")} WHERE id = $${idx}`,
+      values,
+    );
+
+    res.json({ message: "Profile updated successfully" });
+  } catch (err) {
+    console.error("Error updating profile:", err);
+    res.status(500).json({ error: "Server error updating profile" });
+  }
+};
+
+// Update appearance settings
+exports.updateAppearance = async (req, res) => {
+  const userId = req.user.userId;
+  const appearanceSchema = z.object({
+    themeMode: z.string().optional(),
+    fontSize: z.string().optional(),
+    reducedMotion: z.boolean().optional(),
+  });
+
+  const validation = validateSchema(appearanceSchema, req.body);
+  if (!validation.success) {
+    return res.status(400).json({
+      error: Object.values(validation.errors).join(", "),
+      code: ErrorCodes.PROFILE_UPDATE_FAILED,
+      details: validation.errors,
+    });
+  }
+
+  const data = validation.data;
+
+  try {
+    const fields = [];
+    const values = [];
+    let idx = 1;
+
+    const map = {
+      themeMode: "theme_mode",
+      fontSize: "font_size",
+      reducedMotion: "reduced_motion",
+    };
+
+    for (const [key, col] of Object.entries(map)) {
+      if (data[key as keyof typeof data] !== undefined) {
+        fields.push(`${col} = $${idx++}`);
+        values.push(data[key as keyof typeof data]);
+      }
+    }
+
+    if (fields.length === 0) {
+      return res.json({ message: "No changes to save" });
+    }
+
+    fields.push(`updated_at = CURRENT_TIMESTAMP`);
+    values.push(userId);
+
+    await db.query(
+      `UPDATE users SET ${fields.join(", ")} WHERE id = $${idx}`,
+      values,
+    );
+
+    res.json({ message: "Appearance settings updated" });
+  } catch (err) {
+    console.error("Error updating appearance:", err);
+    res.status(500).json({ error: "Server error updating appearance" });
+  }
+};
+
+// Update privacy settings
+exports.updatePrivacy = async (req, res) => {
+  const userId = req.user.userId;
+  const privacySchema = z.object({
+    analyticsEnabled: z.boolean().optional(),
+    crashReportsEnabled: z.boolean().optional(),
+    dataSharingEnabled: z.boolean().optional(),
+  });
+
+  const validation = validateSchema(privacySchema, req.body);
+  if (!validation.success) {
+    return res.status(400).json({
+      error: Object.values(validation.errors).join(", "),
+      code: ErrorCodes.PROFILE_UPDATE_FAILED,
+      details: validation.errors,
+    });
+  }
+
+  const data = validation.data;
+
+  try {
+    const fields = [];
+    const values = [];
+    let idx = 1;
+
+    const map = {
+      analyticsEnabled: "analytics_enabled",
+      crashReportsEnabled: "crash_reports_enabled",
+      dataSharingEnabled: "data_sharing_enabled",
+    };
+
+    for (const [key, col] of Object.entries(map)) {
+      if (data[key as keyof typeof data] !== undefined) {
+        fields.push(`${col} = $${idx++}`);
+        values.push(data[key as keyof typeof data]);
+      }
+    }
+
+    if (fields.length === 0) {
+      return res.json({ message: "No changes to save" });
+    }
+
+    fields.push(`updated_at = CURRENT_TIMESTAMP`);
+    values.push(userId);
+
+    await db.query(
+      `UPDATE users SET ${fields.join(", ")} WHERE id = $${idx}`,
+      values,
+    );
+
+    res.json({ message: "Privacy settings updated" });
+  } catch (err) {
+    console.error("Error updating privacy:", err);
+    res.status(500).json({ error: "Server error updating privacy" });
+  }
+};
+
+// Export all user data
+exports.exportUserData = async (req, res) => {
+  const userId = req.user.userId;
+
+  try {
+    // Fetch all user data
+    const userRes = await db.query(
+      `SELECT * FROM users WHERE id = $1`,
+      [userId],
+    );
+    const docsRes = await db.query(
+      `SELECT * FROM documents WHERE user_id = $1 ORDER BY created_at DESC`,
+      [userId],
+    );
+    const remindersRes = await db.query(
+      `SELECT * FROM reminders WHERE user_id = $1 ORDER BY due_date ASC`,
+      [userId],
+    );
+    const settingsRes = await db.query(
+      `SELECT * FROM user_settings WHERE user_id = $1`,
+      [userId],
+    );
+    const sessionsRes = await db.query(
+      `SELECT * FROM login_sessions WHERE user_id = $1`,
+      [userId],
+    );
+    const ticketsRes = await db.query(
+      `SELECT * FROM support_tickets WHERE user_id = $1 ORDER BY created_at DESC`,
+      [userId],
+    );
+
+    const exportData = {
+      user: userRes.rows[0] || {},
+      documents: docsRes.rows || [],
+      reminders: remindersRes.rows || [],
+      settings: settingsRes.rows[0] || {},
+      sessions: sessionsRes.rows || [],
+      supportTickets: ticketsRes.rows || [],
+      exportedAt: new Date().toISOString(),
+    };
+
+    // Update data_exported_at timestamp
+    await db.query(
+      `UPDATE user_settings SET data_exported_at = CURRENT_TIMESTAMP WHERE user_id = $1`,
+      [userId],
+    );
+
+    // Send as JSON file download
+    res.setHeader("Content-Type", "application/json");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="docuguard-export-${new Date().toISOString().split("T")[0]}.json"`,
+    );
+    res.send(JSON.stringify(exportData, null, 2));
+  } catch (err) {
+    console.error("Error exporting user data:", err);
+    res.status(500).json({ error: "Server error exporting data" });
+  }
+};
+
+// Delete account
+exports.deleteAccount = async (req, res) => {
+  const userId = req.user.userId;
+
+  try {
+    // Delete in order to respect foreign keys
+    await db.query(`DELETE FROM reminders WHERE user_id = $1`, [userId]);
+    await db.query(`DELETE FROM documents WHERE user_id = $1`, [userId]);
+    await db.query(`DELETE FROM user_settings WHERE user_id = $1`, [userId]);
+    await db.query(`DELETE FROM login_sessions WHERE user_id = $1`, [userId]);
+    await db.query(`DELETE FROM support_tickets WHERE user_id = $1`, [userId]);
+    await db.query(`DELETE FROM transactions WHERE user_id = $1`, [userId]);
+    await db.query(`DELETE FROM users WHERE id = $1`, [userId]);
+
+    res.json({ message: "Account deleted successfully" });
+  } catch (err) {
+    console.error("Error deleting account:", err);
+    res.status(500).json({ error: "Server error deleting account" });
   }
 };
