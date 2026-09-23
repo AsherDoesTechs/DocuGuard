@@ -271,11 +271,11 @@ exports.updateUserSettings = async (req, res) => {
     );
 
     if (existing.rows.length > 0) {
-      const fields: string[] = [];
-      const values: any[] = [];
+      const fields = [];
+      const values = [];
       let idx = 1;
 
-      const map: Record<string, string> = {
+      const map = {
         defaultCategory: "default_category",
         autoBackup: "auto_backup",
         reminderBeforeDays: "reminder_before_days",
@@ -289,9 +289,9 @@ exports.updateUserSettings = async (req, res) => {
       };
 
       for (const [key, col] of Object.entries(map)) {
-        if (data[key as keyof typeof data] !== undefined) {
+        if (data[key] !== undefined) {
           fields.push(`${col} = $${idx++}`);
-          values.push(data[key as keyof typeof data]);
+          values.push(data[key]);
         }
       }
 
@@ -480,9 +480,9 @@ exports.updateAppearance = async (req, res) => {
     };
 
     for (const [key, col] of Object.entries(map)) {
-      if (data[key as keyof typeof data] !== undefined) {
-        fields.push(`${col} = $${idx++}`);
-        values.push(data[key as keyof typeof data]);
+      if (data[key] !== undefined) {
+        fields.push(`${col} = ${idx++}`);
+        values.push(data[key]);
       }
     }
 
@@ -537,9 +537,9 @@ exports.updatePrivacy = async (req, res) => {
     };
 
     for (const [key, col] of Object.entries(map)) {
-      if (data[key as keyof typeof data] !== undefined) {
-        fields.push(`${col} = $${idx++}`);
-        values.push(data[key as keyof typeof data]);
+      if (data[key] !== undefined) {
+        fields.push(`${col} = ${idx++}`);
+        values.push(data[key]);
       }
     }
 
