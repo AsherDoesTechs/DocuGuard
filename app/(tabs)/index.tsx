@@ -10,7 +10,6 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { Card } from "../../components/ui";
-import { AnalyticsSummaryCard } from "../../components/ui/AnalyticsSummaryCard";
 import { COLORS } from "@/constants";
 import { formatShortDate } from "../../utils";
 import { DocumentScannerComponent } from "../../components/ui/DocumentScanner";
@@ -225,15 +224,6 @@ export default function HomeScreen() {
               </View>
             </View>
           </Card>
-
-          {/* Smart Analytics Summary Card Widget */}
-          <AnalyticsSummaryCard
-            healthScore={summary.safetyScore}
-            expired={summary.expiredDocuments}
-            critical={summary.expiringDocuments}
-            warning={summary.expiringDocuments}
-            stable={summary.validDocuments}
-          />
 
           {/* Quick Actions */}
           <View style={styles.quickActions}>

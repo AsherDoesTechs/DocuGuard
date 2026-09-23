@@ -1,10 +1,12 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
+  PanResponder,
+  Animated,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
@@ -145,9 +147,58 @@ export default function HomeScreen() {
 
   const status = getRiskStatus(summary.safetyScore);
 
+  const swipeX = useRef(new Animated.Value(0)).current;
+  const swipeDirection = useRef<"left" | "right" | null>(null);
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, gestureState) => {
+        return Math.abs(gestureState.dx) > 10;
+      },
+      onPanResponderRelease: (_, gestureState) => {
+        const { dx } = gestureState;
+        if (dx < -60) {
+          swipeDirection.current = "left";
+          Animated.timing(swipeX, {
+            toValue: -100,
+            duration: 200,
+            useNativeDriver: true,
+          }).start(() => {
+            swipeX.setValue(0);
+            swipeDirection.current = null;
+            router.push("/(tabs)/documents" as any);
+          });
+        } else if (dx > 60) {
+          swipeDirection.current = "right";
+          Animated.timing(swipeX, {
+            toValue: 100,
+            duration: 200,
+            useNativeDriver: true,
+          }).start(() => {
+            swipeX.setValue(0);
+            swipeDirection.current = null;
+          });
+        } else {
+          Animated.timing(swipeX, {
+            toValue: 0,
+            duration: 200,
+            useNativeDriver: true,
+          }).start();
+        }
+      },
+    }),
+  ).current;
+
   return (
     <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
-      <RefreshableContainer
+      <Animated.View
+        style={[
+          styles.animatedContainer,
+          { transform: [{ translateX: swipeX }] },
+        ]}
+        {...panResponder.panHandlers}
+      >
+        <RefreshableContainer
         onRefresh={handleDataReload}
         contentContainerStyle={styles.content}
       >
@@ -327,6 +378,7 @@ export default function HomeScreen() {
           )}
         </ScrollView>
       </RefreshableContainer>
+      </Animated.View>
 
       <DocumentScannerComponent
         visible={scannerOpen}
@@ -350,6 +402,7 @@ export default function HomeScreen() {
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: COLORS.background },
+  animatedContainer: { flex: 1 },
   container: { flex: 1 },
   content: { padding: 16, paddingBottom: 100 },
   header: { marginBottom: 24 },

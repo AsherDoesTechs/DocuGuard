@@ -30,7 +30,8 @@ type SettingsTab =
   | "security"
   | "notifications"
   | "subscription"
-  | "support";
+  | "support"
+  | "biometrics";
 
 interface SubscriptionDetails {
   planName: string;
@@ -50,6 +51,7 @@ interface UserProfile {
   notifyEmail: boolean;
   notifyExpiry: boolean;
   twoFactor: boolean;
+  biometricEnabled: boolean;
   subscription: SubscriptionDetails;
   serialNumber: string;
 }
@@ -120,7 +122,10 @@ export default function ProfileScreen() {
     confirm: "",
   });
   const [twoFactor, setTwoFactor] = useState(false);
+  const [twoFactorSecret, setTwoFactorSecret] = useState("");
   const [twoFactorCode, setTwoFactorCode] = useState("");
+  const [biometricEnabled, setBiometricEnabled] = useState(false);
+  const [biometricPin, setBiometricPin] = useState("");
   const [notifyEmail, setNotifyEmail] = useState(true);
   const [notifyPush, setNotifyPush] = useState(false);
   const [notifyExpiry, setNotifyExpiry] = useState(true);
@@ -144,6 +149,9 @@ export default function ProfileScreen() {
       }
 
       if (localProfile) {
+        const storedBiometric = await AsyncStorage.getItem("biometricEnabled");
+        const storedSecret = await AsyncStorage.getItem("twoFactorSecret");
+
         setUser({
           name: localProfile.name,
           email: localProfile.email || "user@example.com",
@@ -164,10 +172,17 @@ export default function ProfileScreen() {
             storageTotal: 50,
             serialNumber,
           },
+          biometricEnabled: false,
         });
         setTwoFactor(localProfile.twoFactor);
         setNotifyEmail(localProfile.notifyEmail);
         setNotifyExpiry(localProfile.notifyExpiry);
+        if (storedBiometric !== null) {
+          setBiometricEnabled(storedBiometric === "true");
+        }
+        if (storedSecret !== null) {
+          setTwoFactorSecret(storedSecret);
+        }
       } else {
         setUser({
           name: "User",
@@ -181,6 +196,7 @@ export default function ProfileScreen() {
           notifyPush: false,
           notifyExpiry: true,
           twoFactor: false,
+          biometricEnabled: false,
           serialNumber: `DG-USER-${String(localDocs.length).padStart(4, "0")}`,
           subscription: {
             planName: "Free",
@@ -241,6 +257,16 @@ export default function ProfileScreen() {
     }
     try {
       const token = await AsyncStorage.getItem("userToken");
+      await AsyncStorage.setItem(
+        "biometricEnabled",
+        String(biometricEnabled),
+      );
+      if (biometricPin) {
+        await AsyncStorage.setItem("biometricPin", biometricPin);
+      }
+      if (twoFactorSecret) {
+        await AsyncStorage.setItem("twoFactorSecret", twoFactorSecret);
+      }
       const res = await api.client.patch(
         "/profile/security",
         {
@@ -248,6 +274,7 @@ export default function ProfileScreen() {
           newPassword: passwords.new,
           twoFactor,
           twoFactorCode: twoFactorCode || undefined,
+          biometricEnabled,
         },
         {
           headers: { Authorization: `Bearer ${token}` },
@@ -265,6 +292,15 @@ export default function ProfileScreen() {
       Alert.alert("Error", err.response?.data?.error || err.message);
     }
   };
+
+  function generateTOTPSecret(): string {
+    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    let result = "";
+    for (let i = 0; i < 32; i++) {
+      result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return result;
+  }
 
   const handleSavePreferences = async (
     email: boolean,
@@ -476,20 +512,43 @@ export default function ProfileScreen() {
                     textContentType="newPassword"
                   />
                   <View style={styles.switchRow}>
-                    <Text style={{ fontSize: 14 }}>Enable 2FA Authentication</Text>
+                    <Text style={{ fontSize: 14 }}>Enable 2FA (Authenticator App)</Text>
                     <Switch
                       value={twoFactor}
                       onValueChange={(val) => {
                         setTwoFactor(val);
-                        if (!val) setTwoFactorCode("");
+                        if (!val) {
+                          setTwoFactorCode("");
+                          setTwoFactorSecret("");
+                          AsyncStorage.removeItem("twoFactorSecret").catch(() => {});
+                        }
                       }}
                       trackColor={{ true: COLORS.primary }}
                     />
                   </View>
-                  {twoFactor && (
+                  {twoFactor && !twoFactorSecret && (
+                    <View style={styles.totpSetupContainer}>
+                      <Text style={styles.totpSecretLabel}>Setup Key:</Text>
+                      <Text style={styles.totpSecret} selectable>{twoFactorSecret || "—"}</Text>
+                      <TouchableOpacity
+                        style={styles.primaryButton}
+                        onPress={() => {
+                          const secret = generateTOTPSecret();
+                          setTwoFactorSecret(secret);
+                          AsyncStorage.setItem("twoFactorSecret", secret).catch(() => {});
+                        }}
+                      >
+                        <Text style={styles.buttonText}>Generate Setup Key</Text>
+                      </TouchableOpacity>
+                      <Text style={styles.totpHint}>
+                        Scan this key in your Authenticator App (Google/Microsoft Authenticator)
+                      </Text>
+                    </View>
+                  )}
+                  {twoFactor && twoFactorSecret && (
                     <TextInput
                       style={styles.input}
-                      placeholder="Enter 2FA verification code"
+                      placeholder="Enter 6-digit code from Authenticator App"
                       placeholderTextColor="#999"
                       keyboardType="number-pad"
                       maxLength={6}
@@ -507,6 +566,37 @@ export default function ProfileScreen() {
                   >
                     <Text style={styles.buttonText}>Save Changes</Text>
                   </TouchableOpacity>
+
+                  <View style={styles.switchRow}>
+                    <Text style={{ fontSize: 14 }}>Biometric Login (Fingerprint)</Text>
+                    <Switch
+                      value={biometricEnabled}
+                      onValueChange={async (val) => {
+                        setBiometricEnabled(val);
+                        if (!val) {
+                          setBiometricPin("");
+                          AsyncStorage.removeItem("biometricPin").catch(() => {});
+                        }
+                      }}
+                      trackColor={{ true: COLORS.primary }}
+                    />
+                  </View>
+                  {biometricEnabled && (
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Set a PIN for biometric fallback"
+                      placeholderTextColor="#999"
+                      secureTextEntry
+                      value={biometricPin}
+                      onChangeText={(t) => {
+                        const clean = t.replace(/[^0-9]/g, "").slice(0, 6);
+                        setBiometricPin(clean);
+                      }}
+                      keyboardType="number-pad"
+                      maxLength={6}
+                      autoCorrect={false}
+                    />
+                  )}
                 </View>
               )}
 
@@ -819,5 +909,32 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: COLORS.textSecondary,
     marginBottom: 20,
+  },
+  totpSetupContainer: {
+    padding: 12,
+    backgroundColor: "#f0f4ff",
+    borderRadius: 10,
+    marginTop: 12,
+    marginBottom: 12,
+    alignItems: "center",
+  },
+  totpSecretLabel: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    marginBottom: 4,
+  },
+  totpSecret: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: COLORS.primary,
+    letterSpacing: 2,
+    marginBottom: 8,
+  },
+  totpHint: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    textAlign: "center",
+    marginTop: 8,
+    lineHeight: 18,
   },
 });

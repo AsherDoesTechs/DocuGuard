@@ -1,4 +1,4 @@
-import { Tabs, usePathname } from "expo-router";
+import { Tabs, usePathname, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { COLORS } from "@/constants";
 import { Platform } from "react-native";
@@ -7,8 +7,7 @@ import { useEffect, useState, useCallback } from "react";
 import { TabBar } from "../../components/ui/TabBar";
 
 const TAB_ITEMS = [
-  { name: "index", icon: "home" as const, label: "Home" },
-  { name: "home", icon: "grid" as const, label: "Home" },
+  { name: "home", icon: "home" as const, label: "Home" },
   { name: "documents", icon: "document-text" as const, label: "Docs" },
   { name: "reminders", icon: "notifications" as const, label: "Alerts" },
   { name: "profile", icon: "person" as const, label: "Profile" },
@@ -16,6 +15,7 @@ const TAB_ITEMS = [
 ];
 
 export default function TabsLayout() {
+  const router = useRouter();
   const { isLocked, biometricEnabled, unlockWithBiometric, unlockWithPassword } = useAppLock();
   const [showLockScreen, setShowLockScreen] = useState(false);
   const pathname = usePathname();
@@ -38,9 +38,12 @@ export default function TabsLayout() {
     setShowLockScreen(false);
   }, [unlockWithPassword]);
 
-  const handleTabPress = useCallback((tabName: string) => {
-    // Navigation handled by expo-router Tabs
-  }, []);
+  const handleTabPress = useCallback(
+    (tabName: string) => {
+      router.push(`/(tabs)/${tabName}` as any);
+    },
+    [router],
+  );
 
   const activeTabName = pathname.split("/").pop() || "index";
 
@@ -77,7 +80,6 @@ export default function TabsLayout() {
         />
       )}
     >
-      <Tabs.Screen name="index" options={{ href: null }} />
       <Tabs.Screen
         name="home"
         options={{
