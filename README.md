@@ -294,6 +294,11 @@ This project is intended for academic and educational purposes. Future versions 
 - Create detailed schema for this so that we can later integrate it.
 - if additional files are needed create me the file tree that i need to do in order to integrate the new changes in this system.
 
+[Title]
+
+- implement the validation input and make sure that this can only accept valid inputs and eliminate invalid and unexpected inputs.
+- implement success toast or modal along with this feature
+
 Sep 11, 2026 (Nex Export Application)
 
 - Created the 80% offline features of it
