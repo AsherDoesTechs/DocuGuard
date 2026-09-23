@@ -9,22 +9,37 @@ import {
   Platform,
   TextInput,
   KeyboardAvoidingView,
+  Image,
+  ActivityIndicator,
 } from "react-native";
 import DateTimePicker, {
   DateTimePickerEvent,
 } from "@react-native-community/datetimepicker";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
+import { useRouter, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import * as SecureStore from "expo-secure-store";
 import * as DocumentPicker from "expo-document-picker";
 import { API_BASE_URL } from "../services/api";
-import { Button, Card } from "@/components/ui";
+import { Button, Card, Toast } from "@/components/ui";
 import { useForm } from "@/hooks/useForm";
 import { DOCUMENT_CATEGORIES, COLORS } from "@/constants";
-import { createDocument, updateDocument, logDocumentAction } from "../services/localDatabase";
+import { formatShortDate } from "@/utils";
+import { DocumentScannerComponent } from "@/components/ui/DocumentScanner";
+import { RefreshableContainer } from "@/components/ui/RefreshableContainer";
+import { extractDocumentData } from "../utils/ocr";
+import type { ToastType } from "@/components/ui/Toast";
+import {
+  documentSchema,
+  type DocumentInput,
+  validateSchema,
+} from "@/shared/validation";
 import { formatCategoryForBackend } from "@/DocuGuard-Server/utils/categories";
-import { documentSchema, type DocumentInput, validateSchema } from "@/shared/validation";
+import {
+  createDocument,
+  updateDocument,
+  logDocumentAction,
+} from "../services/localDatabase";
 
 const MAX_TITLE_LENGTH = 100;
 const MAX_ISSUER_LENGTH = 150;
@@ -363,6 +378,7 @@ function Field({
 
 export default function AddDocumentScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams();
   const [checkingAuthentication, setCheckingAuthentication] = useState(true);
   const [datePicker, setDatePicker] = useState<DateField | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -373,6 +389,64 @@ export default function AddDocumentScreen() {
     mimeType?: string;
   } | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [toast, setToast] = useState<{
+    visible: boolean;
+    message: string;
+    type: ToastType;
+  }>({ visible: false, message: "", type: "success" });
+  const [showScanner, setShowScanner] = useState(false);
+  const [scannerPreview, setScannerPreview] = useState<string | null>(null);
+  const [ocrLoading, setOcrLoading] = useState(false);
+  const [scannedData, setScannedData] = useState<{
+    title: string;
+    issuer: string;
+    documentNumber: string;
+    issueDate: string;
+    expiryDate: string;
+    category: string;
+    confidence: number;
+  } | null>(null);
+
+  const processScannedData = async () => {
+    const scannedUri = params.scannedImageUri as string | undefined;
+    if (!scannedUri) return;
+
+    setOcrLoading(true);
+    try {
+      const extracted = await extractDocumentData(scannedUri);
+      setScannedData({
+        title: extracted.title || "",
+        issuer: extracted.issuer || "",
+        documentNumber: extracted.documentNumber || "",
+        issueDate: extracted.issueDate || "",
+        expiryDate: extracted.expiryDate || "",
+        category: extracted.category || "other",
+        confidence: extracted.confidence,
+      });
+      setScannerPreview(scannedUri);
+
+      setTimeout(() => {
+        form.handleChange("title")(extracted.title || "");
+        form.handleChange("issuer")(extracted.issuer || "");
+        form.handleChange("documentNumber")(extracted.documentNumber || "");
+        if (extracted.issueDate) {
+          form.handleChange("issueDate")(extracted.issueDate);
+        }
+        if (extracted.expiryDate) {
+          form.handleChange("expiryDate")(extracted.expiryDate);
+        }
+        form.handleChange("category")(extracted.category || "other");
+      }, 300);
+    } catch (err) {
+      console.error("OCR extraction failed:", err);
+    } finally {
+      setOcrLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    processScannedData();
+  }, [params.scannedImageUri]);
 
   const pickDocument = async () => {
     try {
@@ -429,6 +503,11 @@ const form = useForm<DocumentInput>({
              onPress: () => router.replace("/(tabs)/documents" as any),
            },
          ]);
+         setToast({
+           visible: true,
+           message: "Document added to your vault successfully",
+           type: "success",
+         });
        } catch (error: unknown) {
          const message =
            error instanceof Error
@@ -437,7 +516,7 @@ const form = useForm<DocumentInput>({
          setSubmitError(message);
        }
      },
-  });
+   });
 
   useEffect(() => {
     let mounted = true;
@@ -823,6 +902,108 @@ const form = useForm<DocumentInput>({
           onChange={handleDateChange}
         />
       )}
+
+      {ocrLoading && (
+        <View style={styles.ocrOverlay}>
+          <ActivityIndicator size="large" color={COLORS.primary} />
+          <Text style={styles.ocrText}>Extracting document data...</Text>
+        </View>
+      )}
+
+      {scannerPreview && (
+        <Card style={styles.scannerPreviewCard}>
+          <View style={styles.scannerPreviewHeader}>
+            <Text style={styles.scannerPreviewTitle}>Scanned Preview</Text>
+            <TouchableOpacity
+              onPress={() => {
+                setScannerPreview(null);
+                setScannedData(null);
+              }}
+            >
+              <Ionicons name="close" size={20} color={COLORS.textSecondary} />
+            </TouchableOpacity>
+          </View>
+          <Image
+            source={{ uri: scannerPreview }}
+            style={styles.scannerPreviewImage}
+            resizeMode="contain"
+          />
+          {scannedData && (
+            <View style={styles.scannerPreviewData}>
+              {scannedData.title && (
+                <Text style={styles.scannerPreviewLabel}>
+                  Title: {scannedData.title}
+                </Text>
+              )}
+              {scannedData.issuer && (
+                <Text style={styles.scannerPreviewLabel}>
+                  Issuer: {scannedData.issuer}
+                </Text>
+              )}
+              {scannedData.documentNumber && (
+                <Text style={styles.scannerPreviewLabel}>
+                  Number: {scannedData.documentNumber}
+                </Text>
+              )}
+              <Text style={styles.scannerConfidence}>
+                Confidence: {scannedData.confidence}%
+              </Text>
+            </View>
+          )}
+        </Card>
+      )}
+
+      <DocumentScannerComponent
+        visible={showScanner}
+        onClose={() => setShowScanner(false)}
+        onScanSuccess={async (data: {
+          uri: string;
+          width: number;
+          height: number;
+        }) => {
+          setShowScanner(false);
+          setScannerPreview(data.uri);
+          try {
+            const extracted = await extractDocumentData(data.uri);
+            setScannedData({
+              title: extracted.title || "",
+              issuer: extracted.issuer || "",
+              documentNumber: extracted.documentNumber || "",
+              issueDate: extracted.issueDate || "",
+              expiryDate: extracted.expiryDate || "",
+              category: extracted.category || "other",
+              confidence: extracted.confidence,
+            });
+            form.handleChange("title")(extracted.title || "");
+            form.handleChange("issuer")(extracted.issuer || "");
+            form.handleChange("documentNumber")(extracted.documentNumber || "");
+            if (extracted.issueDate) {
+              form.handleChange("issueDate")(extracted.issueDate);
+            }
+            if (extracted.expiryDate) {
+              form.handleChange("expiryDate")(extracted.expiryDate);
+            }
+            form.handleChange("category")(extracted.category || "other");
+            setToast({
+              visible: true,
+              message: `Document scanned successfully (${extracted.confidence}% confidence)`,
+              type: "success",
+            });
+          } catch (err) {
+            setToast({
+              visible: true,
+              message: "Document scanned, but could not extract data",
+              type: "warning",
+            });
+          }
+        }}
+      />
+      <Toast
+        visible={toast.visible}
+        message={toast.message}
+        type={toast.type}
+        onDismiss={() => setToast((t) => ({ ...t, visible: false }))}
+      />
     </SafeAreaView>
   );
 }
@@ -975,5 +1156,57 @@ const styles = StyleSheet.create({
   },
   removeFileButton: {
     padding: 4,
+  },
+  ocrOverlay: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 1000,
+  },
+  ocrText: {
+    color: "#fff",
+    fontSize: 16,
+    marginTop: 12,
+    fontWeight: "600",
+  },
+  scannerPreviewCard: {
+    marginBottom: 16,
+    borderColor: COLORS.primary,
+    borderWidth: 1,
+  },
+  scannerPreviewHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  scannerPreviewTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: COLORS.primary,
+  },
+  scannerPreviewImage: {
+    width: "100%",
+    height: 200,
+    backgroundColor: COLORS.background,
+  },
+  scannerPreviewData: {
+    padding: 12,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+  },
+  scannerPreviewLabel: {
+    fontSize: 13,
+    color: COLORS.text,
+    marginBottom: 4,
+  },
+  scannerConfidence: {
+    fontSize: 12,
+    color: COLORS.success,
+    fontWeight: "600",
+    marginTop: 4,
   },
 });

@@ -17,6 +17,8 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import { API_BASE_URL } from "../../services/api";
 import { COLORS } from "@/constants";
+import { Toast } from "../../components/ui/Toast";
+import type { ToastType } from "../../components/ui/Toast";
 
 export default function BiometricLoginScreen() {
   const router = useRouter();
@@ -25,6 +27,11 @@ export default function BiometricLoginScreen() {
   const [pin, setPin] = useState("");
   const [showPinEntry, setShowPinEntry] = useState(false);
   const [pinError, setPinError] = useState("");
+  const [toast, setToast] = useState<{
+    visible: boolean;
+    message: string;
+    type: ToastType;
+  }>({ visible: false, message: "", type: "success" });
 
   useEffect(() => {
     (async () => {
@@ -93,6 +100,11 @@ export default function BiometricLoginScreen() {
           return;
         }
 
+        setToast({
+          visible: true,
+          message: "Authentication successful",
+          type: "success",
+        });
         router.replace("/(tabs)/documents" as any);
       }
     } catch (err) {
@@ -200,6 +212,12 @@ export default function BiometricLoginScreen() {
           </TouchableOpacity>
         )}
       </View>
+      <Toast
+        visible={toast.visible}
+        message={toast.message}
+        type={toast.type}
+        onDismiss={() => setToast((t) => ({ ...t, visible: false }))}
+      />
     </SafeAreaView>
   );
 }

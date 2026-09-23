@@ -16,6 +16,8 @@ import { COLORS } from "@/constants";
 import { formatShortDate } from "../../utils";
 import { DocumentScannerComponent } from "../../components/ui/DocumentScanner";
 import { RefreshableContainer } from "@/components/ui/RefreshableContainer";
+import { Toast } from "@/components/ui/Toast";
+import type { ToastType } from "@/components/ui/Toast";
 import {
   getAllDocuments,
   getAllReminders,
@@ -26,6 +28,7 @@ import {
   LocalReminder,
   LocalUserProfile,
 } from "../../services/localDatabase";
+import { extractDocumentData } from "../../utils/ocr";
 
 interface DashboardSummary {
   safetyScore: number;
@@ -57,6 +60,11 @@ export default function HomeScreen() {
   });
   const [urgentReminders, setUrgentReminders] = useState<Reminder[]>([]);
   const [userName, setUserName] = useState("User");
+  const [toast, setToast] = useState<{
+    visible: boolean;
+    message: string;
+    type: ToastType;
+  }>({ visible: false, message: "", type: "success" });
 
   const fetchDashboardData = async () => {
     try {
@@ -383,18 +391,45 @@ export default function HomeScreen() {
       <DocumentScannerComponent
         visible={scannerOpen}
         onClose={() => setScannerOpen(false)}
-        onScanSuccess={(data: {
+        onScanSuccess={async (data: {
           uri: string;
           width: number;
           height: number;
         }) => {
-          console.log("Captured image:", data.uri);
           setScannerOpen(false);
-          router.push({
-            pathname: "/add-document" as any,
-            params: { scannedImageUri: data.uri },
-          });
+          try {
+            const extracted = await extractDocumentData(data.uri);
+            router.push({
+              pathname: "/add-document" as any,
+              params: {
+                scannedImageUri: data.uri,
+                scannedTitle: extracted.title,
+                scannedIssuer: extracted.issuer,
+                scannedDocumentNumber: extracted.documentNumber,
+                scannedIssueDate: extracted.issueDate,
+                scannedExpiryDate: extracted.expiryDate,
+                scannedCategory: extracted.category,
+                scannedConfidence: extracted.confidence,
+              },
+            });
+            setToast({
+              visible: true,
+              message: `Document scanned successfully (${extracted.confidence}% match)`,
+              type: "success",
+            });
+          } catch {
+            router.push({
+              pathname: "/add-document" as any,
+              params: { scannedImageUri: data.uri },
+            });
+          }
         }}
+      />
+      <Toast
+        visible={toast.visible}
+        message={toast.message}
+        type={toast.type}
+        onDismiss={() => setToast((t) => ({ ...t, visible: false }))}
       />
     </SafeAreaView>
   );

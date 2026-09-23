@@ -249,11 +249,26 @@ export default function ProfileScreen() {
   };
 
   const handleSaveSecurity = async () => {
+    if (!passwords.current) {
+      return Alert.alert("Error", "Please enter your current password.");
+    }
     if (passwords.new && passwords.new !== passwords.confirm) {
       return Alert.alert("Error", "New passwords do not match.");
     }
     if (passwords.new && passwords.new.length < 6) {
       return Alert.alert("Error", "Password must be at least 6 characters.");
+    }
+    if (biometricEnabled && biometricPin.length !== 6) {
+      return Alert.alert(
+        "Error",
+        "Biometric PIN must be exactly 6 digits.",
+      );
+    }
+    if (twoFactor && twoFactorSecret && twoFactorCode.length !== 6) {
+      return Alert.alert(
+        "Error",
+        "Please enter a valid 6-digit code from your Authenticator App.",
+      );
     }
     try {
       const token = await AsyncStorage.getItem("userToken");
@@ -285,7 +300,24 @@ export default function ProfileScreen() {
         throw new Error(res.data?.error || "Failed to update security");
       }
 
-      showToast("Security settings updated successfully");
+      if (biometricEnabled && !biometricPin) {
+        showToast(
+          "Biometric login enabled. Set your PIN in settings.",
+          "info",
+        );
+      } else if (biometricEnabled) {
+        showToast("Biometric login enabled successfully", "success");
+      } else {
+        showToast("Biometric login disabled", "info");
+      }
+      if (twoFactor && twoFactorCode) {
+        showToast("2FA Authenticator App verified and enabled", "success");
+      } else if (twoFactor) {
+        showToast(
+          "2FA enabled. Verify with your Authenticator App code.",
+          "info",
+        );
+      }
       setPasswords({ current: "", new: "", confirm: "" });
       setTwoFactorCode("");
     } catch (err: any) {
