@@ -27,7 +27,7 @@ import { DOCUMENT_CATEGORIES, COLORS } from "@/constants";
 import { formatShortDate } from "@/utils";
 import { DocumentScannerComponent } from "@/components/ui/DocumentScanner";
 import { RefreshableContainer } from "@/components/ui/RefreshableContainer";
-import { extractDocumentData } from "../utils/ocr";
+import { extractDocumentData, type ExtractedDocumentData } from "../utils/ocr";
 import type { ToastType } from "@/components/ui/Toast";
 import {
   documentSchema,
@@ -148,6 +148,35 @@ function sanitizeDocumentNumber(value: string): string {
 
 function sanitizeNotes(value: string): string {
   return value.slice(0, MAX_NOTES_LENGTH);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Scanned data validation                                                    */
+/* -------------------------------------------------------------------------- */
+
+function normalizeScannedData(
+  extracted: ExtractedDocumentData,
+): ExtractedDocumentData {
+  const rawCategory =
+    typeof extracted.category === "string" && extracted.category.trim() !== ""
+      ? extracted.category.trim()
+      : "other";
+
+  const mappedCategory = formatCategoryForBackend(rawCategory);
+
+  const confidence = Number.isFinite(extracted.confidence)
+    ? Math.max(0, Math.min(100, Math.round(extracted.confidence)))
+    : 0;
+
+  return {
+    title: sanitizeText(extracted.title || "", MAX_TITLE_LENGTH),
+    issuer: sanitizeText(extracted.issuer || "", MAX_ISSUER_LENGTH),
+    documentNumber: sanitizeDocumentNumber(extracted.documentNumber || ""),
+    issueDate: isValidDate(extracted.issueDate || "") ? extracted.issueDate : "",
+    expiryDate: isValidDate(extracted.expiryDate || "") ? extracted.expiryDate : "",
+    category: mappedCategory,
+    confidence,
+  };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -413,29 +442,21 @@ export default function AddDocumentScreen() {
 
     setOcrLoading(true);
     try {
-      const extracted = await extractDocumentData(scannedUri);
-      setScannedData({
-        title: extracted.title || "",
-        issuer: extracted.issuer || "",
-        documentNumber: extracted.documentNumber || "",
-        issueDate: extracted.issueDate || "",
-        expiryDate: extracted.expiryDate || "",
-        category: extracted.category || "other",
-        confidence: extracted.confidence,
-      });
+      const extracted = normalizeScannedData(await extractDocumentData(scannedUri));
+      setScannedData(extracted);
       setScannerPreview(scannedUri);
 
       setTimeout(() => {
-        form.handleChange("title")(extracted.title || "");
-        form.handleChange("issuer")(extracted.issuer || "");
-        form.handleChange("documentNumber")(extracted.documentNumber || "");
+        form.handleChange("title")(extracted.title);
+        form.handleChange("issuer")(extracted.issuer);
+        form.handleChange("documentNumber")(extracted.documentNumber);
         if (extracted.issueDate) {
           form.handleChange("issueDate")(extracted.issueDate);
         }
         if (extracted.expiryDate) {
           form.handleChange("expiryDate")(extracted.expiryDate);
         }
-        form.handleChange("category")(extracted.category || "other");
+        form.handleChange("category")(extracted.category);
       }, 300);
     } catch (err) {
       console.error("OCR extraction failed:", err);
@@ -964,26 +985,28 @@ const form = useForm<DocumentInput>({
           setShowScanner(false);
           setScannerPreview(data.uri);
           try {
-            const extracted = await extractDocumentData(data.uri);
+            const extracted = normalizeScannedData(await extractDocumentData(data.uri));
             setScannedData({
-              title: extracted.title || "",
-              issuer: extracted.issuer || "",
-              documentNumber: extracted.documentNumber || "",
-              issueDate: extracted.issueDate || "",
-              expiryDate: extracted.expiryDate || "",
-              category: extracted.category || "other",
+              title: extracted.title,
+              issuer: extracted.issuer,
+              documentNumber: extracted.documentNumber,
+              issueDate: extracted.issueDate,
+              expiryDate: extracted.expiryDate,
+              category: extracted.category,
               confidence: extracted.confidence,
             });
-            form.handleChange("title")(extracted.title || "");
-            form.handleChange("issuer")(extracted.issuer || "");
-            form.handleChange("documentNumber")(extracted.documentNumber || "");
-            if (extracted.issueDate) {
-              form.handleChange("issueDate")(extracted.issueDate);
-            }
-            if (extracted.expiryDate) {
-              form.handleChange("expiryDate")(extracted.expiryDate);
-            }
-            form.handleChange("category")(extracted.category || "other");
+            setTimeout(() => {
+              form.handleChange("title")(extracted.title);
+              form.handleChange("issuer")(extracted.issuer);
+              form.handleChange("documentNumber")(extracted.documentNumber);
+              if (extracted.issueDate) {
+                form.handleChange("issueDate")(extracted.issueDate);
+              }
+              if (extracted.expiryDate) {
+                form.handleChange("expiryDate")(extracted.expiryDate);
+              }
+              form.handleChange("category")(extracted.category);
+            }, 300);
             setToast({
               visible: true,
               message: `Document scanned successfully (${extracted.confidence}% confidence)`,
