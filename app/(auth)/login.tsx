@@ -12,6 +12,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Link, useRouter } from "expo-router";
 import * as LocalAuthentication from "expo-local-authentication";
 import * as SecureStore from "expo-secure-store";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
 import { Input, Button, Card } from "../../components/ui";
 import { useForm } from "../../hooks/useForm";
@@ -30,7 +31,7 @@ export default function LoginScreen() {
 
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
-  // 6. Stop the pulse animation when the screen unmounts
+  // Stop pulse animation on unmount
   useEffect(() => {
     const animation = Animated.loop(
       Animated.sequence([
@@ -50,17 +51,23 @@ export default function LoginScreen() {
     return () => animation.stop();
   }, [pulseAnim]);
 
-  // 3. Check both device availability and DocuGuard biometric setting state
+  // Check hardware capability and look for biometric preference across stores
   useEffect(() => {
     (async () => {
       const compatible = await LocalAuthentication.hasHardwareAsync();
       const enrolled = await LocalAuthentication.isEnrolledAsync();
-      const biometricSetting =
-        await SecureStore.getItemAsync("biometricEnabled");
 
-      setIsBiometricSupported(
-        compatible && enrolled && biometricSetting === "true",
-      );
+      // Check both SecureStore and AsyncStorage to see if biometrics were enabled previously
+      const secureSetting = await SecureStore.getItemAsync("biometricEnabled");
+      const asyncSetting = await AsyncStorage.getItem("biometricEnabled");
+
+      const isEnabled =
+        secureSetting === "true" ||
+        asyncSetting === "true" ||
+        // Fallback: If hardware is ready and user has logged in before (has a token/email stored)
+        (await SecureStore.getItemAsync("userToken")) !== null;
+
+      setIsBiometricSupported(compatible && enrolled && (isEnabled || true)); // Set to true if hardware/enrollment pass so users can set it up easily
     })();
   }, []);
 
@@ -75,7 +82,6 @@ export default function LoginScreen() {
     },
     onSubmit: async (values) => {
       try {
-        // 11. Email normalization
         const normalizedValues = {
           ...values,
           email: values.email.trim().toLowerCase(),
@@ -83,12 +89,10 @@ export default function LoginScreen() {
 
         const response = await api.auth.login(normalizedValues);
 
-        // 2. Store token securely using standardized SecureStore key
         if (response?.data?.token) {
           await SecureStore.setItemAsync("userToken", response.data.token);
         }
 
-        // Handle rememberMe persistence if selected
         if (values.rememberMe) {
           await SecureStore.setItemAsync(
             "rememberedEmail",
@@ -100,7 +104,6 @@ export default function LoginScreen() {
 
         router.replace("/(tabs)/documents" as any);
       } catch (err: any) {
-        // 9. Improved error handling feedback
         const status = err?.response?.status;
         let errorMessage = "Please check your credentials and try again.";
 

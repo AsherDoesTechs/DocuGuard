@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
+  Image,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
@@ -12,9 +13,17 @@ import { Ionicons } from "@expo/vector-icons";
 import { Card } from "../../components/ui";
 import { COLORS } from "@/constants";
 import { formatShortDate } from "../../utils";
-import { DocumentScannerComponent } from "../../components/ui/DocumentScanner";
 import { RefreshableContainer } from "@/components/ui/RefreshableContainer";
-import { api } from "../../services/api";
+import { Toast } from "@/components/ui/Toast";
+import type { ToastType } from "@/components/ui/Toast";
+import {
+  getAllDocuments,
+  getAllReminders,
+  getUserProfile,
+  getExpiringDocuments,
+  getExpiredDocuments,
+  LocalDocument,
+} from "../../services/localDatabase";
 
 interface DashboardSummary {
   safetyScore: number;
@@ -35,62 +44,90 @@ interface Reminder {
 
 export default function HomeScreen() {
   const router = useRouter();
-  const [scannerOpen, setScannerOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [summary, setSummary] = useState<DashboardSummary>({
-    safetyScore: 100,
+    safetyScore: 0,
     validDocuments: 0,
     expiringDocuments: 0,
     expiredDocuments: 0,
     totalReminders: 0,
   });
+  const [recentDocs, setRecentDocs] = useState<LocalDocument[]>([]);
+  const [expiringDocs, setExpiringDocs] = useState<LocalDocument[]>([]);
   const [urgentReminders, setUrgentReminders] = useState<Reminder[]>([]);
   const [userName, setUserName] = useState("User");
+  const [toast, setToast] = useState<{
+    visible: boolean;
+    message: string;
+    type: ToastType;
+  }>({ visible: false, message: "", type: "success" });
 
   const fetchDashboardData = async () => {
     try {
-      // Fetch profile for name and stats
-      const profileRes = await api.client.get("/profile");
-      if (profileRes.data) {
-        setUserName(profileRes.data.name || "User");
+      const [
+        localProfile,
+        localDocs,
+        expiringList,
+        expiredDocs,
+        localReminders,
+      ] = await Promise.all([
+        getUserProfile(),
+        getAllDocuments(),
+        getExpiringDocuments(30),
+        getExpiredDocuments(),
+        getAllReminders(),
+      ]);
 
-        const docCount = profileRes.data.documentCount || 0;
-        const expiringCount = profileRes.data.expiringCount || 0;
-        const expiredCount = profileRes.data.expiredCount || 0;
-
-        // Calculate intelligent safety score dynamically
-        const problematicCount = expiringCount + expiredCount;
-        const validCount = Math.max(0, docCount - problematicCount);
-        const score =
-          docCount > 0 ? Math.round((validCount / docCount) * 100) : 100;
-
-        setSummary({
-          safetyScore: score,
-          validDocuments: validCount,
-          expiringDocuments: expiringCount,
-          expiredDocuments: expiredCount,
-          totalReminders: 0,
-        });
+      if (localProfile) {
+        setUserName(localProfile.name);
       }
 
-      // Fetch real reminders from backend
-      const remindersRes = await api.client.get("/reminders");
-      if (remindersRes.data) {
-        const allReminders: Reminder[] = remindersRes.data;
-        const urgent = allReminders
-          .filter((r) => r.severity === "urgent")
-          .slice(0, 2);
-        setUrgentReminders(urgent);
-        setSummary((prev) => ({
-          ...prev,
-          totalReminders: allReminders.length,
-        }));
-      }
-    } catch (err: any) {
-      console.error(
-        "Failed to load dashboard data:",
-        err?.response?.data || err.message,
+      // Sort recent documents explicitly by creation time or ID (newest first)
+      const sortedRecent = [...localDocs]
+        .sort((a, b) => {
+          const aTime = new Date((a as any).createdAt || 0).getTime();
+          const bTime = new Date((b as any).createdAt || 0).getTime();
+          if (aTime !== bTime) return bTime - aTime;
+          return (b.id || 0) - (a.id || 0);
+        })
+        .slice(0, 5);
+
+      setRecentDocs(sortedRecent);
+      setExpiringDocs(expiringList.slice(0, 3));
+
+      const docCount = localDocs.length;
+      const expiringCount = expiringList.length;
+      const expiredCount = expiredDocs.length;
+      const validCount = Math.max(0, docCount - expiringCount - expiredCount);
+
+      const score =
+        docCount === 0 ? 0 : Math.round((validCount / docCount) * 100);
+
+      setSummary({
+        safetyScore: score,
+        validDocuments: validCount,
+        expiringDocuments: expiringCount,
+        expiredDocuments: expiredCount,
+        totalReminders: localReminders.length,
+      });
+
+      const urgent = localReminders
+        .filter((r) => r.severity === "urgent" && r.id != null)
+        .slice(0, 2);
+
+      setUrgentReminders(
+        urgent.map((r) => ({
+          id: r.id || 0,
+          title: r.title,
+          description: r.description || "",
+          dueDate: r.dueDate,
+          severity: (r.severity || "info") as "info" | "warning" | "urgent",
+          read: r.read,
+        })),
       );
+    } catch (err: any) {
+      console.error("Failed to load dashboard data:", err);
+      throw err;
     } finally {
       setLoading(false);
     }
@@ -101,7 +138,20 @@ export default function HomeScreen() {
   }, []);
 
   const handleDataReload = async () => {
-    await fetchDashboardData();
+    try {
+      await fetchDashboardData();
+      setToast({
+        visible: true,
+        message: "Dashboard updated",
+        type: "success",
+      });
+    } catch {
+      setToast({
+        visible: true,
+        message: "Could not refresh dashboard",
+        type: "error",
+      });
+    }
   };
 
   const getGreeting = () => {
@@ -112,24 +162,31 @@ export default function HomeScreen() {
   };
 
   const getRiskStatus = (score: number) => {
-    if (score >= 80) {
+    if (summary.expiredDocuments > 0) {
       return {
-        color: COLORS.success,
-        label: "Excellent",
-        action: "All documents are up-to-date.",
+        color: COLORS.danger,
+        label: "Attention Required",
+        action: `${summary.expiredDocuments} document${summary.expiredDocuments !== 1 ? "s" : ""} expired.`,
       };
     }
-    if (score >= 50) {
+    if (summary.expiringDocuments > 0) {
       return {
         color: COLORS.warning,
-        label: "Action Needed",
-        action: "Renew expiring documents soon.",
+        label: "Upcoming Expirations",
+        action: `${summary.expiringDocuments} document${summary.expiringDocuments !== 1 ? "s" : ""} expiring soon.`,
+      };
+    }
+    if (summary.validDocuments > 0 && score >= 80) {
+      return {
+        color: COLORS.success,
+        label: "Up to Date",
+        action: "No documents currently need attention.",
       };
     }
     return {
-      color: COLORS.danger,
-      label: "Critical Risk",
-      action: "Immediate renewal required!",
+      color: COLORS.primary,
+      label: "Vault Empty",
+      action: "Add your first document to start tracking.",
     };
   };
 
@@ -170,7 +227,6 @@ export default function HomeScreen() {
                   />
                 </View>
 
-                {/* Dynamic Risk Description */}
                 <Text style={[styles.riskDescription, { color: status.color }]}>
                   {status.label}: {status.action}
                 </Text>
@@ -185,7 +241,6 @@ export default function HomeScreen() {
             </View>
 
             <View style={styles.statsGrid}>
-              {/* Valid */}
               <View style={styles.statItem}>
                 <Ionicons
                   name="document-text"
@@ -196,7 +251,6 @@ export default function HomeScreen() {
                 <Text style={styles.statLabel}>Valid</Text>
               </View>
 
-              {/* Expiring */}
               <View style={styles.statItem}>
                 <Ionicons name="time" size={20} color={COLORS.warning} />
                 <Text style={styles.statValue}>
@@ -205,14 +259,12 @@ export default function HomeScreen() {
                 <Text style={styles.statLabel}>Expiring</Text>
               </View>
 
-              {/* Expired */}
               <View style={styles.statItem}>
                 <Ionicons name="alert-circle" size={20} color={COLORS.danger} />
                 <Text style={styles.statValue}>{summary.expiredDocuments}</Text>
                 <Text style={styles.statLabel}>Expired</Text>
               </View>
 
-              {/* Reminders */}
               <View style={styles.statItem}>
                 <Ionicons
                   name="notifications"
@@ -225,69 +277,280 @@ export default function HomeScreen() {
             </View>
           </Card>
 
-          {/* Quick Actions */}
-          <View style={styles.quickActions}>
-            <TouchableOpacity
-              style={[styles.actionButton, styles.actionPrimary]}
-              onPress={() => router.push("/add-document" as any)}
-            >
-              <Ionicons name="add" size={24} color="#fff" />
-              <Text style={styles.actionButtonText}>Add Document</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.actionButton, styles.actionSecondary]}
-              onPress={() => setScannerOpen(true)}
-            >
-              <Ionicons name="camera" size={24} color={COLORS.primary} />
-              <Text
-                style={[styles.actionButtonText, { color: COLORS.primary }]}
+          {/* Quick Actions Grid */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Quick Actions</Text>
+            <View style={styles.quickActionsGrid}>
+              <TouchableOpacity
+                style={styles.quickAction}
+                onPress={() => router.push("/add-document" as any)}
               >
-                Scan
-              </Text>
-            </TouchableOpacity>
+                <View
+                  style={[
+                    styles.quickActionIcon,
+                    { backgroundColor: "#EEF2FF" },
+                  ]}
+                >
+                  <Ionicons
+                    name="scan-outline"
+                    size={22}
+                    color={COLORS.primary}
+                  />
+                </View>
+                <Text style={styles.quickActionText}>Scan Document</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.quickAction}
+                onPress={() => router.push("/add-document" as any)}
+              >
+                <View
+                  style={[
+                    styles.quickActionIcon,
+                    { backgroundColor: "#ECFDF5" },
+                  ]}
+                >
+                  <Ionicons
+                    name="cloud-upload-outline"
+                    size={22}
+                    color={COLORS.success}
+                  />
+                </View>
+                <Text style={styles.quickActionText}>Upload File</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.quickAction}
+                onPress={() => router.push("/(tabs)/documents" as any)}
+              >
+                <View
+                  style={[
+                    styles.quickActionIcon,
+                    { backgroundColor: "#FFF7ED" },
+                  ]}
+                >
+                  <Ionicons
+                    name="document-text-outline"
+                    size={22}
+                    color={COLORS.warning}
+                  />
+                </View>
+                <Text style={styles.quickActionText}>Documents</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.quickAction}
+                onPress={() => router.push("/(tabs)/reminders" as any)}
+              >
+                <View
+                  style={[
+                    styles.quickActionIcon,
+                    { backgroundColor: "#FEF2F2" },
+                  ]}
+                >
+                  <Ionicons
+                    name="notifications-outline"
+                    size={22}
+                    color={COLORS.danger}
+                  />
+                </View>
+                <Text style={styles.quickActionText}>Reminders</Text>
+              </TouchableOpacity>
+            </View>
           </View>
 
-          {/* Detailed Metric Cards */}
-          <View style={styles.statsCards}>
-            <Card style={styles.statCard}>
-              <View style={styles.statCardContent}>
+          {/* Expiring Soon Section */}
+          {expiringDocs.length > 0 && (
+            <View style={styles.section}>
+              <View style={styles.sectionHeaderRow}>
                 <View>
-                  <Text style={styles.statCardLabel}>Valid Docs</Text>
-                  <Text style={styles.statCardValue}>
-                    {summary.validDocuments}
+                  <Text style={styles.sectionTitle}>Expiring Soon</Text>
+                  <Text style={styles.sectionSubtitle}>
+                    Requires upcoming renewal
                   </Text>
                 </View>
-                <Ionicons
-                  name="checkmark-circle"
-                  size={32}
-                  color={COLORS.success}
-                />
+                <TouchableOpacity
+                  onPress={() => router.push("/(tabs)/documents" as any)}
+                >
+                  <Text style={styles.seeAllText}>View All</Text>
+                </TouchableOpacity>
               </View>
-            </Card>
-            <Card style={styles.statCard}>
-              <View style={styles.statCardContent}>
-                <View>
-                  <Text style={styles.statCardLabel}>Action Needed</Text>
-                  <Text style={styles.statCardValue}>
-                    {summary.expiringDocuments + summary.expiredDocuments}
+
+              {expiringDocs.map((doc) => (
+                <TouchableOpacity
+                  key={doc.id || doc.documentNumber}
+                  onPress={() =>
+                    router.push(`/document-detail?id=${doc.id}` as any)
+                  }
+                >
+                  <Card style={styles.docCard}>
+                    <View style={styles.docRow}>
+                      <View
+                        style={[
+                          styles.docImage,
+                          styles.docImagePlaceholder,
+                          { backgroundColor: "#FFFBEB" },
+                        ]}
+                      >
+                        <Ionicons
+                          name="time-outline"
+                          size={24}
+                          color={COLORS.warning}
+                        />
+                      </View>
+                      <View style={styles.docInfo}>
+                        <Text style={styles.docTitle} numberOfLines={1}>
+                          {doc.title || "Untitled Document"}
+                        </Text>
+                        <Text style={styles.docSubtitle} numberOfLines={1}>
+                          Issuer: {doc.issuer || "Unknown"}
+                        </Text>
+                        <Text
+                          style={[styles.docDate, { color: COLORS.warning }]}
+                        >
+                          Expires:{" "}
+                          {doc.expiryDate
+                            ? formatShortDate(doc.expiryDate)
+                            : "N/A"}
+                        </Text>
+                      </View>
+                      <Ionicons
+                        name="chevron-forward"
+                        size={20}
+                        color={COLORS.textSecondary}
+                      />
+                    </View>
+                  </Card>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+
+          {/* Recent Documents Section */}
+          <View style={styles.section}>
+            <View style={styles.sectionHeaderRow}>
+              <Text style={styles.sectionTitle}>Recent Documents</Text>
+              <TouchableOpacity
+                onPress={() => router.push("/(tabs)/documents" as any)}
+              >
+                <Text style={styles.seeAllText}>View All</Text>
+              </TouchableOpacity>
+            </View>
+
+            {recentDocs.length === 0 ? (
+              <Card style={styles.emptyCard}>
+                <Ionicons
+                  name="folder-open-outline"
+                  size={36}
+                  color={COLORS.textSecondary}
+                />
+                <Text style={styles.emptyTitle}>
+                  Your document vault is empty
+                </Text>
+                <Text style={styles.emptyText}>
+                  Add your first document to start tracking expiration dates,
+                  reminders, and document status.
+                </Text>
+                <TouchableOpacity
+                  style={styles.emptyButton}
+                  onPress={() => router.push("/add-document" as any)}
+                >
+                  <Text style={styles.emptyButtonText}>
+                    Add Your First Document
                   </Text>
-                </View>
-                <Ionicons
-                  name="alert-circle"
-                  size={32}
-                  color={COLORS.warning}
-                />
-              </View>
-            </Card>
+                </TouchableOpacity>
+              </Card>
+            ) : (
+              recentDocs.map((doc) => {
+                const docImage =
+                  (doc as any).imagePath ||
+                  (doc as any).filePath ||
+                  (doc as any).imageUri;
+
+                return (
+                  <TouchableOpacity
+                    key={doc.id || doc.documentNumber}
+                    onPress={() =>
+                      router.push(`/document-detail?id=${doc.id}` as any)
+                    }
+                  >
+                    <Card style={styles.docCard}>
+                      <View style={styles.docRow}>
+                        {docImage ? (
+                          <Image
+                            source={{ uri: docImage }}
+                            style={styles.docImage}
+                          />
+                        ) : (
+                          <View
+                            style={[
+                              styles.docImage,
+                              styles.docImagePlaceholder,
+                            ]}
+                          >
+                            <Ionicons
+                              name="document-text"
+                              size={24}
+                              color={COLORS.primary}
+                            />
+                          </View>
+                        )}
+
+                        <View style={styles.docInfo}>
+                          <Text style={styles.docTitle} numberOfLines={1}>
+                            {doc.title || "Untitled Document"}
+                          </Text>
+                          <Text style={styles.docSubtitle} numberOfLines={1}>
+                            Issuer: {doc.issuer || "Unknown"}
+                          </Text>
+                          <Text style={styles.docDate}>
+                            Expires:{" "}
+                            {doc.expiryDate
+                              ? formatShortDate(doc.expiryDate)
+                              : "N/A"}
+                          </Text>
+                        </View>
+
+                        <Ionicons
+                          name="chevron-forward"
+                          size={20}
+                          color={COLORS.textSecondary}
+                        />
+                      </View>
+                    </Card>
+                  </TouchableOpacity>
+                );
+              })
+            )}
           </View>
 
           {/* Urgent Reminders Section */}
-          {urgentReminders.length > 0 && (
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Action Required</Text>
-              <Text style={styles.sectionSubtitle}>Urgent reminders</Text>
-              {urgentReminders.map((reminder) => (
+          <View style={styles.section}>
+            <View style={styles.sectionHeaderRow}>
+              <View>
+                <Text style={styles.sectionTitle}>Action Required</Text>
+                <Text style={styles.sectionSubtitle}>Urgent reminders</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => router.push("/(tabs)/reminders" as any)}
+              >
+                <Text style={styles.seeAllText}>View All</Text>
+              </TouchableOpacity>
+            </View>
+
+            {urgentReminders.length === 0 ? (
+              <Card style={styles.emptyRemindersCard}>
+                <Ionicons
+                  name="checkmark-circle-outline"
+                  size={24}
+                  color={COLORS.success}
+                />
+                <Text style={styles.emptyRemindersText}>
+                  No urgent actions pending.
+                </Text>
+              </Card>
+            ) : (
+              urgentReminders.map((reminder) => (
                 <Card key={reminder.id} style={styles.reminderItem}>
                   <View style={styles.reminderContent}>
                     <View style={styles.reminderIcon}>
@@ -312,27 +575,29 @@ export default function HomeScreen() {
                     </View>
                   </View>
                 </Card>
-              ))}
-            </View>
-          )}
+              ))
+            )}
+          </View>
+
+          {/* Sync Status Footer Indicator */}
+          <View style={styles.syncFooter}>
+            <Ionicons
+              name="cloud-done-outline"
+              size={16}
+              color={COLORS.textSecondary}
+            />
+            <Text style={styles.syncFooterText}>
+              Vault synced with local storage
+            </Text>
+          </View>
         </ScrollView>
       </RefreshableContainer>
 
-      <DocumentScannerComponent
-        visible={scannerOpen}
-        onClose={() => setScannerOpen(false)}
-        onScanSuccess={(data: {
-          uri: string;
-          width: number;
-          height: number;
-        }) => {
-          console.log("Captured image:", data.uri);
-          setScannerOpen(false);
-          router.push({
-            pathname: "/add-document" as any,
-            params: { scannedImageUri: data.uri },
-          });
-        }}
+      <Toast
+        visible={toast.visible}
+        message={toast.message}
+        type={toast.type}
+        onDismiss={() => setToast((t) => ({ ...t, visible: false }))}
       />
     </SafeAreaView>
   );
@@ -352,11 +617,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 20,
   },
-  riskDescription: {
-    fontSize: 12,
-    fontWeight: "600",
-    marginTop: 6,
-  },
+  riskDescription: { fontSize: 12, fontWeight: "600", marginTop: 6 },
   progressBarTrack: {
     height: 8,
     backgroundColor: "#E5E7EB",
@@ -365,10 +626,7 @@ const styles = StyleSheet.create({
     marginRight: 10,
     overflow: "hidden",
   },
-  progressBarFill: {
-    height: "100%",
-    borderRadius: 4,
-  },
+  progressBarFill: { height: "100%", borderRadius: 4 },
   scoreLabel: { fontSize: 14, color: COLORS.textSecondary, marginBottom: 4 },
   scoreValue: { fontSize: 36, fontWeight: "700", color: COLORS.primary },
   statsGrid: {
@@ -379,39 +637,94 @@ const styles = StyleSheet.create({
   statItem: { width: "23%", alignItems: "center" },
   statValue: { fontSize: 18, fontWeight: "700", color: COLORS.text },
   statLabel: { fontSize: 12, color: COLORS.textSecondary, marginTop: 4 },
-  quickActions: { flexDirection: "row", gap: 12, marginBottom: 20 },
-  actionButton: {
-    flex: 1,
+  quickActionsGrid: {
     flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 12,
-    borderRadius: 12,
+    justifyContent: "space-between",
     gap: 8,
   },
-  actionPrimary: { backgroundColor: COLORS.primary },
-  actionSecondary: {
-    backgroundColor: COLORS.background,
+  quickAction: {
+    flex: 1,
+    backgroundColor: "#fff",
+    paddingVertical: 14,
+    paddingHorizontal: 8,
+    borderRadius: 12,
+    alignItems: "center",
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: "#F3F4F6",
   },
-  actionButtonText: { fontWeight: "600", color: "#fff", fontSize: 14 },
-  statsCards: { flexDirection: "row", gap: 12, marginBottom: 24 },
-  statCard: { flex: 1 },
-  statCardContent: {
+  quickActionIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  quickActionText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: COLORS.text,
+    textAlign: "center",
+  },
+  section: { marginBottom: 24 },
+  sectionHeaderRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
+    marginBottom: 12,
   },
-  statCardLabel: { fontSize: 13, color: COLORS.textSecondary, marginBottom: 4 },
-  statCardValue: { fontSize: 24, fontWeight: "700", color: COLORS.text },
-  section: { marginBottom: 24 },
   sectionTitle: { fontSize: 18, fontWeight: "700", color: COLORS.text },
+  seeAllText: { fontSize: 14, fontWeight: "600", color: COLORS.primary },
   sectionSubtitle: {
     fontSize: 13,
     color: COLORS.textSecondary,
-    marginBottom: 12,
+    marginBottom: 4,
   },
+  emptyCard: { alignItems: "center", padding: 24 },
+  emptyTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: COLORS.text,
+    marginTop: 8,
+  },
+  emptyText: {
+    color: COLORS.textSecondary,
+    marginTop: 4,
+    fontSize: 13,
+    textAlign: "center",
+    marginBottom: 16,
+  },
+  emptyButton: {
+    backgroundColor: COLORS.primary,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+  },
+  emptyButtonText: { color: "#fff", fontWeight: "600", fontSize: 13 },
+  emptyRemindersCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 16,
+    gap: 12,
+  },
+  emptyRemindersText: { color: COLORS.textSecondary, fontSize: 14 },
+  docCard: { marginBottom: 10, padding: 12 },
+  docRow: { flexDirection: "row", alignItems: "center" },
+  docImage: { width: 50, height: 50, borderRadius: 8, marginRight: 12 },
+  docImagePlaceholder: {
+    backgroundColor: "#EEF2FF",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  docInfo: { flex: 1, justifyContent: "center" },
+  docTitle: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: COLORS.text,
+    marginBottom: 2,
+  },
+  docSubtitle: { fontSize: 13, color: COLORS.textSecondary, marginBottom: 2 },
+  docDate: { fontSize: 11, color: COLORS.textSecondary },
   reminderItem: { marginBottom: 12 },
   reminderContent: { flexDirection: "row", alignItems: "center" },
   reminderIcon: { marginRight: 12 },
@@ -419,4 +732,13 @@ const styles = StyleSheet.create({
   reminderTitle: { fontSize: 15, fontWeight: "600", color: COLORS.text },
   reminderDesc: { fontSize: 13, color: COLORS.textSecondary, marginTop: 2 },
   reminderDate: { fontSize: 12, color: COLORS.textSecondary, marginTop: 4 },
+  syncFooter: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 8,
+    marginBottom: 16,
+  },
+  syncFooterText: { fontSize: 12, color: COLORS.textSecondary },
 });

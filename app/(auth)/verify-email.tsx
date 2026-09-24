@@ -7,8 +7,9 @@ import {
   Alert,
   ActivityIndicator,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as SecureStore from "expo-secure-store";
 import { Button, Card } from "../../components/ui";
 import { COLORS } from "../../constants";
 import { api } from "../../services/api";
@@ -17,8 +18,9 @@ export default function VerifyEmailScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
 
-  const emailParam = (params.email as string) || "your Gmail inbox";
-  const tokenParam = params.token as string;
+  const emailParam = (params.email as string) || "your email inbox";
+  const rawToken = params.token;
+  const tokenParam = typeof rawToken === "string" ? rawToken.trim() : "";
   const verifiedParam = params.verified === "true";
 
   const [status, setStatus] = useState<
@@ -29,9 +31,8 @@ export default function VerifyEmailScreen() {
 
   useEffect(() => {
     if (verifiedParam) {
-      // Already verified via web link, just save token if returned
       setStatus("success");
-      Alert.alert("Success", "Your Gmail has been verified successfully!", [
+      Alert.alert("Success", "Your email has been verified successfully!", [
         {
           text: "Continue",
           onPress: () => router.replace("/(tabs)/documents" as any),
@@ -49,11 +50,13 @@ export default function VerifyEmailScreen() {
       const response = await api.auth.verifyEmail({ token });
       setStatus("success");
 
-      if (response.data && response.data.token) {
-        await AsyncStorage.setItem("userToken", response.data.token);
+      // Securely store authentication token if returned from backend
+      const authToken = response?.data?.token || response?.token;
+      if (authToken) {
+        await SecureStore.setItemAsync("userToken", authToken);
       }
 
-      Alert.alert("Success", "Your Gmail has been verified successfully!", [
+      Alert.alert("Success", "Your email has been verified successfully!", [
         {
           text: "Continue",
           onPress: () => router.replace("/(tabs)/documents" as any),
@@ -73,7 +76,7 @@ export default function VerifyEmailScreen() {
       await api.auth.resendVerification({ email: emailParam });
       Alert.alert(
         "Link Sent",
-        "A fresh verification link has been sent to your Gmail.",
+        "A fresh verification link has been sent to your email.",
       );
     } catch (err: any) {
       Alert.alert(
@@ -86,63 +89,76 @@ export default function VerifyEmailScreen() {
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <View style={styles.header}>
-        <Text style={styles.title}>
-          {status === "success" ? "Email Verified" : "Verify your gmail"}
-        </Text>
-        <Text style={styles.subtitle}>
-          {status === "verifying" &&
-            "Verifying your secure token, please wait..."}
-          {status === "success" &&
-            "Your account is now fully activated and secured."}
-          {status === "pending" && (
-            <>
-              We sent a verification link to{" "}
-              <Text style={styles.boldText}>{emailParam}</Text>. Open your Gmail
-              to activate your account.
-            </>
-          )}
-          {status === "error" &&
-            (errorMessage ||
-              "We couldn't verify your token. It may have expired.")}
-        </Text>
-      </View>
-
-      <Card>
-        <View style={{ gap: 16, alignItems: "center" }}>
-          {status === "verifying" && (
-            <ActivityIndicator
-              size="large"
-              color={COLORS.primary}
-              style={{ marginVertical: 20 }}
-            />
-          )}
-
-          {status !== "verifying" && (
-            <>
-              <Button
-                title="Resend verification link"
-                onPress={handleResend}
-                loading={resending}
-              />
-
-              <Button
-                title="Return to sign in"
-                onPress={() => router.replace("/(auth)/login" as any)}
-              />
-            </>
-          )}
+    <SafeAreaView style={styles.safeArea}>
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+      >
+        <View style={styles.header}>
+          <Text style={styles.title}>
+            {status === "success" ? "Email Verified" : "Verify your email"}
+          </Text>
+          <Text style={styles.subtitle}>
+            {status === "verifying" &&
+              "Verifying your secure token, please wait..."}
+            {status === "success" &&
+              "Your account is now fully activated and secured."}
+            {status === "pending" && (
+              <>
+                We sent a verification link to{" "}
+                <Text style={styles.boldText}>{emailParam}</Text>. Open your
+                inbox to activate your account.
+              </>
+            )}
+            {status === "error" &&
+              (errorMessage ||
+                "We couldn't verify your token. It may have expired.")}
+          </Text>
         </View>
-      </Card>
-    </ScrollView>
+
+        <Card>
+          <View style={{ gap: 16, alignItems: "center" }}>
+            {status === "verifying" && (
+              <ActivityIndicator
+                size="large"
+                color={COLORS.primary}
+                style={{ marginVertical: 20 }}
+              />
+            )}
+
+            {status !== "verifying" && (
+              <>
+                <Button
+                  title="Resend verification link"
+                  onPress={handleResend}
+                  loading={resending}
+                />
+
+                <Button
+                  title="Return to sign in"
+                  onPress={() => router.replace("/(auth)/login" as any)}
+                />
+              </>
+            )}
+          </View>
+        </Card>
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  safeArea: { flex: 1, backgroundColor: COLORS.background },
   container: { flex: 1, backgroundColor: COLORS.background },
-  content: { padding: 20, justifyContent: "center", flexGrow: 1 },
-  header: { alignItems: "center", marginBottom: 30 },
+  content: {
+    padding: 20,
+    justifyContent: "center",
+    flexGrow: 1,
+    paddingBottom: 40,
+  },
+  header: { alignItems: "center", marginBottom: 30, marginTop: 20 },
   title: {
     fontSize: 28,
     fontWeight: "700",

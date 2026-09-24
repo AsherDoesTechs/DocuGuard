@@ -19,10 +19,9 @@ function getResend() {
   return resendInstance;
 }
 
-const EMAIL_FROM =
-  process.env.EMAIL_FROM || "DocuGuard <onboarding@resend.dev>";
-const APP_BASE_URL =
-  process.env.APP_BASE_URL || "https://docuguard-api-onoj.onrender.com";
+const EMAIL_FROM = process.env.EMAIL_FROM || "DocuGuard <noreply@docuguardapp.com>";
+const EMAIL_SUPPORT = process.env.EMAIL_SUPPORT || "DocuGuard Support <support@docuguardapp.com>";
+const APP_BASE_URL = process.env.APP_BASE_URL || "https://docuguard-api-onoj.onrender.com";
 
 /**
  * Build clean, modern HTML for an email verification message.
@@ -248,7 +247,7 @@ async function sendVerificationEmail(to, name, token) {
     throw error;
   }
 
-  info("Email", "Verification email sent", { to });
+  info("Email", "Verification email sent", { to, messageId: data?.id });
   return data;
 }
 
@@ -280,7 +279,7 @@ async function sendPasswordResetEmail(to, token) {
     throw error;
   }
 
-  info("Email", "Password reset email sent", { to });
+  info("Email", "Password reset email sent", { to, messageId: data?.id });
   return data;
 }
 
@@ -292,5 +291,6 @@ module.exports = {
   sendPasswordResetEmail,
   getResend,
   EMAIL_FROM,
+  EMAIL_SUPPORT,
   APP_BASE_URL,
 };

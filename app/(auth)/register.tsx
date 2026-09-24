@@ -1,28 +1,26 @@
 import React, { useState } from "react";
 import { View, Text, StyleSheet, ScrollView, Alert } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { Link, useRouter } from "expo-router";
 import { Input, Button, Card } from "../../components/ui";
 import { useForm } from "../../hooks/useForm";
 import { COLORS } from "../../constants";
 import { api } from "../../services/api";
-import { registerSchema, type RegisterInput, validateSchema } from "@/shared/validation";
+import {
+  registerSchema,
+  type RegisterInput,
+  validateSchema,
+} from "@/shared/validation";
+
+interface RegisterFormValues extends RegisterInput {
+  firstName: string;
+  lastName: string;
+}
 
 export default function RegisterScreen() {
   const router = useRouter();
   const [serverError, setServerError] = useState<string | null>(null);
-  const [emailError, setEmailError] = useState<string | null>(null);
-  const [emailAvailable, setEmailAvailable] = useState(false);
-  const [checkingEmail, setCheckingEmail] = useState(false);
-  const [networkStatusText, setNetworkStatusText] = useState<string | null>(
-    null,
-  );
 
-  // States for separated user inputs
-  const [firstName, setFirstName] = useState("");
-  const [lastName, setLastName] = useState("");
-  const [emailUsername, setEmailUsername] = useState("");
-
-  // Helper to evaluate password security and return fun descriptions
   const getPasswordStrength = (password: string) => {
     if (!password)
       return {
@@ -37,141 +35,73 @@ export default function RegisterScreen() {
     if (/[0-9]/.test(password)) score += 1;
     if (/[^A-Za-z0-9]/.test(password)) score += 1;
 
-    if (score <= 1)
-      return {
-        score: 20,
-        label: "Yikes! A toddler could guess this 🧸",
-        color: "#EF4444",
-      };
-    if (score === 2)
-      return {
-        score: 40,
-        label: "Meh... decent for a burner account 🚪",
-        color: "#F59E0B",
-      };
-    if (score === 3)
-      return {
-        score: 60,
-        label: "Not bad! Hackers will need coffee ☕",
-        color: "#3B82F6",
-      };
-    if (score === 4)
-      return {
-        score: 80,
-        label: "Strong! Cyber-monsters stay away 🛡️",
-        color: "#10B981",
-      };
-    return {
-      score: 100,
-      label: "Fort Knox cyber-vault level! 👑🚀",
-      color: "#8B5CF6",
-    };
+    if (score <= 1) return { score: 20, label: "Weak", color: "#EF4444" };
+    if (score === 2) return { score: 40, label: "Fair", color: "#F59E0B" };
+    if (score === 3) return { score: 60, label: "Good", color: "#3B82F6" };
+    if (score === 4) return { score: 80, label: "Strong", color: "#10B981" };
+    return { score: 100, label: "Very strong", color: "#8B5CF6" };
   };
 
-  const checkEmailExists = async (username: string) => {
-    const cleanUsername = username.replace(/@.*/g, "").trim().toLowerCase();
-    if (!cleanUsername) {
-      setEmailAvailable(false);
-      setNetworkStatusText(null);
-      return;
-    }
+  const validate = (values: RegisterFormValues) => {
+    const fullName = `${values.firstName.trim()} ${values.lastName.trim()}`;
+    const normalizedEmail = values.email.trim().toLowerCase();
 
-    const fullEmail = `${cleanUsername}@gmail.com`;
-    setCheckingEmail(true);
-    setEmailError(null);
-    setEmailAvailable(false);
-    setNetworkStatusText(null);
-
-    try {
-      const response = await api.client.get(`/auth/check-email`, {
-        params: { email: fullEmail },
-      });
-
-      if (response.data?.exists) {
-        setEmailError("This email address is already registered.");
-        setEmailAvailable(false);
-      } else {
-        setEmailAvailable(true);
-      }
-    } catch (err: any) {
-      // User-friendly error messages based on error type
-      const isNetworkError = 
-        err.code === "ECONNREFUSED" ||
-        err.message?.includes("Network Error") ||
-        err.message?.includes("timeout") ||
-        err.response?.status === 0;
-
-      if (isNetworkError) {
-        setNetworkStatusText("Cannot connect to server. Please check your internet connection and try again.");
-      } else {
-        // For other errors (4xx, 5xx), silently skip the check - don't block registration
-        setEmailAvailable(true);
-      }
-    } finally {
-      setCheckingEmail(false);
-    }
-  };
-
-  const validate = (values: RegisterInput) => {
-    const fullName = `${firstName.trim()} ${lastName.trim()}`;
-    const fullEmail = `${emailUsername.trim().toLowerCase()}@gmail.com`;
-    
     const valuesToValidate = {
       name: fullName,
-      email: fullEmail,
+      email: normalizedEmail,
       password: values.password,
       confirmPassword: values.confirmPassword,
     };
-    
+
     const result = validateSchema(registerSchema, valuesToValidate);
     if (result.success) {
       return {};
     }
-    return result.errors as Partial<Record<keyof RegisterInput, string>>;
+    return result.errors as Partial<Record<keyof RegisterFormValues, string>>;
   };
 
-  const form = useForm<RegisterInput>({
-    initialValues: { name: "", email: "", password: "", confirmPassword: "" },
+  const form = useForm<RegisterFormValues>({
+    initialValues: {
+      firstName: "",
+      lastName: "",
+      email: "",
+      password: "",
+      confirmPassword: "",
+      name: "",
+    },
     validate,
     onSubmit: async (values) => {
       setServerError(null);
 
-      if (emailError) {
-        Alert.alert("Error", emailError);
-        return;
-      }
-
-      const fullName = `${firstName.trim()} ${lastName.trim()}`;
-      const fullEmail = `${emailUsername.trim().toLowerCase()}@gmail.com`;
+      const fullName = `${values.firstName.trim()} ${values.lastName.trim()}`;
+      const normalizedEmail = values.email.trim().toLowerCase();
 
       try {
         const payload = {
           name: fullName,
-          email: fullEmail,
+          email: normalizedEmail,
           password: values.password,
         };
 
         const response = await api.auth.register(payload);
 
-        if (response.emailSent === false) {
+        if (response?.emailSent === false) {
           Alert.alert(
             "Email Delivery Issue",
-            "Your account was created, but the verification email could not be sent. " +
-              "The server administrator has been notified. You can try resending from the next screen.",
+            "Your account was created, but verification email could not be sent. You can try resending from the next screen.",
             [{ text: "Continue" }],
           );
         }
 
         router.replace({
           pathname: "/(auth)/verify-email",
-          params: { email: fullEmail },
+          params: { email: normalizedEmail },
         } as any);
       } catch (err: any) {
         const errorMsg =
           err?.response?.data?.error ||
           "Could not create account. Please try again.";
         setServerError(errorMsg);
-        Alert.alert("Registration Failed", errorMsg);
       }
     },
   });
@@ -179,134 +109,125 @@ export default function RegisterScreen() {
   const pwdStats = getPasswordStrength(form.values.password);
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Create Account</Text>
-        <Text style={styles.subtitle}>
-          Secure your personal identity documents today with Gmail verification
-        </Text>
-      </View>
+    <SafeAreaView style={styles.safeArea}>
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+      >
+        <View style={styles.header}>
+          <Text style={styles.title}>Create Account</Text>
+          <Text style={styles.subtitle}>
+            Secure your personal identity documents today
+          </Text>
+        </View>
 
-      <Card>
-        {serverError && <Text style={styles.errorText}>{serverError}</Text>}
+        <Card>
+          {serverError && <Text style={styles.errorText}>{serverError}</Text>}
 
-        <Input
-          label="First name"
-          placeholder="John"
-          value={firstName}
-          onChangeText={(text) => {
-            const cleanText = text.replace(/[^A-Za-zÀ-ÿ\s'-]/g, "");
-            if (cleanText.length <= 50) setFirstName(cleanText);
-          }}
-        />
+          <Input
+            label="First name"
+            placeholder="John"
+            value={form.values.firstName}
+            onChangeText={(text) => {
+              const cleanText = text.replace(/[^A-Za-zÀ-ÿ\s'-]/g, "");
+              if (cleanText.length <= 50) {
+                form.handleChange("firstName")(cleanText);
+              }
+            }}
+          />
 
-        <Input
-          label="Last name"
-          placeholder="Doe"
-          value={lastName}
-          onChangeText={(text) => {
-            const cleanText = text.replace(/[^A-Za-zÀ-ÿ\s'-]/g, "");
-            if (cleanText.length <= 50) setLastName(cleanText);
-          }}
-        />
+          <Input
+            label="Last name"
+            placeholder="Doe"
+            value={form.values.lastName}
+            onChangeText={(text) => {
+              const cleanText = text.replace(/[^A-Za-zÀ-ÿ\s'-]/g, "");
+              if (cleanText.length <= 50) {
+                form.handleChange("lastName")(cleanText);
+              }
+            }}
+          />
 
-        <View style={styles.emailContainer}>
-          <View style={{ flex: 1 }}>
-            <Input
-              label="Email address"
-              placeholder="Username"
-              value={emailUsername}
-              onChangeText={(text) => {
-                const cleaned = text.replace(/@.*/g, "").trim();
-                setEmailUsername(cleaned);
-                if (emailError) setEmailError(null);
-                if (emailAvailable) setEmailAvailable(false);
-                if (networkStatusText) setNetworkStatusText(null);
-              }}
-              onBlur={() => checkEmailExists(emailUsername)}
+          <Input
+            label="Email address"
+            placeholder="you@example.com"
+            value={form.values.email}
+            onChangeText={form.handleChange("email")}
+            onBlur={form.handleBlur("email")}
+            error={form.touched.email ? form.errors.email : undefined}
+            keyboardType="email-address"
+          />
+
+          <Input
+            label="Password"
+            placeholder="••••••••"
+            value={form.values.password}
+            onChangeText={form.handleChange("password")}
+            onBlur={form.handleBlur("password")}
+            error={form.touched.password ? form.errors.password : undefined}
+            secureTextEntry
+          />
+
+          {form.values.password.length > 0 && (
+            <View style={styles.strengthContainer}>
+              <View style={styles.progressBarBackground}>
+                <View
+                  style={[
+                    styles.progressBarFill,
+                    {
+                      width: `${pwdStats.score}%`,
+                      backgroundColor: pwdStats.color,
+                    },
+                  ]}
+                />
+              </View>
+              <Text style={[styles.strengthLabel, { color: pwdStats.color }]}>
+                {pwdStats.label}
+              </Text>
+            </View>
+          )}
+
+          <Input
+            label="Confirm Password"
+            placeholder="••••••••"
+            value={form.values.confirmPassword || ""}
+            onChangeText={form.handleChange("confirmPassword")}
+            onBlur={form.handleBlur("confirmPassword")}
+            error={
+              form.touched.confirmPassword
+                ? form.errors.confirmPassword
+                : undefined
+            }
+            secureTextEntry
+          />
+
+          <View style={{ marginTop: 20 }}>
+            <Button
+              title="Create Account"
+              onPress={form.handleSubmit}
+              loading={form.isSubmitting}
             />
           </View>
-          <View style={styles.suffixContainer}>
-            <Text style={styles.suffixText}>@gmail.com</Text>
-          </View>
+        </Card>
+
+        <View style={styles.footer}>
+          <Text style={styles.footerText}>Already have an account? </Text>
+          <Link href="/(auth)/login" asChild>
+            <Text style={styles.link}>Sign in</Text>
+          </Link>
         </View>
-
-        {checkingEmail ? (
-          <Text style={styles.statusText}>Checking availability...</Text>
-        ) : emailError ? (
-          <Text style={styles.errorStatusText}>{emailError}</Text>
-        ) : emailAvailable ? (
-          <Text style={styles.successStatusText}>✓ Email is available!</Text>
-        ) : networkStatusText ? (
-          <Text style={styles.warningStatusText}>{networkStatusText}</Text>
-        ) : null}
-
-        <Input
-          label="Password (Min 6 chars)"
-          placeholder="••••••••"
-          value={form.values.password}
-          onChangeText={form.handleChange("password")}
-          onBlur={form.handleBlur("password")}
-          error={form.touched.password ? form.errors.password : undefined}
-          secureTextEntry
-        />
-
-        {form.values.password.length > 0 && (
-          <View style={styles.strengthContainer}>
-            <View style={styles.progressBarBackground}>
-              <View
-                style={[
-                  styles.progressBarFill,
-                  {
-                    width: `${pwdStats.score}%`,
-                    backgroundColor: pwdStats.color,
-                  },
-                ]}
-              />
-            </View>
-            <Text style={[styles.strengthLabel, { color: pwdStats.color }]}>
-              {pwdStats.label}
-            </Text>
-          </View>
-        )}
-
-        <Input
-          label="Confirm Password"
-          placeholder="••••••••"
-          value={form.values.confirmPassword || ""}
-          onChangeText={form.handleChange("confirmPassword")}
-          onBlur={form.handleBlur("confirmPassword")}
-          error={
-            form.touched.confirmPassword
-              ? form.errors.confirmPassword
-              : undefined
-          }
-          secureTextEntry
-        />
-
-        <View style={{ marginTop: 20 }}>
-          <Button
-            title="Register & Verify Gmail"
-            onPress={form.handleSubmit}
-            loading={form.isSubmitting}
-          />
-        </View>
-      </Card>
-
-      <View style={styles.footer}>
-        <Text style={styles.footerText}>Already have an account? </Text>
-        <Link href="/(auth)/login" asChild>
-          <Text style={styles.link}>Sign in</Text>
-        </Link>
-      </View>
-    </ScrollView>
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  safeArea: { flex: 1, backgroundColor: COLORS.background },
   container: { flex: 1, backgroundColor: COLORS.background },
-  content: { padding: 20 },
-  header: { alignItems: "center", marginBottom: 30, marginTop: 30 },
+  content: { padding: 20, paddingBottom: 40 },
+  header: { alignItems: "center", marginBottom: 30, marginTop: 20 },
   title: {
     fontSize: 28,
     fontWeight: "700",
@@ -319,56 +240,11 @@ const styles = StyleSheet.create({
     textAlign: "center",
     paddingHorizontal: 10,
   },
-  emailContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    position: "relative",
-  },
-  suffixContainer: {
-    position: "absolute",
-    right: 14,
-    top: 34,
-    justifyContent: "center",
-    alignItems: "center",
-    pointerEvents: "none",
-  },
-  suffixText: { color: COLORS.textSecondary, fontSize: 14, fontWeight: "500" },
   errorText: {
     color: COLORS.danger,
     marginBottom: 12,
     textAlign: "center",
     fontSize: 14,
-  },
-  statusText: {
-    color: COLORS.textSecondary,
-    fontSize: 12,
-    marginTop: 2,
-    marginBottom: 16,
-    marginLeft: 4,
-    fontStyle: "italic",
-  },
-  errorStatusText: {
-    color: COLORS.danger,
-    fontSize: 12,
-    marginTop: 2,
-    marginBottom: 16,
-    marginLeft: 4,
-  },
-  successStatusText: {
-    color: "#10B981",
-    fontSize: 12,
-    marginTop: 2,
-    marginBottom: 16,
-    marginLeft: 4,
-    fontWeight: "500",
-  },
-  warningStatusText: {
-    color: "#F59E0B",
-    fontSize: 12,
-    marginTop: 2,
-    marginBottom: 16,
-    marginLeft: 4,
-    fontStyle: "italic",
   },
   strengthContainer: { marginBottom: 16, marginTop: -4 },
   progressBarBackground: {

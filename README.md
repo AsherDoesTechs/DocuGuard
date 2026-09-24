@@ -363,3 +363,9 @@ Let's focus on the [FEATURE].
 - Make sure it doesn't crash.
 - Make sure it doesn't break existing features.
 - Test the complete user flow from start to finish.
+
+The Profile Has no Sign Out
+The Login has no Biometric or Fingerprint for easy signing
+the Documents do not show in the Home Page
+it should be the image on the left side and the attributes or descriptions on the right side
+someof the functions on the Profile are still not working.

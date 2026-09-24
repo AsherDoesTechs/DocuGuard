@@ -9,7 +9,6 @@ import {
   Switch,
   TextInput,
   ActivityIndicator,
-  Modal,
   KeyboardAvoidingView,
   Platform,
 } from "react-native";
@@ -85,6 +84,7 @@ interface SettingRowProps {
   subtitle: string;
   isActive: boolean;
   onPress: () => void;
+  isDestructive?: boolean;
 }
 
 const SettingRow = ({
@@ -93,6 +93,7 @@ const SettingRow = ({
   subtitle,
   isActive,
   onPress,
+  isDestructive = false,
 }: SettingRowProps) => (
   <TouchableOpacity
     onPress={onPress}
@@ -100,9 +101,20 @@ const SettingRow = ({
     accessibilityLabel={title}
   >
     <View style={[styles.settingRow, isActive && styles.activeSettingRow]}>
-      <Ionicons name={icon} size={22} color={COLORS.primary} />
+      <Ionicons
+        name={icon}
+        size={22}
+        color={isDestructive ? COLORS.danger : COLORS.primary}
+      />
       <View style={styles.settingInfo}>
-        <Text style={styles.settingTitle}>{title}</Text>
+        <Text
+          style={[
+            styles.settingTitle,
+            isDestructive && { color: COLORS.danger },
+          ]}
+        >
+          {title}
+        </Text>
         <Text style={styles.settingSubtitle}>{subtitle}</Text>
       </View>
       <Ionicons
@@ -144,10 +156,9 @@ const getApiErrorMessage = (err: any, fallback: string): string => {
 export default function ProfileScreen() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<SettingsTab>("none");
-  const [loading, setLoading] = useState(true);
+  const [, setLoading] = useState(true);
   const [user, setUser] = useState<UserProfile | null>(null);
 
-  // Toast state matching base ToastProps interface (no custom onHide needed if handled internally)
   const [toast, setToast] = useState<{
     visible: boolean;
     message: string;
@@ -161,7 +172,7 @@ export default function ProfileScreen() {
   });
 
   const [twoFactor, setTwoFactor] = useState(false);
-  const [settingUp2FA, setSettingUp2FA] = useState(false);
+  const [, setSettingUp2FA] = useState(false);
   const [verifying2FA, setVerifying2FA] = useState(false);
   const [twoFactorSetup, setTwoFactorSetup] = useState<{
     secret: string;
@@ -181,7 +192,6 @@ export default function ProfileScreen() {
   const [notifyPush, setNotifyPush] = useState(false);
   const [notifyExpiry, setNotifyExpiry] = useState(true);
 
-  const [supportMessage, setSupportMessage] = useState("");
   const [personalInfo, setPersonalInfo] = useState({
     name: "",
     email: "",
@@ -206,11 +216,6 @@ export default function ProfileScreen() {
     reducedMotion: false,
   });
 
-  const [exportingData, setExportingData] = useState(false);
-  const [deletingAccount, setDeletingAccount] = useState(false);
-  const [deleteModalVisible, setDeleteModalVisible] = useState(false);
-  const [deleteConfirmationText, setDeleteConfirmationText] = useState("");
-
   const showToast = (message: string, type: ToastType = "success") => {
     setToast({ visible: true, message, type });
   };
@@ -223,7 +228,6 @@ export default function ProfileScreen() {
         await LocalAuthentication.supportedAuthenticationTypesAsync();
 
       let bioType: BiometricState["type"] = "unknown";
-      // Fix: Use correct uppercase enum properties for expo-local-authentication
       if (
         supportedTypes.includes(
           LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION,
@@ -259,7 +263,6 @@ export default function ProfileScreen() {
       const localProfile = (await getUserProfile()) as any;
       const localDocs = await getAllDocuments();
 
-      // Fix: Safely handle missing serialNumber or notifyPush properties on local database profiles
       let serialNumber =
         localProfile?.serialNumber ||
         `DG-USER-${String(localDocs.length).padStart(4, "0")}`;
@@ -323,7 +326,7 @@ export default function ProfileScreen() {
             setTwoFactor(res.data.twoFactor);
           if (res.data.documentPreferences)
             setDocPreferences(res.data.documentPreferences);
-        } catch (err) {
+        } catch {
           // Fall back gracefully
         }
       }
@@ -418,7 +421,7 @@ export default function ProfileScreen() {
         value ? "Biometrics enabled" : "Biometrics disabled",
         "success",
       );
-    } catch (err) {
+    } catch {
       showToast("Failed to update biometric preference", "error");
     }
   };
@@ -515,40 +518,26 @@ export default function ProfileScreen() {
     }
   };
 
-  const handleExportData = async () => {
-    try {
-      setExportingData(true);
-      const token = await AsyncStorage.getItem("userToken");
-      await api.client.get("/profile/export", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      showToast("Data export prepared and shared", "success");
-    } catch (err) {
-      showToast("Failed to export data", "error");
-    } finally {
-      setExportingData(false);
-    }
-  };
-
-  const handleDeleteAccount = async () => {
-    if (deleteConfirmationText !== "DELETE") {
-      return Alert.alert(
-        "Error",
-        "Please type DELETE to confirm account removal.",
-      );
-    }
-    try {
-      setDeletingAccount(true);
-      const token = await AsyncStorage.getItem("userToken");
-      await api.client.delete("/profile", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      await AsyncStorage.clear();
-      router.replace("/auth/login");
-    } catch (err) {
-      showToast("Failed to delete account", "error");
-      setDeletingAccount(false);
-    }
+  const handleSignOut = () => {
+    Alert.alert(
+      "Sign Out",
+      "Are you sure you want to sign out of your account?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Sign Out",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await AsyncStorage.multiRemove(["userToken", "biometricEnabled"]);
+              router.replace("/auth/login" as any);
+            } catch {
+              showToast("Failed to sign out cleanly", "error");
+            }
+          },
+        },
+      ],
+    );
   };
 
   return (
@@ -773,7 +762,6 @@ export default function ProfileScreen() {
                     )}
                   </TouchableOpacity>
 
-                  {/* Active Sessions List */}
                   <Text style={[styles.sectionSubtitle, { marginTop: 20 }]}>
                     Active Login Sessions
                   </Text>
@@ -920,7 +908,6 @@ export default function ProfileScreen() {
               />
               {activeTab === "subscription" && (
                 <View style={styles.expandedSection}>
-                  {/* Fix: Provide required props to SubscriptionView to resolve type mismatch */}
                   <SubscriptionView
                     planName={user?.subscription.planName || "Free"}
                     renewalDate={user?.subscription.renewalDate || "N/A"}
@@ -930,144 +917,187 @@ export default function ProfileScreen() {
                 </View>
               )}
 
+              {/* Sign Out Row */}
               <SettingRow
-                icon="help-circle-outline"
-                title="Support & Feedback"
-                subtitle="Get assistance or submit bug tickets"
-                isActive={activeTab === "support"}
-                onPress={() =>
-                  setActiveTab(activeTab === "support" ? "none" : "support")
-                }
+                icon="log-out-outline"
+                title="Sign Out"
+                subtitle="Log out safely from your account session"
+                isActive={false}
+                onPress={handleSignOut}
+                isDestructive={true}
               />
-              {activeTab === "support" && (
-                <View style={styles.expandedSection}>
-                  <TextInput
-                    style={[
-                      styles.input,
-                      { height: 80, textAlignVertical: "top" },
-                    ]}
-                    placeholder="Describe your issue or feedback..."
-                    multiline
-                    value={supportMessage}
-                    onChangeText={setSupportMessage}
-                  />
-                  <TouchableOpacity
-                    style={styles.saveButton}
-                    onPress={() => {
-                      showToast("Support ticket sent successfully", "success");
-                      setSupportMessage("");
-                    }}
-                  >
-                    <Text style={styles.saveButtonText}>Submit Ticket</Text>
-                  </TouchableOpacity>
-                </View>
-              )}
-            </View>
-
-            {/* Danger Zone Section */}
-            <View style={styles.dangerZoneContainer}>
-              <Text style={styles.dangerZoneTitle}>Danger Zone</Text>
-
-              <TouchableOpacity
-                style={styles.dangerButton}
-                onPress={handleExportData}
-                disabled={exportingData}
-              >
-                {exportingData ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={styles.dangerButtonText}>
-                    Export All Vault Data
-                  </Text>
-                )}
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.dangerButtonOutline}
-                onPress={() => setDeleteModalVisible(true)}
-              >
-                <Text style={styles.dangerButtonOutlineText}>
-                  Permanently Delete Account
-                </Text>
-              </TouchableOpacity>
             </View>
           </ScrollView>
         </RefreshableContainer>
-
-        {/* Custom Confirmation Modal for Delete Account */}
-        <Modal
-          visible={deleteModalVisible}
-          transparent
-          animationType="fade"
-          onRequestClose={() => setDeleteModalVisible(false)}
-        >
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalContent}>
-              <Text style={styles.modalTitle}>Delete Account</Text>
-              <Text style={styles.modalText}>
-                This permanently deletes your account and local vault data. Type
-                DELETE to continue.
-              </Text>
-
-              <TextInput
-                style={styles.input}
-                placeholder="Type DELETE"
-                autoCapitalize="characters"
-                value={deleteConfirmationText}
-                onChangeText={setDeleteConfirmationText}
-              />
-
-              <View style={styles.modalActions}>
-                <TouchableOpacity
-                  style={styles.modalCancelButton}
-                  onPress={() => {
-                    setDeleteModalVisible(false);
-                    setDeleteConfirmationText("");
-                  }}
-                >
-                  <Text style={styles.modalCancelText}>Cancel</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[
-                    styles.modalDeleteButton,
-                    deleteConfirmationText !== "DELETE" && { opacity: 0.5 },
-                  ]}
-                  disabled={
-                    deleteConfirmationText !== "DELETE" || deletingAccount
-                  }
-                  onPress={handleDeleteAccount}
-                >
-                  {deletingAccount ? (
-                    <ActivityIndicator color="#fff" />
-                  ) : (
-                    <Text style={styles.modalDeleteText}>Delete</Text>
-                  )}
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-        </Modal>
-
-        {/* Fix: Removed unsupported onHide prop from Toast to match ToastProps definition */}
-        <Toast
-          visible={toast.visible}
-          message={toast.message}
-          type={toast.type}
-        />
       </KeyboardAvoidingView>
+
+      <Toast
+        visible={toast.visible}
+        message={toast.message}
+        type={toast.type}
+        onDismiss={() => setToast((t) => ({ ...t, visible: false }))}
+      />
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.background || "#f8f9fa" },
+  container: { flex: 1, backgroundColor: COLORS.background },
   scrollContent: { padding: 16, paddingBottom: 40 },
   headerContainer: {
     flexDirection: "row",
     alignItems: "center",
     marginBottom: 20,
   },
+  headerTextContainer: { flex: 1, marginLeft: 16 },
+  userName: { fontSize: 20, fontWeight: "700", color: COLORS.text },
+  userEmail: { fontSize: 14, color: COLORS.textSecondary, marginTop: 2 },
+  badgeContainer: {
+    flexDirection: "row",
+    marginTop: 6,
+    gap: 10,
+    alignItems: "center",
+  },
+  badgeText: { fontSize: 12, fontWeight: "600", color: COLORS.primary },
+  serialText: { fontSize: 12, color: COLORS.textSecondary },
+  storageCard: { marginBottom: 20, padding: 16 },
+  storageHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  storageTitle: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: COLORS.text,
+    marginLeft: 8,
+  },
+  storageDetails: {
+    fontSize: 13,
+    color: COLORS.textSecondary,
+    marginBottom: 10,
+  },
+  progressBarBackground: {
+    height: 8,
+    backgroundColor: "#E5E7EB",
+    borderRadius: 4,
+    overflow: "hidden",
+  },
+  progressBarFill: { height: "100%", backgroundColor: COLORS.primary },
+  sectionsContainer: { gap: 10 },
+  settingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: COLORS.surface || "#fff",
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border || "#E5E7EB",
+  },
+  activeSettingRow: { borderColor: COLORS.primary },
+  settingInfo: { flex: 1, marginLeft: 12, marginRight: 8 },
+  settingTitle: { fontSize: 15, fontWeight: "600", color: COLORS.text },
+  settingSubtitle: { fontSize: 12, color: COLORS.textSecondary, marginTop: 2 },
+  expandedSection: {
+    backgroundColor: "#F9FAFB",
+    padding: 16,
+    borderRadius: 12,
+    marginTop: -4,
+    marginBottom: 6,
+    borderWidth: 1,
+    borderColor: COLORS.border || "#E5E7EB",
+  },
+  inputLabel: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: COLORS.text,
+    marginBottom: 6,
+    marginTop: 10,
+  },
+  input: {
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "#D1D5DB",
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: COLORS.text,
+    marginBottom: 10,
+  },
+  saveButton: {
+    backgroundColor: COLORS.primary,
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: "center",
+    marginTop: 10,
+  },
+  verifyButton: {
+    backgroundColor: COLORS.success || "#10B981",
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: "center",
+    marginTop: 10,
+  },
+  saveButtonText: { color: "#fff", fontWeight: "600", fontSize: 14 },
+  sectionSubtitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: COLORS.text,
+    marginBottom: 8,
+  },
+  rowBetween: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginVertical: 6,
+  },
+  label: { fontSize: 14, color: COLORS.text },
+  totpSetupContainer: { marginTop: 10, marginBottom: 10 },
+  totpInstructions: {
+    fontSize: 13,
+    color: COLORS.textSecondary,
+    marginBottom: 4,
+  },
+  totpUriText: {
+    fontSize: 11,
+    color: COLORS.primary,
+    backgroundColor: "#EEF2FF",
+    padding: 8,
+    borderRadius: 6,
+    marginBottom: 10,
+  },
+  warningText: { fontSize: 12, color: COLORS.danger, marginTop: 4 },
+  sessionRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    backgroundColor: "#fff",
+    padding: 10,
+    borderRadius: 8,
+    marginTop: 6,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+  },
+  sessionDevice: { fontSize: 13, fontWeight: "600", color: COLORS.text },
+  sessionMeta: { fontSize: 11, color: COLORS.textSecondary, marginTop: 2 },
+  revokeText: { fontSize: 13, fontWeight: "600", color: COLORS.danger },
+  selectorRow: { flexDirection: "row", gap: 8, marginTop: 4 },
+  selectorChip: {
+    flex: 1,
+    paddingVertical: 8,
+    alignItems: "center",
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: "#D1D5DB",
+    backgroundColor: "#fff",
+  },
+  selectorChipActive: {
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
+  },
+  selectorChipText: { fontSize: 12, fontWeight: "600", color: COLORS.text },
+  selectorChipTextActive: { color: "#fff" },
   uniqueAvatarContainer: {
     width: 64,
     height: 64,
@@ -1075,10 +1105,10 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.primary,
     justifyContent: "center",
     alignItems: "center",
-    overflow: "hidden",
     position: "relative",
+    overflow: "hidden",
   },
-  abstractShape: { position: "absolute", opacity: 0.3 },
+  abstractShape: { position: "absolute", opacity: 0.2 },
   shape1: {
     width: 30,
     height: 30,
@@ -1090,264 +1120,18 @@ const styles = StyleSheet.create({
   shape2: {
     width: 40,
     height: 40,
-    borderRadius: 8,
-    backgroundColor: "#000",
+    borderRadius: 20,
+    backgroundColor: "#fff",
     bottom: -10,
     right: -10,
   },
   shape3: {
     width: 20,
     height: 20,
-    borderRadius: 10,
-    backgroundColor: "#fff",
-    bottom: 10,
-    left: 10,
-  },
-  avatarInitials: { color: "#fff", fontSize: 20, fontWeight: "bold" },
-  headerTextContainer: { marginLeft: 16, flex: 1 },
-  userName: { fontSize: 18, fontWeight: "bold", color: COLORS.text || "#111" },
-  // Fix: Replaced non-existent 'subtext' token with valid theme definitions like COLORS.textSecondary or standard fallback
-  userEmail: {
-    fontSize: 14,
-    color: COLORS.textSecondary || "#666",
-    marginTop: 2,
-  },
-  badgeContainer: { flexDirection: "row", marginTop: 6, gap: 10 },
-  badgeText: {
-    fontSize: 12,
-    backgroundColor: `${COLORS.primary}15`,
-    color: COLORS.primary,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
     borderRadius: 4,
-    overflow: "hidden",
-    fontWeight: "600",
-  },
-  serialText: { fontSize: 12, color: "#888", alignSelf: "center" },
-  storageCard: { padding: 16, marginBottom: 20 },
-  storageHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginBottom: 8,
-  },
-  storageTitle: { fontSize: 15, fontWeight: "600", color: COLORS.text },
-  storageDetails: {
-    fontSize: 13,
-    color: COLORS.textSecondary || "#666",
-    marginBottom: 8,
-  },
-  progressBarBackground: {
-    height: 8,
-    backgroundColor: "#e0e0e0",
-    borderRadius: 4,
-    overflow: "hidden",
-  },
-  progressBarFill: {
-    height: "100%",
-    backgroundColor: COLORS.primary,
-    borderRadius: 4,
-  },
-  sectionsContainer: { gap: 10 },
-  settingRow: {
-    flexDirection: "row",
-    alignItems: "center",
     backgroundColor: "#fff",
-    padding: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#eee",
+    top: 20,
+    right: 5,
   },
-  activeSettingRow: {
-    borderColor: COLORS.primary,
-    backgroundColor: `${COLORS.primary}05`,
-  },
-  settingInfo: { flex: 1, marginLeft: 14 },
-  settingTitle: { fontSize: 16, fontWeight: "600", color: COLORS.text },
-  settingSubtitle: {
-    fontSize: 13,
-    color: COLORS.textSecondary || "#666",
-    marginTop: 2,
-  },
-  expandedSection: {
-    backgroundColor: "#fff",
-    padding: 16,
-    borderRadius: 12,
-    marginTop: -4,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: "#eee",
-  },
-  sectionSubtitle: {
-    fontSize: 15,
-    fontWeight: "600",
-    color: COLORS.text,
-    marginBottom: 10,
-  },
-  inputLabel: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: COLORS.textSecondary || "#666",
-    marginBottom: 6,
-    marginTop: 10,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: "#ddd",
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 15,
-    backgroundColor: "#fafafa",
-  },
-  saveButton: {
-    backgroundColor: COLORS.primary,
-    padding: 14,
-    borderRadius: 8,
-    alignItems: "center",
-    marginTop: 16,
-  },
-  saveButtonText: { color: "#fff", fontSize: 15, fontWeight: "600" },
-  rowBetween: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingVertical: 8,
-  },
-  label: { fontSize: 15, color: COLORS.text },
-  warningText: {
-    fontSize: 12,
-    color: COLORS.danger || "#d9534f",
-    marginTop: 4,
-  },
-  totpSetupContainer: {
-    marginTop: 10,
-    padding: 12,
-    backgroundColor: "#f1f5f9",
-    borderRadius: 8,
-  },
-  totpInstructions: { fontSize: 13, color: COLORS.text, marginBottom: 6 },
-  totpUriText: {
-    fontSize: 11,
-    fontFamily: Platform.OS === "ios" ? "Courier" : "monospace",
-    color: COLORS.primary,
-    marginBottom: 10,
-  },
-  verifyButton: {
-    backgroundColor: COLORS.secondary || "#0284c7",
-    padding: 12,
-    borderRadius: 6,
-    alignItems: "center",
-    marginTop: 10,
-  },
-  sessionRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: "#f0f0f0",
-  },
-  sessionDevice: { fontSize: 14, fontWeight: "600", color: COLORS.text },
-  sessionMeta: { fontSize: 12, color: "#777", marginTop: 2 },
-  revokeText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: COLORS.danger || "#d9534f",
-  },
-  selectorRow: { flexDirection: "row", gap: 10, marginTop: 6 },
-  selectorChip: {
-    flex: 1,
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: "#ddd",
-    borderRadius: 8,
-    alignItems: "center",
-    backgroundColor: "#fafafa",
-  },
-  selectorChipActive: {
-    borderColor: COLORS.primary,
-    backgroundColor: `${COLORS.primary}10`,
-  },
-  selectorChipText: { fontSize: 13, fontWeight: "600", color: "#666" },
-  selectorChipTextActive: { color: COLORS.primary },
-  dangerZoneContainer: {
-    marginTop: 30,
-    padding: 16,
-    backgroundColor: `${COLORS.danger || "#d9534f"}08`,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: `${COLORS.danger || "#d9534f"}30`,
-  },
-  dangerZoneTitle: {
-    fontSize: 16,
-    fontWeight: "bold",
-    color: COLORS.danger || "#d9534f",
-    marginBottom: 12,
-  },
-  dangerButton: {
-    backgroundColor: COLORS.danger || "#d9534f",
-    padding: 14,
-    borderRadius: 8,
-    alignItems: "center",
-    marginBottom: 10,
-  },
-  dangerButtonText: { color: "#fff", fontWeight: "600", fontSize: 15 },
-  dangerButtonOutline: {
-    borderWidth: 1,
-    borderColor: COLORS.danger || "#d9534f",
-    padding: 14,
-    borderRadius: 8,
-    alignItems: "center",
-  },
-  dangerButtonOutlineText: {
-    color: COLORS.danger || "#d9534f",
-    fontWeight: "600",
-    fontSize: 15,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.5)",
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 20,
-  },
-  modalContent: {
-    backgroundColor: "#fff",
-    width: "100%",
-    maxWidth: 360,
-    padding: 20,
-    borderRadius: 12,
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: COLORS.text,
-    marginBottom: 8,
-  },
-  modalText: {
-    fontSize: 14,
-    color: COLORS.textSecondary || "#666",
-    marginBottom: 16,
-  },
-  modalActions: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-    gap: 10,
-    marginTop: 20,
-  },
-  modalCancelButton: {
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 6,
-    backgroundColor: "#f1f5f9",
-  },
-  modalCancelText: { color: COLORS.text, fontWeight: "600" },
-  modalDeleteButton: {
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 6,
-    backgroundColor: COLORS.danger || "#d9534f",
-  },
-  modalDeleteText: { color: "#fff", fontWeight: "600" },
+  avatarInitials: { color: "#fff", fontSize: 20, fontWeight: "700" },
 });

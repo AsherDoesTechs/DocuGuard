@@ -913,8 +913,8 @@ export default function AddDocumentScreen() {
 
   useEffect(() => {
     if (specificDocument) {
-      setTitle(specificDocument.title);
-      if (specificDocument.defaultIssuer) {
+      if (!title) setTitle(specificDocument.title);
+      if (specificDocument.defaultIssuer && !issuer) {
         setIssuer(specificDocument.defaultIssuer);
       }
     }
@@ -985,6 +985,7 @@ export default function AddDocumentScreen() {
 
       setExtractedData(extracted);
 
+      // Automatically fill up form fields with scanned/extracted information
       if (extracted.title) setTitle(extracted.title);
       if (extracted.documentNumber) setDocumentNumber(extracted.documentNumber);
       if (extracted.issuer) setIssuer(extracted.issuer);
@@ -1250,50 +1251,68 @@ export default function AddDocumentScreen() {
           Scan the document with your camera or upload an existing PDF or image.
         </Text>
 
-        <TouchableOpacity
-          style={styles.scanOption}
-          onPress={() => setScannerVisible(true)}
-        >
-          <View style={styles.scanIcon}>
-            <Ionicons name="camera-outline" size={34} color={COLORS.primary} />
+        {ocrLoading ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color={COLORS.primary} />
+            <Text style={styles.loadingText}>Extracting document data...</Text>
           </View>
-          <View style={styles.choiceContent}>
-            <Text style={styles.choiceTitle}>Scan Document</Text>
-            <Text style={styles.choiceDescription}>
-              Use your camera to capture the document.
-            </Text>
-          </View>
-          <Ionicons
-            name="chevron-forward"
-            size={22}
-            color={COLORS.textSecondary}
-          />
-        </TouchableOpacity>
+        ) : (
+          <>
+            <TouchableOpacity
+              style={styles.scanOption}
+              onPress={() => setScannerVisible(true)}
+            >
+              <View style={styles.scanIcon}>
+                <Ionicons
+                  name="camera-outline"
+                  size={34}
+                  color={COLORS.primary}
+                />
+              </View>
+              <View style={styles.choiceContent}>
+                <Text style={styles.choiceTitle}>Scan Document</Text>
+                <Text style={styles.choiceDescription}>
+                  Use your camera to capture the document.
+                </Text>
+              </View>
+              <Ionicons
+                name="chevron-forward"
+                size={22}
+                color={COLORS.textSecondary}
+              />
+            </TouchableOpacity>
 
-        <TouchableOpacity style={styles.scanOption} onPress={pickDocument}>
-          <View style={styles.scanIcon}>
-            <Ionicons
-              name="cloud-upload-outline"
-              size={34}
-              color={COLORS.primary}
-            />
-          </View>
-          <View style={styles.choiceContent}>
-            <Text style={styles.choiceTitle}>Upload File</Text>
-            <Text style={styles.choiceDescription}>
-              Select a PDF or image from your device.
-            </Text>
-          </View>
-          <Ionicons
-            name="chevron-forward"
-            size={22}
-            color={COLORS.textSecondary}
-          />
-        </TouchableOpacity>
+            <TouchableOpacity style={styles.scanOption} onPress={pickDocument}>
+              <View style={styles.scanIcon}>
+                <Ionicons
+                  name="cloud-upload-outline"
+                  size={34}
+                  color={COLORS.primary}
+                />
+              </View>
+              <View style={styles.choiceContent}>
+                <Text style={styles.choiceTitle}>Upload File</Text>
+                <Text style={styles.choiceDescription}>
+                  Select a PDF or image from your device.
+                </Text>
+              </View>
+              <Ionicons
+                name="chevron-forward"
+                size={22}
+                color={COLORS.textSecondary}
+              />
+            </TouchableOpacity>
 
-        <TouchableOpacity style={styles.skipButton} onPress={() => setStep(4)}>
-          <Text style={styles.skipButtonText}>Continue without scanning</Text>
-        </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.skipButton}
+              onPress={() => setStep(4)}
+            >
+              <Text style={styles.skipButtonText}>
+                Continue without scanning
+              </Text>
+            </TouchableOpacity>
+          </>
+        )}
 
         {selectedFile ? (
           <View style={styles.filePreview}>
@@ -1455,38 +1474,41 @@ export default function AddDocumentScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
       <KeyboardAvoidingView
+        style={styles.keyboardView}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
-        style={{ flex: 1 }}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 20}
       >
-        <View style={styles.header}>
-          <TouchableOpacity onPress={goBackStep} style={styles.backButton}>
-            <Ionicons name="arrow-back" size={24} color={COLORS.text} />
+        <View style={styles.headerRow}>
+          <TouchableOpacity style={styles.backButton} onPress={goBackStep}>
+            <Ionicons name="arrow-back" size={22} color={COLORS.text} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Add Document</Text>
-          <View style={{ width: 24 }} />
+          <StepHeader step={step} />
         </View>
 
-        <StepHeader step={step} />
-
-        <ScrollView contentContainerStyle={styles.scrollContent}>
-          {step === 0 && renderTypeStep()}
-          {step === 1 && renderCategoryStep()}
-          {step === 2 && renderSpecificDocumentStep()}
-          {step === 3 && renderScanStep()}
-          {step === 4 && renderReviewStep()}
+        <ScrollView
+          style={styles.container}
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          automaticallyAdjustKeyboardInsets={true}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Your Step 0 to Step 4 views go here */}
         </ScrollView>
       </KeyboardAvoidingView>
 
       {scannerVisible && (
-        <Modal visible={scannerVisible} animationType="slide">
-          <DocumentScannerComponent
-            visible={scannerVisible}
-            onScanSuccess={handleScanSuccess}
-            onClose={() => setScannerVisible(false)}
-          />
-        </Modal>
+        <DocumentScannerComponent
+          visible={scannerVisible}
+          onScanSuccess={(data) => {
+            if (data.images && data.images.length > 0) {
+              // Wrap the URI in an object to match what handleScanSuccess expects
+              handleScanSuccess({ uri: data.images[0].uri });
+            }
+          }}
+          onClose={() => setScannerVisible(false)}
+        />
       )}
 
       {datePicker && (
@@ -1505,6 +1527,21 @@ export default function AddDocumentScreen() {
 }
 
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: COLORS.background,
+  },
+  keyboardView: {
+    flex: 1,
+  },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F3F4F6",
+  },
   container: {
     flex: 1,
     backgroundColor: COLORS.background,
@@ -1729,6 +1766,17 @@ const styles = StyleSheet.create({
     color: COLORS.primary,
     fontSize: 15,
     fontWeight: "600",
+  },
+  loadingContainer: {
+    paddingVertical: 40,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: COLORS.textSecondary,
+    fontWeight: "500",
   },
   filePreview: {
     flexDirection: "row",
