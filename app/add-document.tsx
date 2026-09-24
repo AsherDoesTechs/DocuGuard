@@ -11,6 +11,7 @@ import {
   KeyboardAvoidingView,
   Image,
   ActivityIndicator,
+  Modal, // 1. Added Modal import
 } from "react-native";
 import DateTimePicker, {
   DateTimePickerEvent,
@@ -32,7 +33,6 @@ const MAX_ISSUER_LENGTH = 150;
 const MAX_DOCUMENT_NUMBER_LENGTH = 50;
 const MAX_NOTES_LENGTH = 1000;
 
-// Updated STEPS array (Information step removed)
 const STEPS = ["Type", "Category", "Document", "Scan", "Review"] as const;
 
 interface CategoryItem {
@@ -299,6 +299,13 @@ function formatDate(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
+// 3. Added parseDate helper function
+function parseDate(dateString: string): Date | null {
+  if (!dateString) return null;
+  const parsed = new Date(dateString);
+  return isNaN(parsed.getTime()) ? null : parsed;
+}
+
 function sanitizeText(value: string, maxLength: number): string {
   return value.replace(/\s+/g, " ").slice(0, maxLength);
 }
@@ -515,7 +522,6 @@ export default function AddDocumentScreen() {
     if (item.defaultIssuer) {
       setIssuer(item.defaultIssuer);
     }
-    // Moves directly to Scan / Upload (Step index 3)
     setTimeout(() => setStep(3), 150);
   }
 
@@ -536,7 +542,6 @@ export default function AddDocumentScreen() {
         mimeType: asset.mimeType ?? undefined,
       });
 
-      // Moves to Review / Edit (Step index 4)
       setStep(4);
       showToast("Document uploaded. Ready for review.", "success");
     } catch (error) {
@@ -862,7 +867,6 @@ export default function AddDocumentScreen() {
           />
         </TouchableOpacity>
 
-        {/* Updated skip step index to point directly to Review (Step index 4) */}
         <TouchableOpacity style={styles.skipButton} onPress={() => setStep(4)}>
           <Text style={styles.skipButtonText}>Continue without scanning</Text>
         </TouchableOpacity>
@@ -928,7 +932,6 @@ export default function AddDocumentScreen() {
           </View>
         ) : null}
 
-        {/* Full Input Fields integrated right into Review/Edit step */}
         <Field
           label="Document Name"
           value={title}
@@ -1052,9 +1055,11 @@ export default function AddDocumentScreen() {
         </ScrollView>
       </KeyboardAvoidingView>
 
+      {/* 2. Added visible prop to DocumentScannerComponent */}
       {scannerVisible && (
         <Modal visible={scannerVisible} animationType="slide">
           <DocumentScannerComponent
+            visible={scannerVisible}
             onScanSuccess={handleScanSuccess}
             onClose={() => setScannerVisible(false)}
           />
