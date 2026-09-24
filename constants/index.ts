@@ -15,6 +15,7 @@ export const COLORS = {
   surface: "#ffffff",
   text: "#1f2937",
   textSecondary: "#6b7280",
+  textMuted: "#64748B",
   border: "#e5e7eb",
 };
 

@@ -18,7 +18,7 @@ import { Card } from "../../components/ui";
 import { SubscriptionView } from "../../components/ui/SubscriptionView";
 import { Toast } from "../../components/ui/Toast";
 import type { ToastType } from "../../components/ui/Toast";
-import { COLORS, Colors } from "@/constants";
+import { COLORS } from "@/constants";
 import { RefreshableContainer } from "@/components/ui/RefreshableContainer";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { api } from "../../services/api";
@@ -63,6 +63,15 @@ interface UserProfile {
   serialNumber: string;
 }
 
+interface LoginSession {
+  id: string;
+  device: string;
+  browser: string;
+  location: string;
+  lastActive: string;
+  current: boolean;
+}
+
 interface SettingRowProps {
   icon: string;
   title: string;
@@ -78,7 +87,7 @@ const SettingRow = ({
   isActive,
   onPress,
 }: SettingRowProps) => (
-  <TouchableOpacity onPress={onPress}>
+  <TouchableOpacity onPress={onPress} accessibilityRole="button" accessibilityLabel={title}>
     <View style={[styles.settingRow, isActive && styles.activeSettingRow]}>
       <Ionicons name={icon as any} size={22} color={COLORS.primary} />
       <View style={styles.settingInfo}>
@@ -109,6 +118,16 @@ const UniqueAvatar = ({ name }: { name: string }) => {
       <View style={[styles.abstractShape, styles.shape3]} />
       <Text style={styles.avatarInitials}>{getInitials(name)}</Text>
     </View>
+  );
+};
+
+// Error handling helper
+const getApiErrorMessage = (err: any, fallback: string): string => {
+  return (
+    err?.response?.data?.error ||
+    err?.response?.data?.message ||
+    err?.message ||
+    fallback
   );
 };
 
@@ -170,15 +189,22 @@ export default function ProfileScreen() {
     dataSharing: false,
   });
   const [savingPrivacy, setSavingPrivacy] = useState(false);
-
-interface LoginSession {
-  id: string;
-  device: string;
-  browser: string;
-  location: string;
-  lastActive: string;
-  current: boolean;
-}
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [showBiometricPin, setShowBiometricPin] = useState(false);
+  const [savingNotifications, setSavingNotifications] = useState(false);
+  const [revokingSessionId, setRevokingSessionId] = useState<string | null>(null);
+  const [revokingAllSessions, setRevokingAllSessions] = useState(false);
+  const [exportingData, setExportingData] = useState(false);
+  const [deletingAccount, setDeletingAccount] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const [cloudExporting, setCloudExporting] = useState(false);
+  const [backingUp, setBackingUp] = useState(false);
+  const [submittingTicket, setSubmittingTicket] = useState(false);
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
+  const [showingSessionRevoke, setShowingSessionRevoke] = useState<string | null>(null);
+  const [showingRevokeAll, setShowingRevokeAll] = useState(false);
 
   const showToast = (message: string, type: ToastType = "success") => {
     setToast({ visible: true, message, type });
@@ -199,7 +225,9 @@ interface LoginSession {
 
       if (localProfile) {
         const storedBiometric = await AsyncStorage.getItem("biometricEnabled");
-        const storedSecret = await AsyncStorage.getItem("twoFactorSecret");
+        const storedSecret = await SecureStore.getItemAsync("twoFactorSecret", {
+          keychainService: "docuguard.2fa",
+        });
 
         setUser({
           name: localProfile.name,
@@ -210,7 +238,7 @@ interface LoginSession {
             (d) => d.status === "expiring",
           ).length,
           notifyEmail: localProfile.notifyEmail,
-          notifyPush: false,
+          notifyPush: localProfile.notifyPush || false,
           notifyExpiry: localProfile.notifyExpiry,
           twoFactor: localProfile.twoFactor,
           serialNumber,
@@ -229,6 +257,7 @@ interface LoginSession {
         });
         setTwoFactor(localProfile.twoFactor);
         setNotifyEmail(localProfile.notifyEmail);
+        setNotifyPush(localProfile.notifyPush || false);
         setNotifyExpiry(localProfile.notifyExpiry);
         if (storedBiometric !== null) {
           setBiometricEnabled(storedBiometric === "true");
@@ -290,6 +319,24 @@ interface LoginSession {
           if (res.data.notifyEmail !== undefined) setNotifyEmail(res.data.notifyEmail);
           if (res.data.notifyPush !== undefined) setNotifyPush(res.data.notifyPush);
           if (res.data.notifyExpiry !== undefined) setNotifyExpiry(res.data.notifyExpiry);
+          // Load preferences from backend
+          if (res.data.documentPreferences) {
+            setDocPreferences(res.data.documentPreferences);
+          }
+          if (res.data.themeMode || res.data.fontSize || res.data.reducedMotion !== undefined) {
+            setAppearance({
+              theme: res.data.themeMode || "system",
+              fontSize: res.data.fontSize || "medium",
+              reducedMotion: res.data.reducedMotion || false,
+            });
+          }
+          if (res.data.analyticsEnabled !== undefined || res.data.crashReportsEnabled !== undefined || res.data.dataSharingEnabled !== undefined) {
+            setPrivacy({
+              analytics: res.data.analyticsEnabled || false,
+              crashReports: res.data.crashReportsEnabled !== false,
+              dataSharing: res.data.dataSharingEnabled || false,
+            });
+          }
         } catch (err) {
           // Fall back to local data silently
         }
@@ -298,6 +345,21 @@ interface LoginSession {
       console.error("Failed to load profile:", err);
     } finally {
       setLoading(false);
+    }
+  }, []);
+
+  const checkFingerprintSupport = useCallback(async () => {
+    try {
+      const hasHardware = await LocalAuthentication.hasHardwareAsync();
+      const isEnrolled = await LocalAuthentication.isEnrolledAsync();
+      const stored = await SecureStore.getItemAsync(
+        "docuguard.fingerprint.enrolled",
+        { keychainService: "docuguard.fingerprint" },
+      );
+      setFingerprintEnrolled(!!stored && hasHardware && isEnrolled);
+    } catch (err) {
+      console.warn("Fingerprint support check failed:", err);
+      setFingerprintEnrolled(false);
     }
   }, []);
 
@@ -320,8 +382,8 @@ interface LoginSession {
     if (passwords.new && passwords.new !== passwords.confirm) {
       return Alert.alert("Error", "New passwords do not match.");
     }
-    if (passwords.new && passwords.new.length < 6) {
-      return Alert.alert("Error", "Password must be at least 6 characters.");
+    if (passwords.new && passwords.new.length < 8) {
+      return Alert.alert("Error", "Password must be at least 8 characters.");
     }
     if (biometricEnabled && biometricPin.length !== 6) {
       return Alert.alert(
@@ -348,7 +410,8 @@ interface LoginSession {
       );
     }
     if (twoFactor && twoFactorSecret && twoFactorCode.length === 6 && !totpVerified) {
-      if (!verifyTotp(twoFactorSecret, twoFactorCode)) {
+      const isValid = await verifyTotp(twoFactorCode);
+      if (!isValid) {
         return Alert.alert(
           "Error",
           "The code from your Authenticator App is incorrect. Please try again.",
@@ -362,10 +425,18 @@ interface LoginSession {
         String(biometricEnabled),
       );
       if (biometricPin) {
-        await AsyncStorage.setItem("biometricPin", biometricPin);
+        await SecureStore.setItemAsync(
+          "biometricPin",
+          biometricPin,
+          { keychainService: "docuguard.biometric" },
+        );
       }
       if (twoFactorSecret) {
-        await AsyncStorage.setItem("twoFactorSecret", twoFactorSecret);
+        await SecureStore.setItemAsync(
+          "twoFactorSecret",
+          twoFactorSecret,
+          { keychainService: "docuguard.2fa" },
+        );
       }
       const res = await api.client.patch(
         "/profile/security",
@@ -415,21 +486,6 @@ interface LoginSession {
     }
   };
 
-  const checkFingerprintSupport = useCallback(async () => {
-    try {
-      const hasHardware = await LocalAuthentication.hasHardwareAsync();
-      const isEnrolled = await LocalAuthentication.isEnrolledAsync();
-      const stored = await SecureStore.getItemAsync(
-        "docuguard.fingerprint.enrolled",
-        { keychainService: "docuguard.fingerprint" },
-      );
-      setFingerprintEnrolled(!!stored && hasHardware && isEnrolled);
-    } catch (err) {
-      console.warn("Fingerprint support check failed:", err);
-      setFingerprintEnrolled(false);
-    }
-  }, []);
-
   const enrollFingerprint = useCallback(async () => {
     setFingerprintBusy(true);
     setFingerprintError("");
@@ -442,18 +498,18 @@ interface LoginSession {
         return;
       }
       if (!isEnrolled) {
-        setFingerprintError("No fingerprint is enrolled on this device. Add one in Settings.");
+        setFingerprintError("No biometrics enrolled on this device. Add one in Settings.");
         setFingerprintBusy(false);
         return;
       }
       const result = await LocalAuthentication.authenticateAsync({
-        promptMessage: "Place your finger to enroll DocuGuard fingerprint access",
+        promptMessage: "Authenticate to enable biometric login",
         cancelLabel: "Cancel",
         fallbackLabel: "Use Passcode",
         disableDeviceFallback: false,
       });
       if (!result.success) {
-        setFingerprintError("Enrollment cancelled or failed. Please try again.");
+        setFingerprintError("Authentication cancelled or failed. Please try again.");
         setFingerprintBusy(false);
         return;
       }
@@ -463,7 +519,7 @@ interface LoginSession {
         { requireAuthentication: true, keychainService: "docuguard.fingerprint" },
       );
       setFingerprintEnrolled(true);
-      showToast("Fingerprint enrolled for DocuGuard access", "success");
+      showToast("Biometric login enabled", "success");
     } catch (err: any) {
       console.error("Fingerprint enrollment error:", err);
       setFingerprintError("Could not enroll fingerprint. Please try again.");
@@ -492,8 +548,8 @@ interface LoginSession {
 
   const removeFingerprint = useCallback(() => {
     Alert.alert(
-      "Remove Fingerprint",
-      "This will remove the fingerprint enrolled for DocuGuard. You will need to enroll it again to use fingerprint access.",
+      "Disable Biometric Login",
+      "This will disable biometric login for DocuGuard. You can re-enable it later.",
       [
         { text: "Cancel" },
         {
@@ -547,6 +603,76 @@ interface LoginSession {
       output += chars[(value << (5 - bits)) & 0x1f];
     }
     return output;
+  }
+
+  // Client-side TOTP verification (for immediate feedback before backend verification)
+  async function verifyTotp(code: string): Promise<boolean> {
+    if (code.length !== 6 || !/^\d{6}$/.test(code)) return false;
+    try {
+      const secret = await SecureStore.getItemAsync("twoFactorSecret", {
+        keychainService: "docuguard.2fa",
+      });
+      if (!secret) return false;
+      return verifyTotpWithSecret(secret, code);
+    } catch {
+      return false;
+    }
+  }
+
+  function verifyTotpWithSecret(secret: string, code: string, window = 1): boolean {
+    const key = base32Decode(secret);
+    const counter = Math.floor(Date.now() / 1000 / 30);
+    for (let i = -window; i <= window; i++) {
+      const buf = new DataView(new ArrayBuffer(8));
+      buf.setUint32(0, Math.floor((counter + i) / 0x100000000), false);
+      buf.setUint32(4, (counter + i) >>> 0, false);
+      const hash = hmacSha1(key, new Uint8Array(buf.buffer));
+      const offset = hash[hash.length - 1] & 0x0f;
+      const binary =
+        ((hash[offset] & 0x7f) << 24) |
+        ((hash[offset + 1] & 0xff) << 16) |
+        ((hash[offset + 2] & 0xff) << 8) |
+        (hash[offset + 3] & 0xff);
+      const expected = String(binary % 1000000).padStart(6, "0");
+      if (expected === code) return true;
+    }
+    return false;
+  }
+
+  function base32Decode(secret: string): Uint8Array {
+    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    let bits = 0;
+    let value = 0;
+    const output: number[] = [];
+    for (let i = 0; i < secret.length; i++) {
+      const idx = chars.indexOf(secret.charAt(i).toUpperCase());
+      if (idx === -1) continue;
+      value = (value << 5) | idx;
+      bits += 5;
+      while (bits >= 8) {
+        output.push((value >> (bits - 8)) & 0xff);
+        bits -= 8;
+      }
+    }
+    return new Uint8Array(output);
+  }
+
+  function hmacSha1(key: Uint8Array, message: Uint8Array): Uint8Array {
+    const blockSize = 64;
+    const keyPadded = new Uint8Array(blockSize);
+    keyPadded.set(key.length > blockSize ? new Uint8Array(sha1(key)) : key);
+    const ipad = new Uint8Array(blockSize).fill(0x36);
+    const opad = new Uint8Array(blockSize).fill(0x5c);
+    const inner = new Uint8Array(blockSize + message.length);
+    const outer = new Uint8Array(blockSize + 20);
+    for (let i = 0; i < blockSize; i++) {
+      inner[i] = keyPadded[i] ^ ipad[i];
+      outer[i] = keyPadded[i] ^ opad[i];
+    }
+    inner.set(message, blockSize);
+    const innerHash = sha1(inner);
+    outer.set(innerHash, blockSize);
+    return sha1(outer);
   }
 
   function sha1(message: Uint8Array): Uint8Array {
@@ -613,53 +739,16 @@ interface LoginSession {
     return out;
   }
 
-  function base32Decode(secret: string): Uint8Array {
-    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-    let bits = 0;
-    let value = 0;
-    const output: number[] = [];
-    for (let i = 0; i < secret.length; i++) {
-      const idx = chars.indexOf(secret.charAt(i).toUpperCase());
-      if (idx === -1) continue;
-      value = (value << 5) | idx;
-      bits += 5;
-      while (bits >= 8) {
-        output.push((value >> (bits - 8)) & 0xff);
-        bits -= 8;
-      }
-    }
-    return new Uint8Array(output);
-  }
-
-  function verifyTotp(secret: string, code: string, window = 1): boolean {
-    if (code.length !== 6 || !/^\d{6}$/.test(code)) return false;
-    const key = base32Decode(secret);
-    const counter = Math.floor(Date.now() / 1000 / 30);
-    for (let i = -window; i <= window; i++) {
-      const buf = new DataView(new ArrayBuffer(8));
-      buf.setUint32(0, Math.floor((counter + i) / 0x100000000), false);
-      buf.setUint32(4, (counter + i) >>> 0, false);
-      const hash = sha1(new Uint8Array(buf.buffer));
-      const offset = hash[hash.length - 1] & 0x0f;
-      const binary =
-        ((hash[offset] & 0x7f) << 24) |
-        ((hash[offset + 1] & 0xff) << 16) |
-        ((hash[offset + 2] & 0xff) << 8) |
-        (hash[offset + 3] & 0xff);
-      const expected = String(binary % 1000000).padStart(6, "0");
-      if (expected === code) return true;
-    }
-    return false;
-  }
-
   const handleSavePreferences = async (
     email: boolean,
     push: boolean,
     expiry: boolean,
   ) => {
+    const previous = { email: notifyEmail, push: notifyPush, expiry: notifyExpiry };
     setNotifyEmail(email);
     setNotifyPush(push);
     setNotifyExpiry(expiry);
+    setSavingNotifications(true);
 
     try {
       const token = await AsyncStorage.getItem("userToken");
@@ -674,8 +763,14 @@ interface LoginSession {
           headers: { Authorization: `Bearer ${token}` },
         },
       );
+      showToast("Notification preferences updated", "success");
     } catch (err) {
-      console.error("Failed to update notification flags", err);
+      setNotifyEmail(previous.email);
+      setNotifyPush(previous.push);
+      setNotifyExpiry(previous.expiry);
+      showToast(getApiErrorMessage(err, "Could not update notification preferences"), "error");
+    } finally {
+      setSavingNotifications(false);
     }
   };
 
@@ -739,32 +834,72 @@ interface LoginSession {
     }
   }, []);
 
-  const revokeSession = async (sessionId: string) => {
-    try {
-      const token = await AsyncStorage.getItem("userToken");
-      if (!token) return;
-      await api.client.delete(`/auth/sessions/${sessionId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      showToast("Session revoked", "success");
-      fetchLoginSessions();
-    } catch (err: any) {
-      Alert.alert("Error", err.response?.data?.error || "Failed to revoke session");
-    }
+  const revokeSession = (sessionId: string) => {
+    const session = loginSessions.find((s) => s.id === sessionId);
+    if (!session) return;
+    setShowingSessionRevoke(sessionId);
+    Alert.alert(
+      "Revoke Session?",
+      `${session.device}\n${session.browser} · ${session.location}\n\nThis device will be signed out.`,
+      [
+        { text: "Cancel", onPress: () => setShowingSessionRevoke(null) },
+        {
+          text: "Revoke",
+          style: "destructive",
+          onPress: async () => {
+            setShowingSessionRevoke(null);
+            setRevokingSessionId(sessionId);
+            try {
+              const token = await AsyncStorage.getItem("userToken");
+              if (!token) return;
+              await api.client.delete(`/auth/sessions/${sessionId}`, {
+                headers: { Authorization: `Bearer ${token}` },
+              });
+              showToast("Session revoked", "success");
+              fetchLoginSessions();
+            } catch (err: any) {
+              showToast(getApiErrorMessage(err, "Failed to revoke session"), "error");
+            } finally {
+              setRevokingSessionId(null);
+            }
+          },
+        },
+      ],
+    );
   };
 
-  const revokeAllOtherSessions = async () => {
-    try {
-      const token = await AsyncStorage.getItem("userToken");
-      if (!token) return;
-      await api.client.delete("/auth/sessions", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      showToast("All other sessions revoked", "success");
-      fetchLoginSessions();
-    } catch (err: any) {
-      Alert.alert("Error", err.response?.data?.error || "Failed to revoke sessions");
-    }
+  const revokeAllOtherSessions = () => {
+    const otherCount = loginSessions.filter((s) => !s.current).length;
+    if (otherCount === 0) return;
+    setShowingRevokeAll(true);
+    Alert.alert(
+      "Revoke All Other Sessions?",
+      `${otherCount} other session(s) will be signed out.`,
+      [
+        { text: "Cancel", onPress: () => setShowingRevokeAll(false) },
+        {
+          text: "Revoke All",
+          style: "destructive",
+          onPress: async () => {
+            setShowingRevokeAll(false);
+            setRevokingAllSessions(true);
+            try {
+              const token = await AsyncStorage.getItem("userToken");
+              if (!token) return;
+              await api.client.delete("/auth/sessions", {
+                headers: { Authorization: `Bearer ${token}` },
+              });
+              showToast("All other sessions revoked", "success");
+              fetchLoginSessions();
+            } catch (err: any) {
+              showToast(getApiErrorMessage(err, "Failed to revoke sessions"), "error");
+            } finally {
+              setRevokingAllSessions(false);
+            }
+          },
+        },
+      ],
+    );
   };
 
   const handleSaveDocPreferences = async () => {
@@ -826,40 +961,51 @@ interface LoginSession {
     }
   };
 
-  const handleExportData = async () => {
-    try {
-      const token = await AsyncStorage.getItem("userToken");
-      const res = await api.client.get("/profile/export", {
-        headers: { Authorization: `Bearer ${token}` },
-        responseType: "blob",
-      });
-      showToast("Data export prepared", "success");
-    } catch (err: any) {
-      Alert.alert("Error", err.response?.data?.error || "Failed to export data");
-    }
-  };
-
-  const handleDeleteAccount = async () => {
+  const handleDeleteAccount = () => {
     Alert.alert(
       "Delete Account",
-      "This will permanently delete your account and all data. This action cannot be undone.",
+      "This will permanently delete your account and all data. This action cannot be undone.\n\nType DELETE to confirm:",
       [
         { text: "Cancel" },
         {
           text: "Delete",
           style: "destructive",
-          onPress: async () => {
-            try {
-              const token = await AsyncStorage.getItem("userToken");
-              await api.client.delete("/profile", {
-                headers: { Authorization: `Bearer ${token}` },
-              });
-              await AsyncStorage.removeItem("userToken");
-              await SecureStore.deleteItemAsync("userToken").catch(() => {});
-              router.replace("/login" as any);
-            } catch (err: any) {
-              Alert.alert("Error", err.response?.data?.error || "Failed to delete account");
-            }
+          onPress: () => {
+            Alert.prompt(
+              "Confirm Deletion",
+              "Type DELETE to permanently delete your account",
+              [
+                { text: "Cancel" },
+                {
+                  text: "Delete",
+                  style: "destructive",
+                  onPress: (text?: string) => {
+                    if (text !== "DELETE") {
+                      Alert.alert("Error", "Confirmation text must be exactly 'DELETE'");
+                      return;
+                    }
+                    (async () => {
+                      setDeletingAccount(true);
+                      try {
+                        const token = await AsyncStorage.getItem("userToken");
+                        await api.client.delete("/profile", {
+                          headers: { Authorization: `Bearer ${token}` },
+                        });
+                      await AsyncStorage.removeItem("userToken");
+                      await SecureStore.deleteItemAsync("userToken").catch(() => {});
+                      router.replace("/login" as any);
+                    } catch (err: any) {
+                      showToast(getApiErrorMessage(err, "Failed to delete account"), "error");
+                    } finally {
+                      setDeletingAccount(false);
+                    }
+                  })();
+                  },
+                },
+              ],
+              "plain-text",
+              "",
+            );
           },
         },
       ],
@@ -889,35 +1035,62 @@ interface LoginSession {
   };
 
   const handleExportToCloud = async () => {
+    setCloudExporting(true);
     try {
       const res = await api.cloud.exportData();
       showToast("Documents exported to cloud backup successfully.");
     } catch (err: any) {
-      Alert.alert(
-        "Cloud Export Failed",
-        "Could not export data to cloud. Try local backup instead.",
-      );
+      showToast(getApiErrorMessage(err, "Could not export data to cloud"), "error");
+    } finally {
+      setCloudExporting(false);
     }
   };
 
   const handleLocalBackup = async () => {
+    setBackingUp(true);
     try {
       showToast("Preparing your backup...");
       await exportLocalBackup();
+      showToast("Local backup created", "success");
     } catch (err: any) {
-      Alert.alert("Backup Failed", "Could not create local backup.");
+      showToast(getApiErrorMessage(err, "Could not create local backup"), "error");
+    } finally {
+      setBackingUp(false);
     }
   };
 
-  const handleLogout = async () => {
+  const handleExportData = async () => {
+    setExportingData(true);
+    try {
+      const token = await AsyncStorage.getItem("userToken");
+      const res = await api.client.get("/profile/export", {
+        headers: { Authorization: `Bearer ${token}` },
+        responseType: "blob",
+      });
+      showToast("Data export prepared", "success");
+    } catch (err: any) {
+      showToast(getApiErrorMessage(err, "Failed to export data"), "error");
+    } finally {
+      setExportingData(false);
+    }
+  };
+
+  const handleLogout = () => {
     Alert.alert("Sign Out", "Are you sure you want to sign out?", [
       { text: "Cancel" },
       {
         text: "Sign Out",
         onPress: async () => {
-          await AsyncStorage.removeItem("userToken");
-          await SecureStore.deleteItemAsync("userToken").catch(() => {});
-          router.replace("/login" as any);
+          setLoggingOut(true);
+          try {
+            await AsyncStorage.removeItem("userToken");
+            await SecureStore.deleteItemAsync("userToken").catch(() => {});
+            router.replace("/login" as any);
+          } catch (err: any) {
+            showToast(getApiErrorMessage(err, "Failed to sign out"), "error");
+          } finally {
+            setLoggingOut(false);
+          }
         },
         style: "destructive",
       },
@@ -951,11 +1124,6 @@ interface LoginSession {
         onRefresh={handleDataReload}
         contentContainerStyle={styles.content}
       >
-        <ScrollView
-          style={styles.container}
-          contentContainerStyle={styles.content}
-          showsVerticalScrollIndicator={false}
-        >
           <Card style={styles.userCard}>
             <View style={styles.userCardContent}>
               <UniqueAvatar name={user.name} />
@@ -1062,43 +1230,70 @@ interface LoginSession {
               />
               {activeTab === "security" && (
                 <View style={styles.expandedContent}>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Current Password"
-                    placeholderTextColor="#999"
-                    secureTextEntry
-                    value={passwords.current}
-                    onChangeText={(t) =>
-                      setPasswords({ ...passwords, current: t })
-                    }
-                    autoCorrect={false}
-                    autoComplete="current-password"
-                    textContentType="password"
-                  />
-                  <TextInput
-                    style={styles.input}
-                    placeholder="New Password (min 6 chars)"
-                    placeholderTextColor="#999"
-                    secureTextEntry
-                    value={passwords.new}
-                    onChangeText={(t) => setPasswords({ ...passwords, new: t })}
-                    autoCorrect={false}
-                    autoComplete="new-password"
-                    textContentType="newPassword"
-                  />
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Confirm New Password"
-                    placeholderTextColor="#999"
-                    secureTextEntry
-                    value={passwords.confirm}
-                    onChangeText={(t) =>
-                      setPasswords({ ...passwords, confirm: t })
-                    }
-                    autoCorrect={false}
-                    autoComplete="new-password"
-                    textContentType="newPassword"
-                  />
+                  <View style={styles.passwordInputWrapper}>
+                    <TextInput
+                      style={[styles.input, { paddingRight: 48 }]}
+                      placeholder="Current Password"
+                      placeholderTextColor="#999"
+                      secureTextEntry={!showCurrentPassword}
+                      value={passwords.current}
+                      onChangeText={(t) =>
+                        setPasswords({ ...passwords, current: t })
+                      }
+                      autoCorrect={false}
+                      autoComplete="current-password"
+                      textContentType="password"
+                    />
+                    <TouchableOpacity
+                      style={styles.passwordToggle}
+                      onPress={() => setShowCurrentPassword(!showCurrentPassword)}
+                      accessibilityLabel={showCurrentPassword ? "Hide current password" : "Show current password"}
+                    >
+                      <Ionicons name={showCurrentPassword ? "eye-off" : "eye"} size={22} color={COLORS.textSecondary} />
+                    </TouchableOpacity>
+                  </View>
+                  <View style={styles.passwordInputWrapper}>
+                    <TextInput
+                      style={[styles.input, { paddingRight: 48 }]}
+                      placeholder="New Password (min 8 chars)"
+                      placeholderTextColor="#999"
+                      secureTextEntry={!showNewPassword}
+                      value={passwords.new}
+                      onChangeText={(t) => setPasswords({ ...passwords, new: t })}
+                      autoCorrect={false}
+                      autoComplete="new-password"
+                      textContentType="newPassword"
+                    />
+                    <TouchableOpacity
+                      style={styles.passwordToggle}
+                      onPress={() => setShowNewPassword(!showNewPassword)}
+                      accessibilityLabel={showNewPassword ? "Hide new password" : "Show new password"}
+                    >
+                      <Ionicons name={showNewPassword ? "eye-off" : "eye"} size={22} color={COLORS.textSecondary} />
+                    </TouchableOpacity>
+                  </View>
+                  <View style={styles.passwordInputWrapper}>
+                    <TextInput
+                      style={[styles.input, { paddingRight: 48 }]}
+                      placeholder="Confirm New Password"
+                      placeholderTextColor="#999"
+                      secureTextEntry={!showConfirmPassword}
+                      value={passwords.confirm}
+                      onChangeText={(t) =>
+                        setPasswords({ ...passwords, confirm: t })
+                      }
+                      autoCorrect={false}
+                      autoComplete="new-password"
+                      textContentType="newPassword"
+                    />
+                    <TouchableOpacity
+                      style={styles.passwordToggle}
+                      onPress={() => setShowConfirmPassword(!showConfirmPassword)}
+                      accessibilityLabel={showConfirmPassword ? "Hide confirm password" : "Show confirm password"}
+                    >
+                      <Ionicons name={showConfirmPassword ? "eye-off" : "eye"} size={22} color={COLORS.textSecondary} />
+                    </TouchableOpacity>
+                  </View>
                   <View style={styles.switchRow}>
                     <Text style={{ fontSize: 14 }}>Enable 2FA (Authenticator App)</Text>
                     <Switch
@@ -1109,7 +1304,9 @@ interface LoginSession {
                         if (!val) {
                           setTwoFactorCode("");
                           setTwoFactorSecret("");
-                          AsyncStorage.removeItem("twoFactorSecret").catch(() => {});
+                          SecureStore.deleteItemAsync("twoFactorSecret", {
+                            keychainService: "docuguard.2fa",
+                          }).catch(() => {});
                         }
                       }}
                       trackColor={{ true: COLORS.primary }}
@@ -1126,7 +1323,9 @@ interface LoginSession {
                           setTwoFactorSecret(secret);
                           setTwoFactorCode("");
                           setTotpVerified(false);
-                          AsyncStorage.setItem("twoFactorSecret", secret).catch(() => {});
+                          SecureStore.setItemAsync("twoFactorSecret", secret, {
+                            keychainService: "docuguard.2fa",
+                          }).catch(() => {});
                         }}
                       >
                         <Text style={styles.buttonText}>Generate Setup Key</Text>
@@ -1154,16 +1353,17 @@ interface LoginSession {
                       />
                       <TouchableOpacity
                         style={styles.secondaryButton}
-                        onPress={() => {
+                        onPress={async () => {
                           if (twoFactorCode.length !== 6) {
                             return Alert.alert(
                               "Error",
                               "Please enter a 6-digit code first.",
                             );
                           }
-                          if (verifyTotp(twoFactorSecret, twoFactorCode)) {
+                          const isValid = await verifyTotp(twoFactorCode);
+                          if (isValid) {
                             setTotpVerified(true);
-                            showToast("Code verified locally", "success");
+                            showToast("Code verified", "success");
                           } else {
                             Alert.alert(
                               "Error",
@@ -1219,20 +1419,29 @@ interface LoginSession {
                   </View>
                   {biometricEnabled && (
                     <View>
-                      <TextInput
-                        style={styles.input}
-                        placeholder="Set a PIN for biometric fallback"
-                        placeholderTextColor="#999"
-                        secureTextEntry
-                        value={biometricPin}
-                        onChangeText={(t) => {
-                          const clean = t.replace(/[^0-9]/g, "").slice(0, 6);
-                          setBiometricPin(clean);
-                        }}
-                        keyboardType="number-pad"
-                        maxLength={6}
-                        autoCorrect={false}
-                      />
+                      <View style={styles.passwordInputWrapper}>
+                        <TextInput
+                          style={[styles.input, { paddingRight: 48 }]}
+                          placeholder="Set a PIN for biometric fallback"
+                          placeholderTextColor="#999"
+                          secureTextEntry={!showBiometricPin}
+                          value={biometricPin}
+                          onChangeText={(t) => {
+                            const clean = t.replace(/[^0-9]/g, "").slice(0, 6);
+                            setBiometricPin(clean);
+                          }}
+                          keyboardType="number-pad"
+                          maxLength={6}
+                          autoCorrect={false}
+                        />
+                        <TouchableOpacity
+                          style={styles.passwordToggle}
+                          onPress={() => setShowBiometricPin(!showBiometricPin)}
+                          accessibilityLabel={showBiometricPin ? "Hide PIN" : "Show PIN"}
+                        >
+                          <Ionicons name={showBiometricPin ? "eye-off" : "eye"} size={22} color={COLORS.textSecondary} />
+                        </TouchableOpacity>
+                      </View>
                       <View style={styles.fingerprintStatusRow}>
                         <Ionicons
                           name={fingerprintEnrolled ? "finger-print" : "finger-print-outline"}
@@ -1241,8 +1450,8 @@ interface LoginSession {
                         />
                         <Text style={styles.fingerprintStatusText}>
                           {fingerprintEnrolled
-                            ? "Fingerprint enrolled for DocuGuard"
-                            : "No fingerprint enrolled yet"}
+                            ? "Biometric login enabled"
+                            : "No biometrics enrolled yet"}
                         </Text>
                       </View>
                       {fingerprintEnrolled ? (
@@ -1251,7 +1460,7 @@ interface LoginSession {
                           onPress={removeFingerprint}
                         >
                           <Text style={styles.secondaryButtonText}>
-                            Remove Fingerprint
+                            Disable Biometric Login
                           </Text>
                         </TouchableOpacity>
                       ) : (
@@ -1261,7 +1470,7 @@ interface LoginSession {
                           disabled={fingerprintBusy}
                         >
                           <Text style={styles.buttonText}>
-                            {fingerprintBusy ? "Enrolling…" : "Enroll Fingerprint"}
+                            {fingerprintBusy ? "Enabling…" : "Enable Biometric Login"}
                           </Text>
                         </TouchableOpacity>
                       )}
@@ -1313,8 +1522,14 @@ interface LoginSession {
                             <TouchableOpacity
                               style={styles.revokeButton}
                               onPress={() => revokeSession(session.id)}
+                              disabled={revokingSessionId === session.id}
+                              accessibilityLabel={`Revoke session on ${session.device}`}
                             >
-                              <Ionicons name="log-out" size={18} color={COLORS.danger} />
+                              {revokingSessionId === session.id ? (
+                                <ActivityIndicator size="small" color={COLORS.danger} />
+                              ) : (
+                                <Ionicons name="log-out" size={18} color={COLORS.danger} />
+                              )}
                             </TouchableOpacity>
                           )}
                         </View>
@@ -1323,8 +1538,13 @@ interface LoginSession {
                         <TouchableOpacity
                           style={styles.revokeAllButton}
                           onPress={revokeAllOtherSessions}
+                          disabled={revokingAllSessions}
                         >
-                          <Text style={styles.revokeAllText}>Revoke All Other Sessions</Text>
+                          {revokingAllSessions ? (
+                            <ActivityIndicator size="small" color={COLORS.danger} />
+                          ) : (
+                            <Text style={styles.revokeAllText}>Revoke All Other Sessions</Text>
+                          )}
                         </TouchableOpacity>
                       )}
                     </View>
@@ -1348,6 +1568,7 @@ interface LoginSession {
                       onValueChange={(val) =>
                         handleSavePreferences(val, notifyPush, notifyExpiry)
                       }
+                      disabled={savingNotifications}
                     />
                   </View>
                   <View style={styles.switchRow}>
@@ -1357,6 +1578,7 @@ interface LoginSession {
                       onValueChange={(val) =>
                         handleSavePreferences(notifyEmail, val, notifyExpiry)
                       }
+                      disabled={savingNotifications}
                     />
                   </View>
                   <View style={styles.switchRow}>
@@ -1366,6 +1588,7 @@ interface LoginSession {
                       onValueChange={(val) =>
                         handleSavePreferences(notifyEmail, notifyPush, val)
                       }
+                      disabled={savingNotifications}
                     />
                   </View>
                 </View>
@@ -1400,57 +1623,77 @@ interface LoginSession {
                   </View>
                   <View style={styles.settingRow}>
                     <Text style={{ fontSize: 14 }}>Expiry Reminder (days before)</Text>
-                    <TextInput
-                      style={[styles.input, { width: 80, textAlign: "center" }]}
-                      placeholder="30"
-                      keyboardType="number-pad"
-                      value={String(docPreferences.expiryReminderDays)}
-                      onChangeText={(t) => {
-                        const clean = t.replace(/[^0-9]/g, "").slice(0, 3);
-                        setDocPreferences({
-                          ...docPreferences,
-                          expiryReminderDays: parseInt(clean) || 30,
-                        });
-                      }}
-                      autoCorrect={false}
-                    />
+                    <View style={styles.selectWrapper}>
+                      <TextInput
+                        style={[styles.input, { width: 100, textAlign: "center" }]}
+                        placeholder="30"
+                        keyboardType="number-pad"
+                        value={String(docPreferences.expiryReminderDays)}
+                        onChangeText={(t) => {
+                          const clean = t.replace(/[^0-9]/g, "").slice(0, 3);
+                          const days = Math.min(365, Math.max(1, parseInt(clean) || 30));
+                          setDocPreferences({
+                            ...docPreferences,
+                            expiryReminderDays: days,
+                          });
+                        }}
+                        autoCorrect={false}
+                      />
+                    </View>
                   </View>
                   <View style={styles.settingRow}>
                     <Text style={{ fontSize: 14 }}>Default Category</Text>
-                    <TextInput
-                      style={[styles.input, { width: 140 }]}
-                      placeholder="other"
-                      value={docPreferences.defaultCategory}
-                      onChangeText={(t) =>
-                        setDocPreferences({ ...docPreferences, defaultCategory: t.toLowerCase() })
-                      }
-                      autoCapitalize="words"
-                      autoCorrect={false}
-                    />
+                    <View style={styles.selectWrapper}>
+                      <TextInput
+                        style={[styles.input, { width: 140 }]}
+                        placeholder="other"
+                        value={docPreferences.defaultCategory}
+                        onChangeText={(t) =>
+                          setDocPreferences({ ...docPreferences, defaultCategory: t.toLowerCase() })
+                        }
+                        autoCapitalize="words"
+                        autoCorrect={false}
+                      />
+                    </View>
                   </View>
                   <View style={styles.settingRow}>
                     <Text style={{ fontSize: 14 }}>Sort By</Text>
-                    <TextInput
-                      style={[styles.input, { width: 140 }]}
-                      placeholder="expiry"
-                      value={docPreferences.sortBy}
-                      onChangeText={(t) =>
-                        setDocPreferences({ ...docPreferences, sortBy: t })
-                      }
-                      autoCorrect={false}
-                    />
+                    <View style={styles.selectWrapper}>
+                      <TextInput
+                        style={[styles.input, { width: 140 }]}
+                        placeholder="expiry"
+                        value={docPreferences.sortBy}
+                        onChangeText={(t) => {
+                          const validSortBy = ["expiry", "name", "category", "createdAt"];
+                          if (validSortBy.includes(t)) {
+                            setDocPreferences({ ...docPreferences, sortBy: t });
+                          }
+                        }}
+                        autoCorrect={false}
+                        editable={false}
+                        onFocus={() => {
+                          // Could show a picker modal here
+                        }}
+                      />
+                    </View>
                   </View>
                   <View style={styles.settingRow}>
                     <Text style={{ fontSize: 14 }}>Sort Order</Text>
-                    <TextInput
-                      style={[styles.input, { width: 100 }]}
-                      placeholder="asc"
-                      value={docPreferences.sortOrder}
-                      onChangeText={(t) =>
-                        setDocPreferences({ ...docPreferences, sortOrder: t })
-                      }
-                      autoCorrect={false}
-                    />
+                    <View style={styles.selectWrapper}>
+                      <TextInput
+                        style={[styles.input, { width: 100 }]}
+                        placeholder="asc"
+                        value={docPreferences.sortOrder}
+                        onChangeText={(t) => {
+                          const validSortOrder = ["asc", "desc"];
+                          if (validSortOrder.includes(t)) {
+                            setDocPreferences({ ...docPreferences, sortOrder: t });
+                          }
+                        }}
+                        autoCorrect={false}
+                        editable={false}
+                      />
+                    </View>
                   </View>
                   <TouchableOpacity
                     style={styles.primaryButton}
@@ -1477,23 +1720,40 @@ interface LoginSession {
                   <TouchableOpacity
                     style={styles.primaryButton}
                     onPress={handleExportToCloud}
+                    disabled={cloudExporting}
                   >
-                    <Text style={styles.buttonText}>Export to Cloud</Text>
+                    {cloudExporting ? (
+                      <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                      <Text style={styles.buttonText}>Export to Cloud</Text>
+                    )}
                   </TouchableOpacity>
                   <TouchableOpacity
-                    style={[styles.primaryButton, { backgroundColor: Colors.textMuted, marginTop: 12 }]}
+                    style={[styles.primaryButton, { backgroundColor: COLORS.textMuted, marginTop: 12 }]}
                     onPress={handleLocalBackup}
+                    disabled={backingUp}
                   >
-                    <Ionicons name="download-outline" size={20} color="white" />
-                    <Text style={styles.buttonText}>Export Local Backup</Text>
+                    {backingUp ? (
+                      <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                      <>
+                        <Ionicons name="download-outline" size={20} color="white" />
+                        <Text style={styles.buttonText}>Export Local Backup</Text>
+                      </>
+                    )}
                   </TouchableOpacity>
                   <View style={styles.sectionDivider} />
                   <Text style={styles.subsectionTitle}>Data Export</Text>
                   <TouchableOpacity
                     style={styles.primaryButton}
                     onPress={handleExportData}
+                    disabled={exportingData}
                   >
-                    <Text style={styles.buttonText}>Export All Data (JSON)</Text>
+                    {exportingData ? (
+                      <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                      <Text style={styles.buttonText}>Export All Data (JSON)</Text>
+                    )}
                   </TouchableOpacity>
                 </View>
               )}
@@ -1509,27 +1769,37 @@ interface LoginSession {
                 <View style={styles.expandedContent}>
                   <View style={styles.settingRow}>
                     <Text style={{ fontSize: 14 }}>Theme</Text>
-                    <TextInput
-                      style={[styles.input, { width: 120 }]}
-                      placeholder="system"
-                      value={appearance.theme}
-                      onChangeText={(t) =>
-                        setAppearance({ ...appearance, theme: t })
-                      }
-                      autoCorrect={false}
-                    />
+                    <View style={styles.selectWrapper}>
+                      <TextInput
+                        style={[styles.input, { width: 120 }]}
+                        placeholder="system"
+                        value={appearance.theme}
+                        onChangeText={(t) => {
+                          const validThemes = ["system", "light", "dark"];
+                          if (validThemes.includes(t)) {
+                            setAppearance({ ...appearance, theme: t });
+                          }
+                        }}
+                        autoCorrect={false}
+                      />
+                    </View>
                   </View>
                   <View style={styles.settingRow}>
                     <Text style={{ fontSize: 14 }}>Font Size</Text>
-                    <TextInput
-                      style={[styles.input, { width: 120 }]}
-                      placeholder="medium"
-                      value={appearance.fontSize}
-                      onChangeText={(t) =>
-                        setAppearance({ ...appearance, fontSize: t })
-                      }
-                      autoCorrect={false}
-                    />
+                    <View style={styles.selectWrapper}>
+                      <TextInput
+                        style={[styles.input, { width: 120 }]}
+                        placeholder="medium"
+                        value={appearance.fontSize}
+                        onChangeText={(t) => {
+                          const validSizes = ["small", "medium", "large"];
+                          if (validSizes.includes(t)) {
+                            setAppearance({ ...appearance, fontSize: t });
+                          }
+                        }}
+                        autoCorrect={false}
+                      />
+                    </View>
                   </View>
                   <View style={styles.switchRow}>
                     <Text style={{ fontSize: 14 }}>Reduce Motion</Text>
@@ -1643,32 +1913,45 @@ interface LoginSession {
                   <TouchableOpacity
                     style={styles.primaryButton}
                     onPress={handleExportData}
+                    disabled={exportingData}
                   >
-                    <Text style={styles.buttonText}>Export My Data</Text>
+                    {exportingData ? (
+                      <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                      <Text style={styles.buttonText}>Export My Data</Text>
+                    )}
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[styles.primaryButton, { backgroundColor: COLORS.danger, marginTop: 12 }]}
                     onPress={handleDeleteAccount}
+                    disabled={deletingAccount}
                   >
-                    <Text style={styles.buttonText}>Delete Account</Text>
+                    {deletingAccount ? (
+                      <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                      <Text style={styles.buttonText}>Delete Account</Text>
+                    )}
                   </TouchableOpacity>
                 </View>
               )}
             </Card>
           </View>
 
-          <TouchableOpacity style={styles.signOutButton} onPress={handleLogout}>
+          <TouchableOpacity style={styles.signOutButton} onPress={handleLogout} disabled={loggingOut}>
             <View style={styles.signOutButtonContent}>
-              <Ionicons name="log-out" size={20} color={COLORS.danger} />
+              {loggingOut ? (
+                <ActivityIndicator color={COLORS.danger} size="small" />
+              ) : (
+                <Ionicons name="log-out" size={20} color={COLORS.danger} />
+              )}
               <Text style={[styles.actionButtonText, { color: COLORS.danger }]}>
-                Sign Out
+                {loggingOut ? "Signing Out..." : "Sign Out"}
               </Text>
             </View>
           </TouchableOpacity>
 
           <Text style={styles.version}>DocuGuard v1.0.0</Text>
-        </ScrollView>
-      </RefreshableContainer>
+        </RefreshableContainer>
 
       <Modal
         visible={showFingerprintModal}
@@ -1688,10 +1971,11 @@ interface LoginSession {
                 color={COLORS.primary}
               />
             </View>
-            <Text style={styles.fingerprintModalTitle}>Enroll Fingerprint</Text>
+            <Text style={styles.fingerprintModalTitle}>Enable Biometric Login</Text>
             <Text style={styles.fingerprintModalSubtitle}>
-              This fingerprint will only be used by DocuGuard. It is stored
-              securely on this device and cannot be accessed by any other app.
+              DocuGuard uses your device's built-in biometric authentication.
+              Your fingerprint or Face ID data is managed by the operating system
+              and is not accessible to DocuGuard.
             </Text>
             {fingerprintError ? (
               <Text style={styles.fingerprintErrorText}>{fingerprintError}</Text>
@@ -1704,7 +1988,7 @@ interface LoginSession {
               {fingerprintBusy ? (
                 <ActivityIndicator color="#fff" size="small" />
               ) : (
-                <Text style={styles.buttonText}>Start Enrollment</Text>
+                <Text style={styles.buttonText}>Enable Biometric Login</Text>
               )}
             </TouchableOpacity>
             <TouchableOpacity
@@ -2044,6 +2328,20 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     marginBottom: 12,
     marginLeft: 4,
+  },
+  passwordInputWrapper: {
+    position: "relative",
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  passwordToggle: {
+    position: "absolute",
+    right: 16,
+    padding: 8,
+  },
+  selectWrapper: {
+    flexDirection: "row",
+    alignItems: "center",
   },
   loadingSessions: {
     flexDirection: "row",

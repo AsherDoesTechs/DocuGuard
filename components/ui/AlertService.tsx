@@ -6,7 +6,7 @@ import React, {
   useState,
   type ReactNode,
 } from "react";
-import { Alert as NativeAlert } from "react-native";
+// Removed NativeAlert import since we are forcing the custom modal
 import { AlertModal, type AlertButton, type AlertType } from "./AlertModal";
 
 interface AlertOptions {
@@ -21,7 +21,9 @@ interface AlertContextValue {
 
 const AlertContext = createContext<AlertContextValue | null>(null);
 
-let globalAlert: ((title: string, message?: string, options?: AlertOptions) => void) | null = null;
+let globalAlert:
+  | ((title: string, message?: string, options?: AlertOptions) => void)
+  | null = null;
 
 export function useAlert() {
   const ctx = useContext(AlertContext);
@@ -40,8 +42,11 @@ export function showAlert(
     globalAlert(title, message, options);
     return;
   }
-  // Fallback to native Alert if no provider is mounted
-  NativeAlert.alert(title, message || "", options?.buttons);
+
+  // Custom warning instead of falling back to the native black box
+  console.warn(
+    "showAlert was called before AlertProvider was mounted. Make sure your root layout wraps the app in <AlertProvider>.",
+  );
 }
 
 export const AlertProvider: React.FC<{ children: ReactNode }> = ({
@@ -52,7 +57,9 @@ export const AlertProvider: React.FC<{ children: ReactNode }> = ({
   const [message, setMessage] = useState<string | undefined>(undefined);
   const [type, setType] = useState<AlertType>("default");
   const [buttons, setButtons] = useState<AlertButton[]>([]);
-  const [onDismiss, setOnDismiss] = useState<(() => void) | undefined>(undefined);
+  const [onDismiss, setOnDismiss] = useState<(() => void) | undefined>(
+    undefined,
+  );
 
   const alert = useCallback(
     (alertTitle: string, alertMessage?: string, options?: AlertOptions) => {

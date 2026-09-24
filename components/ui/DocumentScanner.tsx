@@ -15,6 +15,7 @@ import { COLORS } from "@/constants";
 import { useAlert } from "./AlertService";
 
 let ScannerPlugin: any = null;
+
 try {
   ScannerPlugin = require("react-native-document-scanner-plugin");
 } catch (e) {
@@ -33,6 +34,7 @@ function isNonEmptyString(value: unknown): value is string {
 
 function filterValidImageUris(scannedImages: unknown): string[] {
   if (!Array.isArray(scannedImages)) return [];
+
   return scannedImages.filter(isNonEmptyString);
 }
 
@@ -44,16 +46,20 @@ export const DocumentScannerComponent = ({
   onScanSuccess,
 }: DocumentScannerProps) => {
   const [visibleState, setVisibleState] = useState(false);
-  const slideAnim = useRef(new Animated.Value(0)).current;
-
   const [phase, setPhase] = useState<ScannerPhase>("capturing");
   const [scanning, setScanning] = useState(false);
 
+  const slideAnim = useRef(new Animated.Value(100)).current;
+
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closedRef = useRef(false);
+  const mountedRef = useRef(true);
 
   const { alert } = useAlert();
 
+  /**
+   * Clear any pending timeout.
+   */
   const clearTimers = () => {
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current);
@@ -61,53 +67,101 @@ export const DocumentScannerComponent = ({
     }
   };
 
+  /**
+   * Component cleanup.
+   */
   useEffect(() => {
+    mountedRef.current = true;
+
     return () => {
+      mountedRef.current = false;
       closedRef.current = true;
+      clearTimers();
     };
   }, []);
 
+  /**
+   * Open scanner UI.
+   */
   const open = () => {
+    if (!mountedRef.current) return;
+
+    closedRef.current = false;
+
     setVisibleState(true);
     setScanning(false);
     setPhase("capturing");
-    closedRef.current = false;
-    slideAnim.setValue(0);
+
+    slideAnim.setValue(100);
+
     Animated.timing(slideAnim, {
-      toValue: 1,
+      toValue: 0,
       duration: 300,
       useNativeDriver: true,
     }).start();
   };
 
+  /**
+   * Capture a document using the native scanner.
+   */
   const captureDocument = async () => {
+    if (closedRef.current || !mountedRef.current) {
+      return;
+    }
+
     setPhase("capturing");
     setScanning(true);
 
-    if (!ScannerPlugin || !ScannerPlugin.default) {
-      setScanning(false);
+    const scanner = ScannerPlugin?.default;
+
+    if (!scanner?.scanDocument) {
+      if (mountedRef.current) {
+        setScanning(false);
+      }
+
       alert(
         "Scanner Unavailable",
         "Native module not linked. Build a development client.",
-        { type: "error", buttons: [{ text: "OK", onPress: onClose }] }
+        {
+          type: "error",
+          buttons: [
+            {
+              text: "OK",
+              onPress: onClose,
+            },
+          ],
+        },
       );
+
       return;
     }
 
     try {
-      const result =
-        await ScannerPlugin.default.scanDocument().catch(() => null);
+      const result = await scanner.scanDocument();
 
-      const { scannedImages } = result || {};
-      const validImages = filterValidImageUris(scannedImages);
+      /**
+       * The native scanner can finish after the user
+       * has already closed the modal.
+       */
+      if (closedRef.current || !mountedRef.current) {
+        return;
+      }
+
+      const validImages = filterValidImageUris(result?.scannedImages);
 
       if (validImages.length === 0) {
         setScanning(false);
-        alert(
-          "Scan Failed",
-          "No valid image was captured. Please try again.",
-          { type: "error", buttons: [{ text: "OK", onPress: onClose }] }
-        );
+
+        alert("Scan Failed", "No valid image was captured. Please try again.", {
+          type: "error",
+          buttons: [
+            {
+              text: "OK",
+              onPress: onClose,
+            },
+          ],
+        });
+
         return;
       }
 
@@ -116,78 +170,172 @@ export const DocumentScannerComponent = ({
       setPhase("success");
 
       const finish = (width: number, height: number) => {
+        clearTimers();
+
         timeoutRef.current = setTimeout(() => {
+          /**
+           * Do not update state or call the parent
+           * if the scanner has already been closed.
+           */
+          if (closedRef.current || !mountedRef.current) {
+            return;
+          }
+
           setScanning(false);
           setPhase("capturing");
-          if (!closedRef.current) {
-            onScanSuccess({ uri: imageUri, width, height });
-          }
+
+          onScanSuccess({
+            uri: imageUri,
+            width,
+            height,
+          });
         }, 1400);
       };
 
       Image.getSize(
         imageUri,
-        (width, height) => finish(width, height),
-        () => finish(0, 0),
+        (width, height) => {
+          finish(width, height);
+        },
+        () => {
+          finish(0, 0);
+        },
       );
     } catch (error) {
+      if (closedRef.current || !mountedRef.current) {
+        return;
+      }
+
+      console.error("Document scanner error:", error);
+
       setScanning(false);
+
       alert(
         "Scanning Error",
         "Something went wrong while capturing the document.",
-        { type: "error", buttons: [{ text: "OK", onPress: onClose }] }
+        {
+          type: "error",
+          buttons: [
+            {
+              text: "OK",
+              onPress: onClose,
+            },
+          ],
+        },
       );
     }
   };
 
+  /**
+   * Open/close lifecycle.
+   */
   useEffect(() => {
     if (visible) {
       open();
-      timeoutRef.current = setTimeout(() => captureDocument(), 600);
+
+      clearTimers();
+
+      timeoutRef.current = setTimeout(() => {
+        if (!closedRef.current && mountedRef.current) {
+          captureDocument();
+        }
+      }, 600);
+
       return () => {
         closedRef.current = true;
         clearTimers();
       };
-    } else {
-      closedRef.current = true;
-      clearTimers();
+    }
+
+    closedRef.current = true;
+    clearTimers();
+
+    if (mountedRef.current) {
       setVisibleState(false);
       setScanning(false);
       setPhase("capturing");
+
+      slideAnim.stopAnimation();
+      slideAnim.setValue(100);
     }
   }, [visible]);
 
+  /**
+   * Close scanner.
+   */
   const handleClose = () => {
     closedRef.current = true;
     clearTimers();
-    setVisibleState(false);
-    setScanning(false);
-    setPhase("capturing");
-    onClose();
+
+    if (mountedRef.current) {
+      setScanning(false);
+      setPhase("capturing");
+
+      Animated.timing(slideAnim, {
+        toValue: 100,
+        duration: 220,
+        useNativeDriver: true,
+      }).start(() => {
+        if (!mountedRef.current) return;
+
+        setVisibleState(false);
+        onClose();
+      });
+    } else {
+      onClose();
+    }
   };
 
+  /**
+   * Swipe-down-to-close gesture.
+   */
   const panResponder = useRef(
     PanResponder.create({
-      onMoveShouldSetPanResponder: () => !scanning,
-      onPanResponderMove: (_, gestureState) => {
-        if (gestureState.dy > 0 && !scanning) {
-          slideAnim.setValue(gestureState.dy);
-        }
+      onMoveShouldSetPanResponder: (_, gestureState) => {
+        if (scanning) return false;
+
+        return (
+          Math.abs(gestureState.dy) > Math.abs(gestureState.dx) &&
+          gestureState.dy > 10
+        );
       },
+
+      onPanResponderMove: (_, gestureState) => {
+        if (scanning) return;
+
+        const nextY = Math.max(0, gestureState.dy);
+
+        slideAnim.setValue(nextY);
+      },
+
       onPanResponderRelease: (_, gestureState) => {
-        if (gestureState.dy > 100 && !scanning) {
+        if (scanning) return;
+
+        if (gestureState.dy > 100) {
           handleClose();
-        } else if (!scanning) {
-          Animated.spring(slideAnim, {
-            toValue: 0,
-            useNativeDriver: true,
-          }).start();
+          return;
         }
+
+        Animated.spring(slideAnim, {
+          toValue: 0,
+          useNativeDriver: true,
+        }).start();
+      },
+
+      onPanResponderTerminate: () => {
+        if (scanning) return;
+
+        Animated.spring(slideAnim, {
+          toValue: 0,
+          useNativeDriver: true,
+        }).start();
       },
     }),
   ).current;
 
-  if (!visibleState) return null;
+  if (!visibleState) {
+    return null;
+  }
 
   return (
     <Modal
@@ -195,11 +343,14 @@ export const DocumentScannerComponent = ({
       animationType="none"
       transparent
       presentationStyle="overFullScreen"
+      onRequestClose={handleClose}
     >
       <Animated.View
         style={[
           styles.modalOverlay,
-          { transform: [{ translateY: slideAnim }] },
+          {
+            transform: [{ translateY: slideAnim }],
+          },
         ]}
         {...panResponder.panHandlers}
       >
@@ -207,15 +358,26 @@ export const DocumentScannerComponent = ({
           {phase === "capturing" && (
             <View style={styles.instructionBox}>
               <Ionicons name="scan-outline" size={36} color="#fff" />
+
               <Text style={styles.instructionTitle}>Capturing document…</Text>
-              <ActivityIndicator color="#fff" style={styles.activityIndicator} />
+
+              <ActivityIndicator
+                color="#fff"
+                style={styles.activityIndicator}
+              />
             </View>
           )}
 
           {phase === "success" && (
             <View style={styles.instructionBox}>
-              <Ionicons name="checkmark-circle" size={56} color={COLORS.success} />
+              <Ionicons
+                name="checkmark-circle"
+                size={56}
+                color={COLORS.success}
+              />
+
               <Text style={styles.instructionTitle}>Scan Successful</Text>
+
               <Text style={styles.instructionSubtitle}>
                 Document captured successfully
               </Text>
@@ -226,11 +388,19 @@ export const DocumentScannerComponent = ({
         <TouchableOpacity
           style={styles.closeButton}
           onPress={handleClose}
-          hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
+          disabled={false}
+          hitSlop={{
+            top: 20,
+            bottom: 20,
+            left: 20,
+            right: 20,
+          }}
+          accessibilityRole="button"
           accessibilityLabel="Close scanner"
         >
           <View style={styles.closeButtonInner}>
             <Ionicons name="close" size={28} color="#fff" />
+
             <Text style={styles.closeLabel}>Close</Text>
           </View>
         </TouchableOpacity>
@@ -245,11 +415,13 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0, 0, 0, 0.6)",
     justifyContent: "flex-end",
   },
+
   stabilizationContent: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
   },
+
   instructionBox: {
     alignItems: "center",
     backgroundColor: "rgba(0, 0, 0, 0.4)",
@@ -260,6 +432,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(255, 255, 255, 0.2)",
   },
+
   instructionTitle: {
     color: "#fff",
     fontSize: 20,
@@ -267,6 +440,7 @@ const styles = StyleSheet.create({
     marginTop: 12,
     textAlign: "center",
   },
+
   instructionSubtitle: {
     color: "#E5E7EB",
     fontSize: 16,
@@ -274,14 +448,17 @@ const styles = StyleSheet.create({
     marginTop: 8,
     textAlign: "center",
   },
+
   activityIndicator: {
     marginTop: 16,
   },
+
   closeButton: {
     alignSelf: "center",
     marginBottom: 40,
     padding: 10,
   },
+
   closeButtonInner: {
     flexDirection: "row",
     alignItems: "center",
@@ -293,6 +470,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(255, 255, 255, 0.3)",
   },
+
   closeLabel: {
     color: "#fff",
     fontSize: 16,

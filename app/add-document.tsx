@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -11,64 +11,292 @@ import {
   KeyboardAvoidingView,
   Image,
   ActivityIndicator,
+  Modal,
 } from "react-native";
 import DateTimePicker, {
   DateTimePickerEvent,
 } from "@react-native-community/datetimepicker";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useRouter, useLocalSearchParams } from "expo-router";
+import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import * as SecureStore from "expo-secure-store";
 import * as DocumentPicker from "expo-document-picker";
-import { API_BASE_URL } from "../services/api";
-import { Button, Card, Toast } from "@/components/ui";
-import { useForm } from "@/hooks/useForm";
-import { DOCUMENT_CATEGORIES, COLORS } from "@/constants";
-import { formatShortDate } from "@/utils";
+
+import { COLORS } from "@/constants";
 import { DocumentScannerComponent } from "@/components/ui/DocumentScanner";
-import { RefreshableContainer } from "@/components/ui/RefreshableContainer";
-import { extractDocumentData, type ExtractedDocumentData } from "../utils/ocr";
-import type { ToastType } from "@/components/ui/Toast";
-import {
-  documentSchema,
-  type DocumentInput,
-  validateSchema,
-} from "@/shared/validation";
+import { extractDocumentData } from "../utils/ocr";
+import { createDocument, logDocumentAction } from "../services/localDatabase";
 import { formatCategoryForBackend } from "@/DocuGuard-Server/utils/categories";
-import {
-  createDocument,
-  updateDocument,
-  logDocumentAction,
-  getAllDocuments,
-} from "../services/localDatabase";
-import { getUserProfile } from "../services/localDatabase";
 
 const MAX_TITLE_LENGTH = 100;
 const MAX_ISSUER_LENGTH = 150;
 const MAX_DOCUMENT_NUMBER_LENGTH = 50;
 const MAX_NOTES_LENGTH = 1000;
-const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
-type DateField = "issueDate" | "expiryDate";
+const STEPS = [
+  "Type",
+  "Category",
+  "Document",
+  "Information",
+  "Scan",
+  "Review",
+] as const;
 
-/* -------------------------------------------------------------------------- */
-/* Helpers                                                                    */
-/* -------------------------------------------------------------------------- */
-
-async function getStoredToken(): Promise<string | null> {
-  return await SecureStore.getItemAsync("userToken");
+interface CategoryItem {
+  id: string;
+  title: string;
+  description: string;
+  icon: keyof typeof Ionicons.glyphMap;
 }
 
-function getToday(): Date {
-  const date = new Date();
-  date.setHours(0, 0, 0, 0);
-  return date;
+interface SpecificDocumentItem {
+  id: string;
+  title: string;
+  description: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  defaultIssuer: string;
+  category: string;
 }
 
-function getTomorrow(): Date {
-  const date = getToday();
-  date.setDate(date.getDate() + 1);
-  return date;
+interface ExtractedData {
+  title: string;
+  issuer: string;
+  documentNumber: string;
+  issueDate: string;
+  expiryDate: string;
+  category: string;
+  confidence: number;
+  authenticity: "real" | "replica" | "fake";
+  authenticityScore: number;
+  authenticityReason: string;
+}
+
+interface SelectedFileItem {
+  name: string;
+  uri: string;
+  size: number;
+  mimeType?: string;
+}
+
+const LEGAL_CATEGORIES: CategoryItem[] = [
+  {
+    id: "government",
+    title: "Government Identification",
+    description: "Passports, national IDs, driver's licenses and similar IDs",
+    icon: "card-outline",
+  },
+  {
+    id: "civil",
+    title: "Civil Documents",
+    description: "Birth, marriage and other civil certificates",
+    icon: "document-text-outline",
+  },
+  {
+    id: "legal",
+    title: "Legal Documents",
+    description: "Contracts, affidavits, permits and legal records",
+    icon: "briefcase-outline",
+  },
+  {
+    id: "financial",
+    title: "Financial / Insurance",
+    description: "Insurance policies and financial documents",
+    icon: "wallet-outline",
+  },
+];
+
+const NON_LEGAL_CATEGORIES: CategoryItem[] = [
+  {
+    id: "education",
+    title: "Education",
+    description: "Diplomas, transcripts and certificates",
+    icon: "school-outline",
+  },
+  {
+    id: "employment",
+    title: "Employment",
+    description: "Employment records, certificates and IDs",
+    icon: "business-outline",
+  },
+  {
+    id: "personal",
+    title: "Personal Documents",
+    description: "Personal records and other documents",
+    icon: "person-outline",
+  },
+  {
+    id: "other",
+    title: "Other",
+    description: "Other useful documents",
+    icon: "folder-outline",
+  },
+];
+
+const DOCUMENTS_BY_CATEGORY: Record<string, SpecificDocumentItem[]> = {
+  government: [
+    {
+      id: "philippine-passport",
+      title: "Philippine Passport",
+      description: "Passport issued by the Department of Foreign Affairs",
+      icon: "airplane-outline",
+      defaultIssuer: "Department of Foreign Affairs",
+      category: "passport",
+    },
+    {
+      id: "national-id",
+      title: "Philippine National ID",
+      description: "PhilSys National ID",
+      icon: "card-outline",
+      defaultIssuer: "Philippine Statistics Authority",
+      category: "government-id",
+    },
+    {
+      id: "drivers-license",
+      title: "Driver's License",
+      description: "License issued by the Land Transportation Office",
+      icon: "car-outline",
+      defaultIssuer: "Land Transportation Office",
+      category: "license",
+    },
+    {
+      id: "prc-id",
+      title: "PRC ID",
+      description: "Professional identification card",
+      icon: "briefcase-outline",
+      defaultIssuer: "Professional Regulation Commission",
+      category: "government-id",
+    },
+  ],
+  civil: [
+    {
+      id: "birth-certificate",
+      title: "Birth Certificate",
+      description: "Certificate of live birth",
+      icon: "document-text-outline",
+      defaultIssuer: "Philippine Statistics Authority",
+      category: "certificate",
+    },
+    {
+      id: "marriage-certificate",
+      title: "Marriage Certificate",
+      description: "Certificate of marriage",
+      icon: "heart-outline",
+      defaultIssuer: "Philippine Statistics Authority",
+      category: "certificate",
+    },
+  ],
+  legal: [
+    {
+      id: "contract",
+      title: "Contract",
+      description: "Legal agreement or contract",
+      icon: "document-text-outline",
+      defaultIssuer: "",
+      category: "legal",
+    },
+    {
+      id: "affidavit",
+      title: "Affidavit",
+      description: "Sworn legal statement",
+      icon: "document-outline",
+      defaultIssuer: "",
+      category: "legal",
+    },
+    {
+      id: "permit",
+      title: "Permit",
+      description: "Government or organizational permit",
+      icon: "shield-checkmark-outline",
+      defaultIssuer: "",
+      category: "legal",
+    },
+  ],
+  financial: [
+    {
+      id: "insurance",
+      title: "Insurance Policy",
+      description: "Insurance policy or coverage document",
+      icon: "shield-outline",
+      defaultIssuer: "",
+      category: "insurance",
+    },
+    {
+      id: "bank-document",
+      title: "Bank Document",
+      description: "Important banking document",
+      icon: "card-outline",
+      defaultIssuer: "",
+      category: "financial",
+    },
+  ],
+  education: [
+    {
+      id: "diploma",
+      title: "Diploma",
+      description: "Academic diploma",
+      icon: "school-outline",
+      defaultIssuer: "",
+      category: "education",
+    },
+    {
+      id: "transcript",
+      title: "Transcript",
+      description: "Academic transcript or record",
+      icon: "document-text-outline",
+      defaultIssuer: "",
+      category: "education",
+    },
+    {
+      id: "certificate",
+      title: "Certificate",
+      description: "Educational or training certificate",
+      icon: "ribbon-outline",
+      defaultIssuer: "",
+      category: "certificate",
+    },
+  ],
+  employment: [
+    {
+      id: "employment-certificate",
+      title: "Certificate of Employment",
+      description: "Employment verification document",
+      icon: "business-outline",
+      defaultIssuer: "",
+      category: "employment",
+    },
+    {
+      id: "employment-id",
+      title: "Company ID",
+      description: "Employee identification card",
+      icon: "person-outline", // Fixed icon name
+      defaultIssuer: "",
+      category: "employment",
+    },
+  ],
+  personal: [
+    {
+      id: "personal-record",
+      title: "Personal Record",
+      description: "Personal document or record",
+      icon: "person-outline",
+      defaultIssuer: "",
+      category: "other",
+    },
+  ],
+  other: [
+    {
+      id: "other",
+      title: "Other Document",
+      description: "A document that does not fit another category",
+      icon: "folder-outline",
+      defaultIssuer: "",
+      category: "other",
+    },
+  ],
+};
+
+function getStoredToken(): Promise<string | null> {
+  return SecureStore.getItemAsync("userToken");
 }
 
 function formatDate(date: Date): string {
@@ -78,242 +306,15 @@ function formatDate(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
-function parseDate(value: string): Date | null {
-  if (!DATE_REGEX.test(value)) return null;
-
-  const [year, month, day] = value.split("-").map(Number);
+function parseDate(value: string | null): Date | null {
+  if (!value) return null;
+  const parts = value.split("-").map(Number);
+  if (parts.length !== 3) return null;
+  const [year, month, day] = parts;
   const date = new Date(year, month - 1, day);
-
   if (Number.isNaN(date.getTime())) return null;
-
-  if (
-    date.getFullYear() !== year ||
-    date.getMonth() !== month - 1 ||
-    date.getDate() !== day
-  ) {
-    return null;
-  }
-
-  date.setHours(0, 0, 0, 0);
   return date;
 }
-
-function isValidDate(value: string): boolean {
-  return parseDate(value) !== null;
-}
-
-function getFileExtension(mimeType?: string): string {
-  if (!mimeType) return "";
-  if (mimeType === "application/pdf") return ".pdf";
-  if (mimeType.startsWith("image/")) return `.${mimeType.split("/")[1]}`;
-  return "";
-}
-
-function getFileTypeLabel(mimeType?: string): { label: string; icon: keyof typeof Ionicons.glyphMap } {
-  if (!mimeType) return { label: "File", icon: "document" };
-  if (mimeType === "application/pdf") return { label: "PDF", icon: "document" };
-  if (mimeType.startsWith("image/")) {
-    const imgType = mimeType.split("/")[1];
-    if (imgType === "png") return { label: "PNG", icon: "image" };
-    if (imgType === "jpeg" || imgType === "jpg") return { label: "JPG", icon: "image" };
-    if (imgType === "gif") return { label: "GIF", icon: "image" };
-    if (imgType === "webp") return { label: "WebP", icon: "image" };
-    return { label: "Image", icon: "image" };
-  }
-  if (mimeType === "text/plain") return { label: "TXT", icon: "document" };
-  if (mimeType.includes("word") || mimeType.includes("document"))
-    return { label: "DOC", icon: "document" };
-  return { label: "File", icon: "document" };
-}
-
-/* -------------------------------------------------------------------------- */
-/* Smart Suggestions                                                           */
-/* -------------------------------------------------------------------------- */
-
-interface Suggestion {
-  field: keyof DocumentInput;
-  value: string;
-  source: string;
-  confidence: number;
-}
-
-function buildSuggestions(
-  values: DocumentInput,
-  previousDocs: Array<{
-    title?: string;
-    issuer?: string;
-    documentNumber?: string;
-    category?: string;
-    issueDate?: string;
-    expiryDate?: string;
-    notes?: string;
-  }>,
-  profile: { name?: string; email?: string } | null,
-): Suggestion[] {
-  const suggestions: Suggestion[] = [];
-
-  const title = values.title?.trim().toLowerCase() || "";
-  const issuer = values.issuer?.trim().toLowerCase() || "";
-  const docNum = values.documentNumber?.trim().toLowerCase() || "";
-
-  // Match issuer against previously saved issuers
-  if (issuer && !values.issuer) {
-    const matches = previousDocs
-      .filter((d) => d.issuer && d.issuer.trim().toLowerCase() === issuer)
-      .map((d) => d.issuer!.trim());
-    if (matches.length > 0) {
-      const unique = Array.from(new Set(matches));
-      suggestions.push({
-        field: "issuer",
-        value: unique[0],
-        source: `${matches.length} previous document${matches.length > 1 ? "s" : ""}`,
-        confidence: 95,
-      });
-    }
-  }
-
-  // Match document number prefix against previous document numbers
-  if (docNum && !values.documentNumber) {
-    const prefixMatches = previousDocs
-      .filter((d) => d.documentNumber && d.documentNumber.toLowerCase().startsWith(docNum))
-      .map((d) => d.documentNumber!.trim());
-    if (prefixMatches.length > 0) {
-      const unique = Array.from(new Set(prefixMatches));
-      suggestions.push({
-        field: "documentNumber",
-        value: unique[0],
-        source: "matches previous document number",
-        confidence: 90,
-      });
-    }
-  }
-
-  // Suggest category based on title keywords
-  if (title && !values.category) {
-    const keywordMap: Record<string, string> = {
-      passport: "passport",
-      license: "license",
-      insurance: "insurance",
-      certificate: "certificate",
-      visa: "visa",
-      "driver license": "license",
-      "health insurance": "insurance",
-      "car insurance": "insurance",
-      "home insurance": "insurance",
-      "birth certificate": "certificate",
-      "marriage certificate": "certificate",
-      "vaccination": "certificate",
-    };
-    for (const [keyword, category] of Object.entries(keywordMap)) {
-      if (title.includes(keyword)) {
-        suggestions.push({
-          field: "category",
-          value: category,
-          source: `detected "${keyword}" in title`,
-          confidence: 85,
-        });
-        break;
-      }
-    }
-  }
-
-  // Suggest issuer based on title keywords
-  if (title && !values.issuer) {
-    const issuerKeywords: Record<string, string> = {
-      passport: "Department of State",
-      "driver license": "Department of Motor Vehicles",
-      dmv: "Department of Motor Vehicles",
-      "social security": "Social Security Administration",
-      ssa: "Social Security Administration",
-      irs: "Internal Revenue Service",
-      "internal revenue": "Internal Revenue Service",
-      "state farm": "State Farm",
-      geico: "GEICO",
-      allstate: "Allstate",
-      "farmers insurance": "Farmers Insurance",
-    };
-    for (const [keyword, issuerName] of Object.entries(issuerKeywords)) {
-      if (title.includes(keyword)) {
-        suggestions.push({
-          field: "issuer",
-          value: issuerName,
-          source: `detected "${keyword}" in title`,
-          confidence: 80,
-        });
-        break;
-      }
-    }
-  }
-
-  // Suggest notes from previous similar documents
-  if (title && !values.notes) {
-    const similar = previousDocs
-      .filter(
-        (d) =>
-          d.title &&
-          d.title.trim().toLowerCase() === title &&
-          d.notes &&
-          d.notes.trim().length > 0,
-      )
-      .map((d) => d.notes!.trim());
-    if (similar.length > 0) {
-      suggestions.push({
-        field: "notes",
-        value: similar[0],
-        source: "from a previous similar document",
-        confidence: 70,
-      });
-    }
-  }
-
-  // Suggest issue date as today if no value set
-  if (!values.issueDate) {
-    const today = new Date();
-    const yyyy = today.getFullYear();
-    const mm = String(today.getMonth() + 1).padStart(2, "0");
-    const dd = String(today.getDate()).padStart(2, "0");
-    suggestions.push({
-      field: "issueDate",
-      value: `${yyyy}-${mm}-${dd}`,
-      source: "today's date",
-      confidence: 60,
-    });
-  }
-
-  return suggestions
-    .filter((s) => !values[s.field] || (values[s.field] as string).trim() === "")
-    .sort((a, b) => b.confidence - a.confidence);
-}
-
-function applySuggestions(
-  values: DocumentInput,
-  suggestions: Suggestion[],
-): DocumentInput {
-  const next = { ...values };
-  for (const s of suggestions) {
-    if (!next[s.field] || (next[s.field] as string).trim() === "") {
-      (next as any)[s.field] = s.value;
-    }
-  }
-  return next;
-}
-
-function getFillAllSummary(suggestions: Suggestion[]): string {
-  if (suggestions.length === 0) return "No suggestions available";
-  const fields = Array.from(new Set(suggestions.map((s) => s.field)));
-  return `Fill ${fields.length} field${fields.length > 1 ? "s" : ""} from suggestions`;
-}
-
-function ensureFileExtension(name: string, mimeType?: string): string {
-  const ext = getFileExtension(mimeType);
-  if (!ext) return name;
-  const baseName = name.replace(/\.[^/.]+$/, "");
-  return `${baseName}${ext}`;
-}
-
-/* -------------------------------------------------------------------------- */
-/* Sanitizers                                                                 */
-/* -------------------------------------------------------------------------- */
 
 function sanitizeText(value: string, maxLength: number): string {
   return value.replace(/\s+/g, " ").slice(0, maxLength);
@@ -326,1448 +327,1047 @@ function sanitizeDocumentNumber(value: string): string {
     .slice(0, MAX_DOCUMENT_NUMBER_LENGTH);
 }
 
-function sanitizeNotes(value: string): string {
-  return value.slice(0, MAX_NOTES_LENGTH);
+function getFileTypeLabel(mimeType?: string): string {
+  if (!mimeType) return "FILE";
+  if (mimeType === "application/pdf") return "PDF";
+  if (mimeType.startsWith("image/")) {
+    return mimeType.split("/")[1]?.toUpperCase() || "IMAGE";
+  }
+  return "FILE";
 }
 
-/* -------------------------------------------------------------------------- */
-/* Scanned data validation                                                    */
-/* -------------------------------------------------------------------------- */
-
-function normalizeScannedData(
-  extracted: ExtractedDocumentData,
-): ExtractedDocumentData {
-  const rawCategory =
-    typeof extracted.category === "string" && extracted.category.trim() !== ""
-      ? extracted.category.trim()
-      : "other";
-
-  const mappedCategory = formatCategoryForBackend(rawCategory);
-
-  const confidence = Number.isFinite(extracted.confidence)
+function normalizeExtractedData(extracted: any): ExtractedData {
+  const confidence = Number.isFinite(extracted?.confidence)
     ? Math.max(0, Math.min(100, Math.round(extracted.confidence)))
     : 0;
 
-  const authScore = Number.isFinite(extracted.authenticityScore)
+  const authenticityScore = Number.isFinite(extracted?.authenticityScore)
     ? Math.max(0, Math.min(100, Math.round(extracted.authenticityScore)))
     : 0;
 
-  const validAuthenticity =
-    extracted.authenticity === "real" ||
-    extracted.authenticity === "replica" ||
-    extracted.authenticity === "fake"
-      ? extracted.authenticity
-      : authScore >= 80
+  let authenticity: "real" | "replica" | "fake" = extracted?.authenticity;
+
+  if (
+    authenticity !== "real" &&
+    authenticity !== "replica" &&
+    authenticity !== "fake"
+  ) {
+    authenticity =
+      authenticityScore >= 80
         ? "real"
-        : authScore >= 50
+        : authenticityScore >= 50
           ? "replica"
           : "fake";
+  }
 
   return {
-    title: sanitizeText(extracted.title || "", MAX_TITLE_LENGTH),
-    issuer: sanitizeText(extracted.issuer || "", MAX_ISSUER_LENGTH),
-    documentNumber: sanitizeDocumentNumber(extracted.documentNumber || ""),
-    issueDate: isValidDate(extracted.issueDate || "") ? extracted.issueDate : "",
-    expiryDate: isValidDate(extracted.expiryDate || "") ? extracted.expiryDate : "",
-    category: mappedCategory,
+    title: sanitizeText(extracted?.title || "", MAX_TITLE_LENGTH),
+    issuer: sanitizeText(extracted?.issuer || "", MAX_ISSUER_LENGTH),
+    documentNumber: sanitizeDocumentNumber(extracted?.documentNumber || ""),
+    issueDate: extracted?.issueDate || "",
+    expiryDate: extracted?.expiryDate || "",
+    category: extracted?.category || "other",
     confidence,
-    authenticity: validAuthenticity,
-    authenticityScore: authScore,
-    authenticityReason: extracted.authenticityReason || "",
+    authenticity,
+    authenticityScore,
+    authenticityReason: extracted?.authenticityReason || "",
   };
 }
 
-/* -------------------------------------------------------------------------- */
-/* Validation                                                                 */
-/* -------------------------------------------------------------------------- */
-
-function validate(values: DocumentInput): Partial<Record<keyof DocumentInput, string>> {
-  const result = validateSchema(documentSchema, values);
-  if (result.success) {
-    return {};
-  }
-  return result.errors as Partial<Record<keyof DocumentInput, string>>;
-}
-
-/* -------------------------------------------------------------------------- */
-/* API                                                                        */
-/* -------------------------------------------------------------------------- */
-
-async function saveDocument(
-  values: DocumentInput,
-  file: { name: string; uri: string; size: number; mimeType?: string } | null,
-) {
-  const token = await getStoredToken();
-
-const payload: Record<string, any> = {
-    title: values.title.trim(),
-    category: formatCategoryForBackend(values.category),
-    issuer: values.issuer.trim(),
-    documentNumber: values.documentNumber.trim().toUpperCase(),
-    issueDate: values.issueDate,
-    expiryDate: values.expiryDate,
-    notes: values.notes?.trim() || "",
-    status: "active",
-    enableAlerts: true,
-    processingStatus: "pending",
-    needsSync: !!token,
-  };
-
-  let localId: number | null = null;
-
-  if (file) {
-    payload.processingStatus = "uploading";
-    localId = await createDocument(payload);
-
-    try {
-      const uploadUrlRes = await fetch(
-        `${API_BASE_URL}/documents/upload-url?fileName=${encodeURIComponent(file.name)}&fileType=${encodeURIComponent(file.mimeType || "application/octet-stream")}`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        },
-      );
-
-      if (!uploadUrlRes.ok) {
-        const errData = await uploadUrlRes.json().catch(() => ({}));
-        throw new Error(errData?.error || "Failed to get upload URL.");
-      }
-
-      const uploadUrlData = await uploadUrlRes.json();
-
-      const uploadRes = await fetch(uploadUrlData.uploadUrl, {
-        method: "PUT",
-        body: await (await fetch(file.uri)).blob(),
-        headers: {
-          "Content-Type": file.mimeType || "application/octet-stream",
-        },
-      });
-
-      if (!uploadRes.ok) {
-        throw new Error("Failed to upload file to S3.");
-      }
-
-      payload.fileUrl = uploadUrlData.fileUrl;
-      payload.fileType = file.mimeType || "application/octet-stream";
-      payload.s3Key = uploadUrlData.s3Key;
-      payload.processingStatus = "processing";
-
-      await updateDocument(localId, payload);
-      return { id: localId, ...payload };
-    } catch (uploadErr: any) {
-      if (localId) {
-        await updateDocument(localId, {
-          processingStatus: "failed",
-          notes: `${values.notes}\n\nUpload error: ${uploadErr.message}`,
-        });
-      }
-      throw uploadErr;
-    }
-  }
-
-  localId = await createDocument(payload);
-  await logDocumentAction(localId, "created", payload);
-  return { id: localId, ...payload };
-}
-
-/* -------------------------------------------------------------------------- */
-/* Error Summary Banner Component                                             */
-/* -------------------------------------------------------------------------- */
-
-type ErrorBannerProps = {
-  errors: Record<string, string>;
-  serverError?: string | null;
-};
-
-function ErrorBanner({ errors, serverError }: ErrorBannerProps) {
-  const errorCount = Object.keys(errors).length;
-
-  if (errorCount === 0 && !serverError) return null;
-
-  return (
-    <View style={bannerStyles.container}>
-      <Ionicons
-        name="alert-circle"
-        size={20}
-        color={COLORS.danger}
-        style={bannerStyles.icon}
-      />
-      <View style={bannerStyles.content}>
-        <Text style={bannerStyles.title}>
-          {serverError
-            ? "Submission Error"
-            : `Please fix ${errorCount} error${errorCount > 1 ? "s" : ""} below:`}
-        </Text>
-        <Text style={bannerStyles.message}>
-          {serverError ||
-            "Some required fields are missing or contain invalid formats."}
-        </Text>
-      </View>
-    </View>
-  );
-}
-
-const bannerStyles = StyleSheet.create({
-  container: {
-    flexDirection: "row",
-    backgroundColor: "#FEE2E2",
-    borderWidth: 1,
-    borderColor: "#EF4444",
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 16,
-    alignItems: "center",
-  },
-  icon: { marginRight: 10 },
-  content: { flex: 1 },
-  title: { fontSize: 14, fontWeight: "700", color: "#991B1B", marginBottom: 2 },
-  message: { fontSize: 12, color: "#B91C1C" },
-});
-
-/* -------------------------------------------------------------------------- */
-/* Reusable local field                                                       */
-/* -------------------------------------------------------------------------- */
-
-type FieldProps = {
+interface FieldProps {
   label: string;
   value: string;
   placeholder?: string;
-  error?: string;
   required?: boolean;
-  maxLength?: number;
+  onChangeText: (text: string) => void;
   multiline?: boolean;
-  keyboardType?: "default" | "number-pad";
-  autoCapitalize?: "none" | "sentences" | "words" | "characters";
-  autoCorrect?: boolean;
-  autoComplete?: string;
-  onChangeText: (value: string) => void;
-  onBlur?: () => void;
-};
+  keyboardType?:
+    | "default"
+    | "number-pad"
+    | "decimal-pad"
+    | "numeric"
+    | "email-address"
+    | "phone-pad";
+}
 
 function Field({
   label,
   value,
   placeholder,
-  error,
   required = false,
-  maxLength,
+  onChangeText,
   multiline = false,
   keyboardType = "default",
-  autoCapitalize = "sentences",
-  autoCorrect = true,
-  onChangeText,
-  onBlur,
-  autoComplete,
 }: FieldProps) {
   return (
-    <View style={styles.fieldContainer}>
+    <View style={styles.field}>
       <Text style={styles.fieldLabel}>
         {label}
-        {required && <Text style={styles.required}> *</Text>}
+        {required ? <Text style={styles.required}> *</Text> : null}
       </Text>
-
       <TextInput
         value={value}
         placeholder={placeholder}
-        placeholderTextColor="#999"
+        placeholderTextColor="#9CA3AF"
         onChangeText={onChangeText}
-        onBlur={onBlur}
-        maxLength={maxLength}
         multiline={multiline}
         keyboardType={keyboardType}
-        autoCapitalize={autoCapitalize}
-        autoCorrect={autoCorrect}
-        autoComplete={autoComplete as any}
+        autoCapitalize="sentences"
+        autoCorrect={false}
         textAlignVertical={multiline ? "top" : "center"}
-        style={[
-          styles.input,
-          multiline && styles.multilineInput,
-          error && styles.inputError,
-        ]}
+        style={[styles.input, multiline ? styles.multilineInput : null]}
       />
+    </View>
+  );
+}
 
-      <View style={styles.fieldFooter}>
-        {error ? <Text style={styles.errorText}>{error}</Text> : <View />}
-        {maxLength ? (
-          <Text style={styles.counterText}>
-            {value.length}/{maxLength}
-          </Text>
-        ) : null}
+function StepHeader({ step }: { step: number }) {
+  return (
+    <View style={styles.stepHeader}>
+      <Text style={styles.stepLabel}>
+        STEP {step + 1} OF {STEPS.length}
+      </Text>
+      <Text style={styles.stepTitle}>{STEPS[step]}</Text>
+      <View style={styles.progressRow}>
+        {STEPS.map((item, index) => (
+          <View
+            key={item}
+            style={[
+              styles.progressSegment,
+              index <= step ? styles.progressSegmentActive : null,
+            ]}
+          />
+        ))}
       </View>
     </View>
   );
 }
 
-/* -------------------------------------------------------------------------- */
-/* Screen                                                                     */
-/* -------------------------------------------------------------------------- */
-
 export default function AddDocumentScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams();
-  const [checkingAuthentication, setCheckingAuthentication] = useState(true);
-  const [datePicker, setDatePicker] = useState<DateField | null>(null);
-  const [submitError, setSubmitError] = useState<string | null>(null);
-  const [selectedFile, setSelectedFile] = useState<{
-    name: string;
-    uri: string;
-    size: number;
-    mimeType?: string;
-  } | null>(null);
-  const [uploading, setUploading] = useState(false);
+
+  const [step, setStep] = useState<number>(0);
+
+  const [documentType, setDocumentType] = useState<
+    "legal" | "non-legal" | null
+  >(null);
+  const [category, setCategory] = useState<CategoryItem | null>(null);
+  const [specificDocument, setSpecificDocument] =
+    useState<SpecificDocumentItem | null>(null);
+
+  const [title, setTitle] = useState<string>("");
+  const [documentNumber, setDocumentNumber] = useState<string>("");
+  const [issuer, setIssuer] = useState<string>("");
+  const [issueDate, setIssueDate] = useState<string>("");
+  const [expiryDate, setExpiryDate] = useState<string>("");
+  const [notes, setNotes] = useState<string>("");
+
+  const [selectedFile, setSelectedFile] = useState<SelectedFileItem | null>(
+    null,
+  );
+  const [scannerVisible, setScannerVisible] = useState<boolean>(false);
+
+  const [ocrLoading, setOcrLoading] = useState<boolean>(false);
+  const [extractedData, setExtractedData] = useState<ExtractedData | null>(
+    null,
+  );
+  const [datePicker, setDatePicker] = useState<
+    "issueDate" | "expiryDate" | null
+  >(null);
+  const [saving, setSaving] = useState<boolean>(false);
+
   const [toast, setToast] = useState<{
     visible: boolean;
     message: string;
-    type: ToastType;
-  }>({ visible: false, message: "", type: "success" });
-  const [showScanner, setShowScanner] = useState(false);
-  const [scannerPreview, setScannerPreview] = useState<string | null>(null);
-  const [ocrLoading, setOcrLoading] = useState(false);
-  const [scannedData, setScannedData] = useState<{
-    title: string;
-    issuer: string;
-    documentNumber: string;
-    issueDate: string;
-    expiryDate: string;
-    category: string;
-    confidence: number;
-    authenticity: "real" | "replica" | "fake";
-    authenticityScore: number;
-    authenticityReason: string;
-  } | null>(null);
-  const [previousDocs, setPreviousDocs] = useState<
-    Array<{
-      title?: string;
-      issuer?: string;
-      documentNumber?: string;
-      category?: string;
-      issueDate?: string;
-      expiryDate?: string;
-      notes?: string;
-    }>
-  >([]);
-  const [userProfile, setUserProfile] = useState<{ name?: string; email?: string } | null>(null);
-  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
-  const [showSuggestions, setShowSuggestions] = useState(false);
-  const [fillAllApplied, setFillAllApplied] = useState(false);
+    type: "success" | "warning" | "error";
+  }>({
+    visible: false,
+    message: "",
+    type: "success",
+  });
 
-  const processScannedData = async () => {
-    const scannedUri = params.scannedImageUri as string | undefined;
-    if (!scannedUri) return;
+  const categories = useMemo(() => {
+    if (documentType === "legal") return LEGAL_CATEGORIES;
+    if (documentType === "non-legal") return NON_LEGAL_CATEGORIES;
+    return [];
+  }, [documentType]);
 
-    setOcrLoading(true);
-    try {
-      const extracted = normalizeScannedData(await extractDocumentData(scannedUri));
-      setScannedData(extracted);
-      setScannerPreview(scannedUri);
-
-      setTimeout(() => {
-        form.handleChange("title")(extracted.title);
-        form.handleChange("issuer")(extracted.issuer);
-        form.handleChange("documentNumber")(extracted.documentNumber);
-        if (extracted.issueDate) {
-          form.handleChange("issueDate")(extracted.issueDate);
-        }
-        if (extracted.expiryDate) {
-          form.handleChange("expiryDate")(extracted.expiryDate);
-        }
-        form.handleChange("category")(extracted.category);
-      }, 300);
-    } catch (err) {
-      console.error("OCR extraction failed:", err);
-    } finally {
-      setOcrLoading(false);
-    }
-  };
+  const specificDocuments = useMemo(() => {
+    if (!category) return [];
+    return DOCUMENTS_BY_CATEGORY[category.id] || [];
+  }, [category]);
 
   useEffect(() => {
-    processScannedData();
-  }, [params.scannedImageUri]);
+    if (specificDocument) {
+      setTitle(specificDocument.title);
+      if (specificDocument.defaultIssuer) {
+        setIssuer(specificDocument.defaultIssuer);
+      }
+    }
+  }, [specificDocument]);
 
-  const pickDocument = async () => {
+  function showToast(
+    message: string,
+    type: "success" | "warning" | "error" = "success",
+  ) {
+    setToast({ visible: true, message, type });
+  }
+
+  function selectDocumentType(type: "legal" | "non-legal") {
+    setDocumentType(type);
+    setCategory(null);
+    setSpecificDocument(null);
+    setTimeout(() => setStep(1), 150);
+  }
+
+  function selectCategory(item: CategoryItem) {
+    setCategory(item);
+    setSpecificDocument(null);
+    setTimeout(() => setStep(2), 150);
+  }
+
+  function selectSpecificDocument(item: SpecificDocumentItem) {
+    setSpecificDocument(item);
+    setTitle(item.title);
+    if (item.defaultIssuer) {
+      setIssuer(item.defaultIssuer);
+    }
+    setTimeout(() => setStep(3), 150);
+  }
+
+  async function pickDocument() {
     try {
       const result = await DocumentPicker.getDocumentAsync({
         type: ["application/pdf", "image/*"],
         copyToCacheDirectory: true,
       });
 
-      if (!result.canceled && result.assets?.[0]) {
-        const asset = result.assets[0];
-        setSelectedFile({
-          name: asset.name,
-          uri: asset.uri,
-          size: asset.size || 0,
-          mimeType: asset.mimeType,
-        });
-      }
-    } catch (err) {
-      Alert.alert("Error", "Could not select file. Please try again.");
-    }
-  };
+      if (result.canceled || !result.assets?.[0]) return;
 
-  const loadSuggestionData = async () => {
+      const asset = result.assets[0];
+      setSelectedFile({
+        name: asset.name,
+        uri: asset.uri,
+        size: asset.size || 0,
+        mimeType: asset.mimeType ?? undefined,
+      });
+
+      setStep(5);
+      showToast("Document uploaded. Ready for review.", "success");
+    } catch (error) {
+      Alert.alert(
+        "Upload Error",
+        "Could not select the document. Please try again.",
+      );
+    }
+  }
+
+  async function processScan(uri: string) {
+    setOcrLoading(true);
+
     try {
-      const [docs, profile] = await Promise.all([
-        getAllDocuments(),
-        getUserProfile(),
-      ]);
-      setPreviousDocs(
-        docs.map((d) => ({
-          title: d.title,
-          issuer: d.issuer,
-          documentNumber: d.documentNumber,
-          category: d.category,
-          issueDate: d.issueDate,
-          expiryDate: d.expiryDate,
-          notes: d.notes,
-        })),
+      const raw = await extractDocumentData(uri);
+      const extracted = normalizeExtractedData(raw);
+
+      setExtractedData(extracted);
+
+      if (extracted.title) setTitle(extracted.title);
+      if (extracted.documentNumber) setDocumentNumber(extracted.documentNumber);
+      if (extracted.issuer) setIssuer(extracted.issuer);
+      if (extracted.issueDate) setIssueDate(extracted.issueDate);
+      if (extracted.expiryDate) setExpiryDate(extracted.expiryDate);
+
+      setStep(5);
+      showToast(
+        `Document scanned successfully (${extracted.confidence}% confidence)`,
+        "success",
       );
-      setUserProfile(
-        profile
-          ? { name: profile.name, email: profile.email }
-          : null,
+    } catch (error) {
+      showToast(
+        "The document was scanned, but information could not be extracted.",
+        "warning",
       );
-    } catch (err) {
-      console.error("Failed to load suggestion data:", err);
+      setStep(5);
+    } finally {
+      setOcrLoading(false);
     }
-  };
+  }
 
-  const computeSuggestions = () => {
-    const next = buildSuggestions(form.values, previousDocs, userProfile);
-    setSuggestions(next);
-    return next;
-  };
+  async function handleScanSuccess(data: { uri: string }) {
+    setScannerVisible(false);
+    setSelectedFile({
+      name: "Scanned Document",
+      uri: data.uri,
+      size: 0,
+      mimeType: "image/jpeg",
+    });
+    await processScan(data.uri);
+  }
 
-  const refreshSuggestions = () => {
-    const next = computeSuggestions();
-    setShowSuggestions(next.length > 0);
-    return next;
-  };
-
-  const applySuggestion = (suggestion: Suggestion) => {
-    setSubmitError(null);
-    form.handleChange(suggestion.field)(suggestion.value);
-    setSuggestions((prev) => prev.filter((s) => s.field !== suggestion.field));
-    setFillAllApplied(false);
-    showToast(
-      `Applied ${suggestion.field} from ${suggestion.source}`,
-      "success",
-    );
-  };
-
-  const applyFillAll = () => {
-    const next = computeSuggestions();
-    if (next.length === 0) {
-      showToast("No suggestions available right now", "info");
-      return;
-    }
-    setSubmitError(null);
-    for (const s of next) {
-      form.handleChange(s.field)(s.value);
-    }
-    setSuggestions([]);
-    setFillAllApplied(true);
-    showToast(
-      `Filled ${next.length} field${next.length > 1 ? "s" : ""} from suggestions`,
-      "success",
-    );
-  };
-
-  const dismissSuggestions = () => {
-    setShowSuggestions(false);
-    setSuggestions([]);
-  };
-
-  const showToast = (message: string, type: ToastType = "success") => {
-    setToast({ visible: true, message, type });
-  };
-
-  const removeSelectedFile = () => {
-    setSelectedFile(null);
-  };
-
-const form = useForm<DocumentInput>({
-    initialValues: {
-      title: "",
-      category: "other",
-      issuer: "",
-      documentNumber: "",
-      issueDate: "",
-      expiryDate: "",
-      notes: "",
-      enableAlerts: true,
-      status: "active",
-      processingStatus: "completed",
-      riskScore: 0,
-      riskLevel: "Low",
-      fileUrl: null,
-      fileType: null,
-      s3Key: null,
-    },
-    validate,
-    onSubmit: async (values) => {
-       setSubmitError(null);
-       try {
-         await saveDocument(values, selectedFile);
-
-         Alert.alert("Success", "Document added to your vault.", [
-           {
-             text: "OK",
-             onPress: () => router.replace("/(tabs)/documents" as any),
-           },
-         ]);
-         setToast({
-           visible: true,
-           message: "Document added to your vault successfully",
-           type: "success",
-         });
-       } catch (error: unknown) {
-         const message =
-           error instanceof Error
-             ? error.message
-             : "Could not save document.";
-         setSubmitError(message);
-       }
-     },
-   });
-
-  useEffect(() => {
-    let mounted = true;
-
-    async function checkAuthentication() {
-      try {
-        const token = await getStoredToken();
-        if (!token && mounted) {
-          Alert.alert(
-            "Authentication Required",
-            "Please sign in to add a document.",
-            [
-              {
-                text: "Sign In",
-                onPress: () => router.replace("/login" as any),
-              },
-            ],
-          );
-        }
-      } catch (err) {
-        // Handle read failure silently or with standard fallback
-      } finally {
-        if (mounted) {
-          setCheckingAuthentication(false);
-        }
-      }
-    }
-
-    checkAuthentication();
-
-    return () => {
-      mounted = false;
-    };
-  }, [router]);
-
-  useEffect(() => {
-    loadSuggestionData();
-  }, []);
-
-  useEffect(() => {
-    // Refresh suggestions whenever form values change
-    if (!form.values.title && !form.values.issuer && !form.values.documentNumber) {
-      setSuggestions([]);
-      setShowSuggestions(false);
-      return;
-    }
-    const timer = setTimeout(() => {
-      const next = computeSuggestions();
-      setSuggestions(next);
-      setShowSuggestions(next.length > 0);
-    }, 250);
-    return () => clearTimeout(timer);
-  }, [
-    form.values.title,
-    form.values.issuer,
-    form.values.documentNumber,
-    form.values.category,
-    form.values.issueDate,
-    form.values.expiryDate,
-    form.values.notes,
-  ]);
-
-  function openDatePicker(field: DateField) {
+  function openDatePicker(field: "issueDate" | "expiryDate") {
     setDatePicker(field);
   }
 
   function handleDateChange(event: DateTimePickerEvent, selectedDate?: Date) {
-    const currentTargetField = datePicker;
-
-    if (event.type === "dismissed" || !selectedDate || !currentTargetField) {
+    if (event.type === "dismissed" || !selectedDate) {
       setDatePicker(null);
       return;
     }
 
-    const dateString = formatDate(selectedDate);
-    setSubmitError(null);
-    form.handleChange(currentTargetField)(dateString);
+    const value = formatDate(selectedDate);
+    if (datePicker === "issueDate") setIssueDate(value);
+    if (datePicker === "expiryDate") setExpiryDate(value);
 
     if (Platform.OS === "android") {
-      form.handleBlur(currentTargetField);
       setDatePicker(null);
     }
   }
 
-  function getPickerValue(): Date {
-    if (datePicker === "issueDate") {
-      return parseDate(form.values.issueDate) || getToday();
+  function validateInformation(): boolean {
+    if (!title.trim()) {
+      Alert.alert("Missing Information", "Please enter the document name.");
+      return false;
     }
-    return parseDate(form.values.expiryDate) || getTomorrow();
+    if (!documentNumber.trim()) {
+      Alert.alert("Missing Information", "Please enter the document number.");
+      return false;
+    }
+    if (!issuer.trim()) {
+      Alert.alert("Missing Information", "Please enter the issuing agency.");
+      return false;
+    }
+    if (!issueDate) {
+      Alert.alert("Missing Information", "Please select the issue date.");
+      return false;
+    }
+    if (!expiryDate) {
+      Alert.alert("Missing Information", "Please select the expiration date.");
+      return false;
+    }
+    return true;
   }
 
-  if (checkingAuthentication) {
+  async function saveDocument() {
+    if (!validateInformation()) {
+      setStep(3);
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      const token = await getStoredToken();
+      const payload = {
+        title: title.trim(),
+        category: formatCategoryForBackend(
+          specificDocument?.category || category?.id || "other",
+        ),
+        issuer: issuer.trim(),
+        documentNumber: documentNumber.trim().toUpperCase(),
+        issueDate,
+        expiryDate,
+        notes: notes.trim(),
+        status: "active",
+        enableAlerts: true,
+        processingStatus: selectedFile ? "processing" : "completed",
+        needsSync: !!token,
+        fileType: selectedFile?.mimeType ?? undefined, // Fixed null conversion
+      };
+
+      const localId = await createDocument(payload);
+      await logDocumentAction(localId, "created", payload);
+
+      setSaving(false);
+
+      Alert.alert(
+        "Document Added",
+        `${title} has been successfully added to your document vault.`,
+        [
+          {
+            text: "View Documents",
+            onPress: () => router.replace("/(tabs)/documents"),
+          },
+        ],
+      );
+    } catch (error) {
+      setSaving(false);
+      const message =
+        error instanceof Error ? error.message : "Could not save the document.";
+      Alert.alert("Save Failed", message);
+    }
+  }
+
+  function goBackStep() {
+    if (step === 0) {
+      router.back();
+      return;
+    }
+    setStep((current) => current - 1);
+  }
+
+  function renderTypeStep() {
     return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.loadingContainer}>
-          <Text style={styles.loadingText}>Checking authentication...</Text>
+      <View>
+        <Text style={styles.questionTitle}>What type of document is this?</Text>
+        <Text style={styles.questionSubtitle}>
+          Start by choosing whether the document is legal or non-legal.
+        </Text>
+
+        <TouchableOpacity
+          style={styles.largeChoice}
+          onPress={() => selectDocumentType("legal")}
+        >
+          <View style={styles.choiceIcon}>
+            <Ionicons
+              name="shield-checkmark-outline"
+              size={30}
+              color={COLORS.primary}
+            />
+          </View>
+          <View style={styles.choiceContent}>
+            <Text style={styles.choiceTitle}>Legal Document</Text>
+            <Text style={styles.choiceDescription}>
+              Government IDs, certificates, contracts, permits and other legal
+              records.
+            </Text>
+          </View>
+          <Ionicons
+            name="chevron-forward"
+            size={22}
+            color={COLORS.textSecondary}
+          />
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.largeChoice}
+          onPress={() => selectDocumentType("non-legal")}
+        >
+          <View style={styles.choiceIcon}>
+            <Ionicons
+              name="folder-open-outline"
+              size={30}
+              color={COLORS.primary}
+            />
+          </View>
+          <View style={styles.choiceContent}>
+            <Text style={styles.choiceTitle}>Non-Legal Document</Text>
+            <Text style={styles.choiceDescription}>
+              Education, employment, personal and other useful documents.
+            </Text>
+          </View>
+          <Ionicons
+            name="chevron-forward"
+            size={22}
+            color={COLORS.textSecondary}
+          />
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  function renderCategoryStep() {
+    return (
+      <View>
+        <Text style={styles.questionTitle}>Select a category</Text>
+        <Text style={styles.questionSubtitle}>
+          Choose the category that best describes your document.
+        </Text>
+
+        {categories.map((item) => (
+          <TouchableOpacity
+            key={item.id}
+            style={styles.categoryCard}
+            onPress={() => selectCategory(item)}
+          >
+            <View style={styles.categoryIcon}>
+              <Ionicons name={item.icon} size={25} color={COLORS.primary} />
+            </View>
+            <View style={styles.choiceContent}>
+              <Text style={styles.choiceTitle}>{item.title}</Text>
+              <Text style={styles.choiceDescription}>{item.description}</Text>
+            </View>
+            <Ionicons
+              name="chevron-forward"
+              size={22}
+              color={COLORS.textSecondary}
+            />
+          </TouchableOpacity>
+        ))}
+      </View>
+    );
+  }
+
+  function renderSpecificDocumentStep() {
+    return (
+      <View>
+        <Text style={styles.questionTitle}>Select your document</Text>
+        <Text style={styles.questionSubtitle}>
+          Choose the specific document you want to add.
+        </Text>
+
+        {specificDocuments.map((item) => (
+          <TouchableOpacity
+            key={item.id}
+            style={styles.documentChoice}
+            onPress={() => selectSpecificDocument(item)}
+          >
+            <View style={styles.documentChoiceIcon}>
+              <Ionicons name={item.icon} size={24} color={COLORS.primary} />
+            </View>
+            <View style={styles.choiceContent}>
+              <Text style={styles.choiceTitle}>{item.title}</Text>
+              <Text style={styles.choiceDescription}>{item.description}</Text>
+            </View>
+            <Ionicons
+              name="chevron-forward"
+              size={22}
+              color={COLORS.textSecondary}
+            />
+          </TouchableOpacity>
+        ))}
+      </View>
+    );
+  }
+
+  function renderInformationStep() {
+    return (
+      <View>
+        <Text style={styles.questionTitle}>Document Information</Text>
+        <Text style={styles.questionSubtitle}>
+          Enter the document details. Information extracted during scanning will
+          automatically appear here.
+        </Text>
+
+        <Field
+          label="Document Name"
+          value={title}
+          placeholder="e.g. Philippine Passport"
+          required
+          onChangeText={(value) =>
+            setTitle(sanitizeText(value, MAX_TITLE_LENGTH))
+          }
+        />
+
+        <Field
+          label="Document Number"
+          value={documentNumber}
+          placeholder="e.g. P1234567"
+          required
+          onChangeText={(value) =>
+            setDocumentNumber(sanitizeDocumentNumber(value))
+          }
+        />
+
+        <Field
+          label="Issuing Agency"
+          value={issuer}
+          placeholder="e.g. Department of Foreign Affairs"
+          required
+          onChangeText={(value) =>
+            setIssuer(sanitizeText(value, MAX_ISSUER_LENGTH))
+          }
+        />
+
+        <View style={styles.field}>
+          <Text style={styles.fieldLabel}>
+            Issue Date
+            <Text style={styles.required}> *</Text>
+          </Text>
+          <TouchableOpacity
+            style={styles.dateButton}
+            onPress={() => openDatePicker("issueDate")}
+          >
+            <Ionicons
+              name="calendar-outline"
+              size={22}
+              color={COLORS.primary}
+            />
+            <Text style={issueDate ? styles.dateText : styles.datePlaceholder}>
+              {issueDate || "Select issue date"}
+            </Text>
+            <Ionicons name="chevron-forward" size={18} color="#999" />
+          </TouchableOpacity>
         </View>
-      </SafeAreaView>
+
+        <View style={styles.field}>
+          <Text style={styles.fieldLabel}>
+            Expiration Date
+            <Text style={styles.required}> *</Text>
+          </Text>
+          <TouchableOpacity
+            style={styles.dateButton}
+            onPress={() => openDatePicker("expiryDate")}
+          >
+            <Ionicons
+              name="calendar-outline"
+              size={22}
+              color={COLORS.primary}
+            />
+            <Text style={expiryDate ? styles.dateText : styles.datePlaceholder}>
+              {expiryDate || "Select expiration date"}
+            </Text>
+            <Ionicons name="chevron-forward" size={18} color="#999" />
+          </TouchableOpacity>
+        </View>
+
+        <Field
+          label="Notes"
+          value={notes}
+          placeholder="Optional notes"
+          multiline
+          onChangeText={(value) => setNotes(value.slice(0, MAX_NOTES_LENGTH))}
+        />
+
+        <TouchableOpacity
+          style={styles.primaryButton}
+          onPress={() => {
+            if (validateInformation()) {
+              setStep(4);
+            }
+          }}
+        >
+          <Text style={styles.primaryButtonText}>Continue to Scan</Text>
+          <Ionicons name="arrow-forward" size={20} color="#fff" />
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  function renderScanStep() {
+    return (
+      <View>
+        <Text style={styles.questionTitle}>Scan or Upload</Text>
+        <Text style={styles.questionSubtitle}>
+          Scan the document with your camera or upload an existing PDF or image.
+        </Text>
+
+        <TouchableOpacity
+          style={styles.scanOption}
+          onPress={() => setScannerVisible(true)}
+        >
+          <View style={styles.scanIcon}>
+            <Ionicons name="camera-outline" size={34} color={COLORS.primary} />
+          </View>
+          <View style={styles.choiceContent}>
+            <Text style={styles.choiceTitle}>Scan Document</Text>
+            <Text style={styles.choiceDescription}>
+              Use your camera to capture the document.
+            </Text>
+          </View>
+          <Ionicons
+            name="chevron-forward"
+            size={22}
+            color={COLORS.textSecondary}
+          />
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.scanOption} onPress={pickDocument}>
+          <View style={styles.scanIcon}>
+            <Ionicons
+              name="cloud-upload-outline"
+              size={34}
+              color={COLORS.primary}
+            />
+          </View>
+          <View style={styles.choiceContent}>
+            <Text style={styles.choiceTitle}>Upload File</Text>
+            <Text style={styles.choiceDescription}>
+              Select a PDF or image from your device.
+            </Text>
+          </View>
+          <Ionicons
+            name="chevron-forward"
+            size={22}
+            color={COLORS.textSecondary}
+          />
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.skipButton} onPress={() => setStep(5)}>
+          <Text style={styles.skipButtonText}>Continue without scanning</Text>
+        </TouchableOpacity>
+
+        {selectedFile ? (
+          <View style={styles.filePreview}>
+            <Ionicons
+              name={
+                selectedFile.mimeType === "application/pdf"
+                  ? "document-text-outline"
+                  : "image-outline"
+              }
+              size={25}
+              color={COLORS.primary}
+            />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.fileName} numberOfLines={1}>
+                {selectedFile.name}
+              </Text>
+              <Text style={styles.fileType}>
+                {getFileTypeLabel(selectedFile.mimeType)}
+              </Text>
+            </View>
+            <TouchableOpacity onPress={() => setSelectedFile(null)}>
+              <Ionicons name="close-circle" size={23} color={COLORS.danger} />
+            </TouchableOpacity>
+          </View>
+        ) : null}
+      </View>
+    );
+  }
+
+  function renderReviewStep() {
+    return (
+      <View>
+        <Text style={styles.questionTitle}>Review Information</Text>
+        <Text style={styles.questionSubtitle}>
+          Check the extracted information before saving the document.
+        </Text>
+
+        {selectedFile?.uri && selectedFile.mimeType?.startsWith("image/") ? (
+          <View style={styles.previewCard}>
+            <Image
+              source={{ uri: selectedFile.uri }}
+              style={styles.previewImage}
+              resizeMode="contain"
+            />
+          </View>
+        ) : null}
+
+        {extractedData ? (
+          <View style={styles.extractionCard}>
+            <View style={styles.extractionHeader}>
+              <Ionicons name="sparkles" size={20} color={COLORS.primary} />
+              <Text style={styles.extractionTitle}>Automatic Extraction</Text>
+            </View>
+            <View style={styles.confidenceRow}>
+              <Text style={styles.confidenceLabel}>Extraction confidence</Text>
+              <Text style={styles.confidenceValue}>
+                {extractedData.confidence}%
+              </Text>
+            </View>
+          </View>
+        ) : null}
+
+        <Field
+          label="Document Name"
+          value={title}
+          required
+          placeholder="Document Name"
+          onChangeText={(value) =>
+            setTitle(sanitizeText(value, MAX_TITLE_LENGTH))
+          }
+        />
+
+        <Field
+          label="Document Number"
+          value={documentNumber}
+          required
+          placeholder="Document Number"
+          onChangeText={(value) =>
+            setDocumentNumber(sanitizeDocumentNumber(value))
+          }
+        />
+
+        <Field
+          label="Issuing Agency"
+          value={issuer}
+          required
+          placeholder="Issuing Agency"
+          onChangeText={(value) =>
+            setIssuer(sanitizeText(value, MAX_ISSUER_LENGTH))
+          }
+        />
+
+        <TouchableOpacity style={styles.editButton} onPress={() => setStep(3)}>
+          <Ionicons name="create-outline" size={20} color={COLORS.primary} />
+          <Text style={styles.editButtonText}>Edit Details Manually</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.primaryButton, saving && { opacity: 0.7 }]}
+          onPress={saveDocument}
+          disabled={saving}
+        >
+          {saving ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <>
+              <Text style={styles.primaryButtonText}>Save Document</Text>
+              <Ionicons name="checkmark" size={20} color="#fff" />
+            </>
+          )}
+        </TouchableOpacity>
+      </View>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container} edges={["top", "left", "right"]}>
+    <SafeAreaView style={styles.container}>
       <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        style={{ flex: 1 }}
       >
-        <ScrollView
-          contentContainerStyle={styles.content}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
-          <View style={styles.header}>
-            <TouchableOpacity
-              onPress={() => router.back()}
-              hitSlop={10}
-              accessibilityRole="button"
-              accessibilityLabel="Go back"
-            >
-              <Ionicons name="chevron-back" size={28} color={COLORS.primary} />
-            </TouchableOpacity>
-
-            <Text style={styles.headerTitle}>Add Document</Text>
-
-            <View style={styles.headerSpacer} />
-          </View>
-
-          <Card>
-            <ErrorBanner errors={form.errors} serverError={submitError} />
-
-            <Field
-              label="Document Title"
-              required
-              placeholder="e.g. US Passport"
-              value={form.values.title}
-              onChangeText={(value) => {
-                setSubmitError(null);
-                form.handleChange("title")(
-                  sanitizeText(value, MAX_TITLE_LENGTH),
-                );
-              }}
-              onBlur={form.handleBlur("title")}
-              maxLength={MAX_TITLE_LENGTH}
-              autoCapitalize="words"
-              autoCorrect={false}
-              autoComplete="off"
-              error={form.touched.title ? form.errors.title : undefined}
-            />
-
-            <View style={styles.fieldContainer}>
-              <Text style={styles.fieldLabel}>
-                Category
-                <Text style={styles.required}> *</Text>
-              </Text>
-
-              <View style={styles.categoryContainer}>
-                {Object.entries(DOCUMENT_CATEGORIES).map(
-                  ([key, categoryData]) => {
-                    const selected = form.values.category === key;
-                    const labelText =
-                      typeof categoryData === "string"
-                        ? categoryData
-                        : (categoryData as any)?.label || key;
-
-                    return (
-                      <TouchableOpacity
-                        key={key}
-                        onPress={() => {
-                          setSubmitError(null);
-                          form.handleChange("category")(key);
-                        }}
-                        style={[
-                          styles.categoryOption,
-                          selected && styles.categoryOptionActive,
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            styles.categoryText,
-                            selected && styles.categoryTextActive,
-                          ]}
-                        >
-                          {labelText}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  },
-                )}
-              </View>
-            </View>
-
-            <Field
-              label="Issuer / Organization"
-              required
-              placeholder="e.g. Department of Foreign Affairs"
-              value={form.values.issuer}
-              onChangeText={(value) => {
-                setSubmitError(null);
-                form.handleChange("issuer")(
-                  sanitizeText(value, MAX_ISSUER_LENGTH),
-                );
-              }}
-              onBlur={form.handleBlur("issuer")}
-              maxLength={MAX_ISSUER_LENGTH}
-              autoCapitalize="words"
-              autoCorrect={false}
-              error={form.touched.issuer ? form.errors.issuer : undefined}
-            />
-
-            <Field
-              label="Document Number"
-              required
-              placeholder="e.g. N12345678"
-              value={form.values.documentNumber}
-              onChangeText={(value) => {
-                setSubmitError(null);
-                form.handleChange("documentNumber")(
-                  sanitizeDocumentNumber(value),
-                );
-              }}
-              onBlur={form.handleBlur("documentNumber")}
-              maxLength={MAX_DOCUMENT_NUMBER_LENGTH}
-              autoCapitalize="characters"
-              autoCorrect={false}
-              error={
-                form.touched.documentNumber
-                  ? form.errors.documentNumber
-                  : undefined
-              }
-            />
-
-            <View style={styles.fieldContainer}>
-              <Text style={styles.fieldLabel}>
-                Issue Date
-                <Text style={styles.required}> *</Text>
-              </Text>
-
-              <TouchableOpacity
-                style={[
-                  styles.dateButton,
-                  form.touched.issueDate &&
-                    form.errors.issueDate &&
-                    styles.dateButtonError,
-                ]}
-                onPress={() => openDatePicker("issueDate")}
-              >
-                <Ionicons
-                  name="calendar-outline"
-                  size={22}
-                  color={COLORS.primary}
-                />
-
-                <View style={styles.dateInfo}>
-                  <Text
-                    style={
-                      form.values.issueDate
-                        ? styles.dateText
-                        : styles.datePlaceholder
-                    }
-                  >
-                    {form.values.issueDate || "Select issue date"}
-                  </Text>
-                  <Text style={styles.dateHint}>Tap to choose</Text>
-                </View>
-
-                <Ionicons name="chevron-forward" size={18} color="#999" />
-              </TouchableOpacity>
-
-              {form.touched.issueDate && form.errors.issueDate && (
-                <Text style={styles.errorText}>{form.errors.issueDate}</Text>
-              )}
-            </View>
-
-            <View style={styles.fieldContainer}>
-              <Text style={styles.fieldLabel}>
-                Expiry Date
-                <Text style={styles.required}> *</Text>
-              </Text>
-
-              <TouchableOpacity
-                style={[
-                  styles.dateButton,
-                  form.touched.expiryDate &&
-                    form.errors.expiryDate &&
-                    styles.dateButtonError,
-                ]}
-                onPress={() => openDatePicker("expiryDate")}
-              >
-                <Ionicons
-                  name="calendar-outline"
-                  size={22}
-                  color={COLORS.primary}
-                />
-
-                <View style={styles.dateInfo}>
-                  <Text
-                    style={
-                      form.values.expiryDate
-                        ? styles.dateText
-                        : styles.datePlaceholder
-                    }
-                  >
-                    {form.values.expiryDate || "Select expiry date"}
-                  </Text>
-                  <Text style={styles.dateHint}>Tap to choose</Text>
-                </View>
-
-                <Ionicons name="chevron-forward" size={18} color="#999" />
-              </TouchableOpacity>
-
-              {form.touched.expiryDate && form.errors.expiryDate && (
-                <Text style={styles.errorText}>{form.errors.expiryDate}</Text>
-              )}
-            </View>
-
-            <Field
-              label="Notes"
-              placeholder="Add any additional notes..."
-              value={form.values.notes || ""}
-              onChangeText={(value) => {
-                setSubmitError(null);
-                form.handleChange("notes")(sanitizeNotes(value));
-              }}
-              onBlur={form.handleBlur("notes")}
-              maxLength={MAX_NOTES_LENGTH}
-              multiline
-              error={form.touched.notes ? form.errors.notes : undefined}
-            />
-            {showSuggestions && suggestions.length > 0 && (
-              <View style={styles.suggestionsCard}>
-                <View style={styles.suggestionsHeader}>
-                  <View style={styles.suggestionsTitleRow}>
-                    <Ionicons
-                      name="sparkles"
-                      size={16}
-                      color={COLORS.primary}
-                    />
-                    <Text style={styles.suggestionsTitle}>Smart Suggestions</Text>
-                  </View>
-                  <TouchableOpacity
-                    onPress={dismissSuggestions}
-                    hitSlop={8}
-                  >
-                    <Ionicons
-                      name="close"
-                      size={16}
-                      color={COLORS.textSecondary}
-                    />
-                  </TouchableOpacity>
-                </View>
-                {suggestions.map((suggestion, idx) => (
-                  <TouchableOpacity
-                    key={`${suggestion.field}-${idx}`}
-                    style={styles.suggestionRow}
-                    onPress={() => applySuggestion(suggestion)}
-                  >
-                    <View style={styles.suggestionIcon}>
-                      <Ionicons
-                        name="chevron-forward"
-                        size={14}
-                        color={COLORS.primary}
-                      />
-                    </View>
-                    <View style={styles.suggestionInfo}>
-                      <Text style={styles.suggestionField}>
-                        {suggestion.field
-                          .replace(/([A-Z])/g, " $1")
-                          .replace(/^./, (c) => c.toUpperCase())
-                          .trim()}
-                      </Text>
-                      <Text style={styles.suggestionValue} numberOfLines={1}>
-                        {suggestion.value}
-                      </Text>
-                      <Text style={styles.suggestionSource}>
-                        {suggestion.source} ({suggestion.confidence}%)
-                      </Text>
-                    </View>
-                    <Ionicons
-                      name="add-circle-outline"
-                      size={18}
-                      color={COLORS.primary}
-                    />
-                  </TouchableOpacity>
-                ))}
-                <TouchableOpacity
-                  style={styles.fillAllButton}
-                  onPress={applyFillAll}
-                >
-                  <Ionicons
-                    name="checkmark-done-circle"
-                    size={18}
-                    color="#fff"
-                  />
-                  <Text style={styles.fillAllButtonText}>Fill All</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-            {fillAllApplied && (
-              <View style={styles.appliedBadge}>
-                <Ionicons
-                  name="checkmark-circle"
-                  size={14}
-                  color={COLORS.success}
-                />
-                <Text style={styles.appliedText}>Suggestions applied</Text>
-              </View>
-            )}
-
-            <View style={styles.fieldContainer}>
-              <Text style={styles.fieldLabel}>Document File</Text>
-              
-              {!selectedFile ? (
-                <TouchableOpacity
-                  style={styles.filePickerButton}
-                  onPress={pickDocument}
-                >
-                  <Ionicons
-                    name="document-attach-outline"
-                    size={24}
-                    color={COLORS.primary}
-                  />
-                  <Text style={styles.filePickerText}>
-                    Tap to attach a file (PDF or image)
-                  </Text>
-                </TouchableOpacity>
-              ) : (
-                <View style={styles.selectedFileContainer}>
-                  <View style={styles.selectedFileInfo}>
-                    <View
-                      style={[
-                        styles.fileTypeBadge,
-                        { backgroundColor: `${COLORS.primary}15` },
-                      ]}
-                    >
-                      <Ionicons
-                        name={getFileTypeLabel(selectedFile.mimeType).icon}
-                        size={20}
-                        color={COLORS.primary}
-                      />
-                    </View>
-                    <View style={styles.selectedFileDetails}>
-                      <View style={styles.fileNameRow}>
-                        <Text style={styles.selectedFileName} numberOfLines={1}>
-                          {ensureFileExtension(selectedFile.name, selectedFile.mimeType)}
-                        </Text>
-                        <Text style={styles.fileTypeChip}>
-                          {getFileTypeLabel(selectedFile.mimeType).label}
-                        </Text>
-                      </View>
-                      <Text style={styles.selectedFileSize}>
-                        {(selectedFile.size / 1024).toFixed(1)} KB
-                      </Text>
-                    </View>
-                  </View>
-                  <TouchableOpacity
-                    onPress={removeSelectedFile}
-                    style={styles.removeFileButton}
-                  >
-                    <Ionicons
-                      name="close-circle"
-                      size={24}
-                      color={COLORS.danger}
-                    />
-                  </TouchableOpacity>
-                </View>
-              )}
-            </View>
-
-            <Button
-              title={uploading ? "Uploading..." : "Add Document"}
-              onPress={form.handleSubmit}
-              loading={form.isSubmitting || uploading}
-            />
-          </Card>
-        </ScrollView>
-      </KeyboardAvoidingView>
-
-      {datePicker && (
-        <DateTimePicker
-          value={getPickerValue()}
-          mode="date"
-          display={Platform.OS === "ios" ? "spinner" : "default"}
-          maximumDate={datePicker === "issueDate" ? getToday() : undefined}
-          minimumDate={
-            datePicker === "expiryDate"
-              ? parseDate(form.values.issueDate) || undefined
-              : undefined
-          }
-          onChange={handleDateChange}
-        />
-      )}
-
-      {ocrLoading && (
-        <View style={styles.ocrOverlay}>
-          <ActivityIndicator size="large" color={COLORS.primary} />
-          <Text style={styles.ocrText}>Extracting document data...</Text>
+        <View style={styles.header}>
+          <TouchableOpacity onPress={goBackStep} style={styles.backButton}>
+            <Ionicons name="arrow-back" size={24} color={COLORS.text} />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Add Document</Text>
+          <View style={{ width: 24 }} />
         </View>
-      )}
 
-      {scannerPreview && (
-        <Card style={styles.scannerPreviewCard}>
-          <View style={styles.scannerPreviewHeader}>
-            <Text style={styles.scannerPreviewTitle}>Scanned Preview</Text>
-            <TouchableOpacity
-              onPress={() => {
-                setScannerPreview(null);
-                setScannedData(null);
-              }}
-            >
-              <Ionicons name="close" size={20} color={COLORS.textSecondary} />
-            </TouchableOpacity>
-          </View>
-          <Image
-            source={{ uri: scannerPreview }}
-            style={styles.scannerPreviewImage}
-            resizeMode="contain"
+        <StepHeader step={step} />
+
+        <ScrollView contentContainerStyle={styles.scrollContent}>
+          {step === 0 && renderTypeStep()}
+          {step === 1 && renderCategoryStep()}
+          {step === 2 && renderSpecificDocumentStep()}
+          {step === 3 && renderInformationStep()}
+          {step === 4 && renderScanStep()}
+          {step === 5 && renderReviewStep()}
+        </ScrollView>
+
+        {datePicker && (
+          <DateTimePicker
+            value={parseDate(issueDate || expiryDate) || new Date()}
+            mode="date"
+            display={Platform.OS === "ios" ? "spinner" : "default"}
+            onChange={handleDateChange}
           />
-          {scannedData && (
-            <View style={styles.scannerPreviewData}>
-              {scannedData.confidence > 0 && (
-                <Text style={styles.scannerConfidence}>
-                  Confidence: {scannedData.confidence}%
-                </Text>
-              )}
-              {scannedData.authenticity && (
-                <View style={styles.authenticityRow}>
-                  <Ionicons
-                    name={
-                      scannedData.authenticity === "real"
-                        ? "shield-checkmark"
-                        : scannedData.authenticity === "replica"
-                          ? "warning"
-                          : "alert-circle"
-                    }
-                    size={16}
-                    color={
-                      scannedData.authenticity === "real"
-                        ? COLORS.success
-                        : scannedData.authenticity === "replica"
-                          ? COLORS.warning
-                          : COLORS.danger
-                    }
-                  />
-                  <Text
-                    style={[
-                      styles.authenticityText,
-                      {
-                        color:
-                          scannedData.authenticity === "real"
-                            ? COLORS.success
-                            : scannedData.authenticity === "replica"
-                              ? COLORS.warning
-                              : COLORS.danger,
-                      },
-                    ]}
-                  >
-                    {scannedData.authenticity === "real"
-                      ? "Authentic"
-                      : scannedData.authenticity === "replica"
-                        ? "Replica"
-                        : "Suspected Fake"}{" "}
-                    ({scannedData.authenticityScore}%)
-                  </Text>
-                </View>
-              )}
-              {scannedData.authenticityReason ? (
-                <Text style={styles.authenticityReason} numberOfLines={2}>
-                  {scannedData.authenticityReason}
-                </Text>
-              ) : null}
-            </View>
-          )}
-        </Card>
-      )}
+        )}
 
-      <DocumentScannerComponent
-        visible={showScanner}
-        onClose={() => setShowScanner(false)}
-        onScanSuccess={async (data: {
-          uri: string;
-          width: number;
-          height: number;
-        }) => {
-          setShowScanner(false);
-          setScannerPreview(data.uri);
-          try {
-            const extracted = normalizeScannedData(await extractDocumentData(data.uri));
-            setScannedData({
-              title: extracted.title,
-              issuer: extracted.issuer,
-              documentNumber: extracted.documentNumber,
-              issueDate: extracted.issueDate,
-              expiryDate: extracted.expiryDate,
-              category: extracted.category,
-              confidence: extracted.confidence,
-              authenticity: extracted.authenticity,
-              authenticityScore: extracted.authenticityScore,
-              authenticityReason: extracted.authenticityReason,
-            });
-            setTimeout(() => {
-              form.handleChange("title")(extracted.title);
-              form.handleChange("issuer")(extracted.issuer);
-              form.handleChange("documentNumber")(extracted.documentNumber);
-              if (extracted.issueDate) {
-                form.handleChange("issueDate")(extracted.issueDate);
-              }
-              if (extracted.expiryDate) {
-                form.handleChange("expiryDate")(extracted.expiryDate);
-              }
-              form.handleChange("category")(extracted.category);
-            }, 300);
-            setToast({
-              visible: true,
-              message: `Document scanned successfully (${extracted.confidence}% confidence)`,
-              type: "success",
-            });
-          } catch (err) {
-            setToast({
-              visible: true,
-              message: "Document scanned, but could not extract data",
-              type: "warning",
-            });
-          }
-        }}
-      />
-      <Toast
-        visible={toast.visible}
-        message={toast.message}
-        type={toast.type}
-        onDismiss={() => setToast((t) => ({ ...t, visible: false }))}
-      />
+        {scannerVisible && (
+          <Modal visible={scannerVisible} animationType="slide">
+            <DocumentScannerComponent
+              onClose={() => setScannerVisible(false)}
+              {...({ onScanComplete: handleScanSuccess } as any)}
+            />
+          </Modal>
+        )}
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1 },
   container: { flex: 1, backgroundColor: COLORS.background },
-  content: { padding: 16, paddingBottom: 50 },
-  loadingContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
-  loadingText: { fontSize: 15, color: COLORS.textSecondary || "#777" },
   header: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 20,
-  },
-  headerTitle: { fontSize: 18, fontWeight: "700", color: COLORS.text },
-  headerSpacer: { width: 28 },
-  fieldContainer: { marginBottom: 18 },
-  fieldLabel: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: COLORS.text,
-    marginBottom: 8,
-  },
-  required: { color: COLORS.danger },
-  input: {
-    minHeight: 50,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 10,
-    backgroundColor: "#fff",
-    color: COLORS.text,
-    paddingHorizontal: 14,
+    paddingHorizontal: 16,
     paddingVertical: 12,
-    fontSize: 15,
   },
-  multilineInput: { minHeight: 120, paddingTop: 14 },
-  inputError: { borderColor: COLORS.danger },
-  fieldFooter: {
-    minHeight: 18,
-    flexDirection: "row",
-    justifyContent: "space-between",
-  },
-  errorText: { marginTop: 5, fontSize: 12, color: COLORS.danger, flex: 1 },
-  counterText: {
-    marginTop: 5,
-    fontSize: 11,
-    color: "#888",
-    textAlign: "right",
-  },
-  categoryContainer: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  categoryOption: {
-    paddingHorizontal: 13,
-    paddingVertical: 9,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 9,
-    backgroundColor: "#fff",
-  },
-  categoryOptionActive: {
-    backgroundColor: COLORS.primary,
-    borderColor: COLORS.primary,
-  },
-  categoryText: { fontSize: 13, fontWeight: "600", color: COLORS.text },
-  categoryTextActive: { color: "#fff" },
-  dateButton: {
-    minHeight: 64,
-    flexDirection: "row",
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 10,
-    backgroundColor: "#fff",
-    paddingHorizontal: 14,
-  },
-  dateButtonError: { borderColor: COLORS.danger },
-  dateInfo: { flex: 1, marginLeft: 12 },
-  dateText: { fontSize: 15, fontWeight: "600", color: COLORS.text },
-  datePlaceholder: { fontSize: 15, color: "#999" },
-  dateHint: { fontSize: 11, color: "#999", marginTop: 3 },
-  filePickerButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 10,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 10,
-    backgroundColor: "#fff",
-    paddingVertical: 20,
-    paddingHorizontal: 14,
-  },
-  filePickerText: {
-    fontSize: 14,
-    color: COLORS.primary,
-    fontWeight: "600",
-  },
-  selectedFileContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 10,
-    backgroundColor: "#fff",
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-  },
-  selectedFileInfo: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    flex: 1,
-  },
-  selectedFileDetails: { flex: 1 },
-  fileNameRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  selectedFileName: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: COLORS.text,
-    flex: 1,
-  },
-  fileTypeChip: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: COLORS.primary,
-    backgroundColor: `${COLORS.primary}15`,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-    overflow: "hidden",
-    letterSpacing: 0.5,
-  },
-  fileTypeBadge: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  selectedFileSize: {
+  backButton: { padding: 4 },
+  headerTitle: { fontSize: 18, fontWeight: "600", color: COLORS.text },
+  scrollContent: { padding: 16, paddingBottom: 40 },
+  stepHeader: { marginBottom: 20 },
+  stepLabel: {
     fontSize: 12,
-    color: "#888",
-    marginTop: 2,
-  },
-  removeFileButton: {
-    padding: 4,
-  },
-  ocrOverlay: {
-    ...StyleSheet.absoluteFill,
-    backgroundColor: "rgba(0,0,0,0.6)",
-    justifyContent: "center",
-    alignItems: "center",
-    zIndex: 1000,
-  },
-  ocrText: {
-    color: "#fff",
-    fontSize: 16,
-    marginTop: 12,
     fontWeight: "600",
-  },
-  scannerPreviewCard: {
-    marginBottom: 16,
-    borderColor: COLORS.primary,
-    borderWidth: 1,
-  },
-  scannerPreviewHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    padding: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-  },
-  scannerPreviewTitle: {
-    fontSize: 14,
-    fontWeight: "700",
     color: COLORS.primary,
+    marginBottom: 4,
   },
-  scannerPreviewImage: {
-    width: "100%",
-    height: 200,
-    backgroundColor: COLORS.background,
+  stepTitle: {
+    fontSize: 20,
+    fontWeight: "bold",
+    color: COLORS.text,
+    marginBottom: 12,
   },
-  scannerPreviewData: {
-    padding: 12,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.border,
+  progressRow: { flexDirection: "row", gap: 4 },
+  progressSegment: {
+    flex: 1,
+    height: 4,
+    backgroundColor: "#E5E7EB",
+    borderRadius: 2,
   },
-  scannerPreviewLabel: {
-    fontSize: 13,
+  progressSegmentActive: { backgroundColor: COLORS.primary },
+  questionTitle: {
+    fontSize: 18,
+    fontWeight: "bold",
+    color: COLORS.text,
+    marginBottom: 6,
+  },
+  questionSubtitle: {
+    fontSize: 14,
+    color: COLORS.textSecondary,
+    marginBottom: 16,
+  },
+  largeChoice: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: COLORS.surface,
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+  },
+  choiceIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: "#F3F4F6",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 16,
+  },
+  choiceContent: { flex: 1, marginRight: 8 },
+  choiceTitle: {
+    fontSize: 16,
+    fontWeight: "600",
     color: COLORS.text,
     marginBottom: 4,
   },
-  scannerConfidence: {
-    fontSize: 12,
-    color: COLORS.success,
-    fontWeight: "600",
-    marginTop: 4,
-  },
-  authenticityRow: {
+  choiceDescription: { fontSize: 13, color: COLORS.textSecondary },
+  categoryCard: {
     flexDirection: "row",
     alignItems: "center",
-    marginTop: 6,
-    gap: 6,
-  },
-  authenticityText: {
-    fontSize: 13,
-    fontWeight: "700",
-  },
-  authenticityReason: {
-    fontSize: 11,
-    color: COLORS.textSecondary,
-    marginTop: 6,
-    fontStyle: "italic",
-  },
-  suggestionsCard: {
-    backgroundColor: "#F8FAFC",
-    borderWidth: 1,
-    borderColor: `${COLORS.primary}20`,
-    borderRadius: 12,
+    backgroundColor: COLORS.surface,
     padding: 14,
-    marginBottom: 18,
-  },
-  suggestionsHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  suggestionsTitleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-  },
-  suggestionsTitle: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: COLORS.primary,
-  },
-  suggestionRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 10,
-    paddingHorizontal: 10,
-    backgroundColor: "#fff",
-    borderRadius: 10,
-    marginBottom: 8,
+    borderRadius: 12,
+    marginBottom: 10,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: "#E5E7EB",
   },
-  suggestionIcon: {
-    marginRight: 10,
+  categoryIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "#F3F4F6",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 14,
   },
-  suggestionInfo: {
-    flex: 1,
-  },
-  suggestionField: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: COLORS.text,
-    textTransform: "capitalize",
-  },
-  suggestionValue: {
-    fontSize: 14,
-    color: COLORS.text,
-    marginTop: 2,
-  },
-  suggestionSource: {
-    fontSize: 11,
-    color: COLORS.textSecondary,
-    marginTop: 2,
-  },
-  fillAllButton: {
+  documentChoice: {
     flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: COLORS.surface,
+    padding: 14,
+    borderRadius: 12,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+  },
+  documentChoiceIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "#F3F4F6",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 14,
+  },
+  field: { marginBottom: 16 },
+  fieldLabel: {
+    fontSize: 14,
+    fontWeight: "500",
+    color: COLORS.text,
+    marginBottom: 6,
+  },
+  required: { color: COLORS.danger },
+  input: {
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: "#D1D5DB",
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 15,
+    color: COLORS.text,
+  },
+  multilineInput: { height: 100, paddingTop: 10 },
+  dateButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: "#D1D5DB",
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+  },
+  dateText: { flex: 1, marginLeft: 10, fontSize: 15, color: COLORS.text },
+  datePlaceholder: { flex: 1, marginLeft: 10, fontSize: 15, color: "#9CA3AF" },
+  primaryButton: {
+    flexDirection: "row",
+    backgroundColor: COLORS.primary,
+    borderRadius: 8,
+    paddingVertical: 14,
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
-    backgroundColor: COLORS.primary,
-    borderRadius: 10,
-    height: 44,
+    marginTop: 10,
+  },
+  primaryButtonText: { color: "#fff", fontSize: 16, fontWeight: "600" },
+  scanOption: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: COLORS.surface,
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+  },
+  scanIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: "#F3F4F6",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 16,
+  },
+  skipButton: {
+    padding: 12,
+    alignItems: "center",
     marginTop: 4,
+    marginBottom: 16,
   },
-  fillAllButtonText: {
-    color: "#fff",
-    fontWeight: "700",
-    fontSize: 14,
+  skipButtonText: { color: COLORS.primary, fontSize: 15, fontWeight: "500" },
+  filePreview: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#F3F4F6",
+    padding: 12,
+    borderRadius: 8,
+    gap: 12,
   },
-  appliedBadge: {
+  fileName: { fontSize: 14, fontWeight: "500", color: COLORS.text },
+  fileType: { fontSize: 12, color: COLORS.textSecondary },
+  previewCard: {
+    height: 200,
+    backgroundColor: "#000",
+    borderRadius: 8,
+    marginBottom: 16,
+    overflow: "hidden",
+  },
+  previewImage: { width: "100%", height: "100%" },
+  extractionCard: {
+    backgroundColor: "#F3F4F6",
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 16,
+  },
+  extractionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 6,
+  },
+  extractionTitle: { fontSize: 14, fontWeight: "600", color: COLORS.text },
+  confidenceRow: { flexDirection: "row", justifyContent: "space-between" },
+  confidenceLabel: { fontSize: 13, color: COLORS.textSecondary },
+  confidenceValue: { fontSize: 13, fontWeight: "600", color: COLORS.text },
+  editButton: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 6,
-    backgroundColor: `${COLORS.success}15`,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: COLORS.primary,
     borderRadius: 8,
-    paddingVertical: 8,
-    marginBottom: 18,
+    marginBottom: 12,
   },
-  appliedText: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: COLORS.success,
-  },
+  editButtonText: { color: COLORS.primary, fontSize: 15, fontWeight: "500" },
 });

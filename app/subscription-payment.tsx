@@ -19,10 +19,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import Animated, {
-  FadeIn,
-  Easing,
-} from "react-native-reanimated";
+import Animated, { FadeIn, Easing } from "react-native-reanimated";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as LocalAuthentication from "expo-local-authentication";
 
@@ -120,7 +117,10 @@ export default function DocuGuardCheckout() {
     if (s === 1) {
       const d = formData;
       if (!d.name.trim() || d.name.trim().length < 2) {
-        Alert.alert("Error", "Please enter your full legal name (min 2 characters).");
+        Alert.alert(
+          "Error",
+          "Please enter your full legal name (min 2 characters).",
+        );
         return false;
       }
       if (!d.serial.trim() || !/^[A-Z0-9]+$/i.test(d.serial.trim())) {
@@ -214,7 +214,7 @@ export default function DocuGuardCheckout() {
       });
       if (redirectTimerRef.current) clearTimeout(redirectTimerRef.current);
       redirectTimerRef.current = setTimeout(
-        () => router.replace("/(tabs)/home" as any),
+        () => router.replace("/(tabs)/index" as any),
         1600,
       );
     } catch (err: any) {
@@ -371,7 +371,9 @@ export default function DocuGuardCheckout() {
               <View style={styles.gate}>
                 {!sliderUnlocked ? (
                   <View style={styles.sliderContainer}>
-                    <Text style={styles.gateText}>Layer 1: Slide to Continue</Text>
+                    <Text style={styles.gateText}>
+                      Layer 1: Slide to Continue
+                    </Text>
                     <View style={styles.sliderTrack}>
                       <RNAnimated.View
                         style={[
@@ -380,18 +382,32 @@ export default function DocuGuardCheckout() {
                         ]}
                         {...panResponder.panHandlers}
                       >
-                        <Ionicons name="chevron-forward" size={20} color="#fff" />
+                        <Ionicons
+                          name="chevron-forward"
+                          size={20}
+                          color="#fff"
+                        />
                       </RNAnimated.View>
                       <RNAnimated.Text
-                        style={[styles.sliderText, { transform: [{ translateX: slideTextAnim }] }]}
+                        style={[
+                          styles.sliderText,
+                          { transform: [{ translateX: slideTextAnim }] },
+                        ]}
                       >
                         Slide right → to unlock
                       </RNAnimated.Text>
                     </View>
                   </View>
                 ) : (
-                  <Animated.View entering={FadeIn.duration(300)} style={styles.biometricContainer}>
-                    <Ionicons name="finger-print" size={80} color={DG.emerald} />
+                  <Animated.View
+                    entering={FadeIn.duration(300)}
+                    style={styles.biometricContainer}
+                  >
+                    <Ionicons
+                      name="finger-print"
+                      size={80}
+                      color={DG.emerald}
+                    />
                     <Text style={styles.gateText}>
                       Layer 2: Biometric Verification Required
                     </Text>
