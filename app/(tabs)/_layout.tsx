@@ -67,7 +67,7 @@ export default function TabsLayout() {
     [router],
   );
 
-  const activeTabName = pathname.split("/").pop() || "home";
+  const activeTabName = pathname.split("/").pop() || "index";
 
   if (showLockScreen) {
     return (
