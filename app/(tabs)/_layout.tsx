@@ -1,5 +1,4 @@
 import { Tabs, usePathname, useRouter } from "expo-router";
-import { COLORS } from "@/constants";
 import { useAppLock, AppLockScreen } from "../../hooks/useAppLock";
 import { useEffect, useState, useCallback } from "react";
 import { TabBar } from "../../components/ui/TabBar";
@@ -29,6 +28,7 @@ const TAB_ITEMS = [
 
 export default function TabsLayout() {
   const router = useRouter();
+  const pathname = usePathname();
 
   const {
     isLocked,
@@ -38,8 +38,6 @@ export default function TabsLayout() {
   } = useAppLock();
 
   const [showLockScreen, setShowLockScreen] = useState(false);
-
-  const pathname = usePathname();
 
   useEffect(() => {
     if (isLocked) {
@@ -62,12 +60,22 @@ export default function TabsLayout() {
 
   const handleTabPress = useCallback(
     (tabName: string) => {
-      router.push(`/(tabs)/${tabName}` as any);
+      // Home/index route
+      if (tabName === "index") {
+        router.push("/");
+        return;
+      }
+
+      // Other tab routes
+      router.push(`/${tabName}` as any);
     },
     [router],
   );
 
-  const activeTabName = pathname.split("/").pop() || "index";
+  const activeTabName =
+    pathname === "/" || pathname.endsWith("/index")
+      ? "index"
+      : pathname.split("/").filter(Boolean).pop() || "index";
 
   if (showLockScreen) {
     return (
@@ -85,7 +93,7 @@ export default function TabsLayout() {
       screenOptions={{
         headerShown: false,
       }}
-      tabBar={(props) => (
+      tabBar={() => (
         <TabBar
           tabs={TAB_ITEMS}
           activeTab={activeTabName}

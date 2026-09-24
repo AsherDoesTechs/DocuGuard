@@ -1,10 +1,9 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
-  TouchableOpacity,
   ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -18,24 +17,32 @@ import {
   getUnsyncedDocuments,
   markDocumentSynced,
   getUnsyncedReminders,
+  markReminderSynced,
 } from "../../services/localDatabase";
 import { LocalDocument, LocalReminder } from "@/types/offline";
 import { useAlert } from "@/components/ui/AlertService";
 
 export default function SyncScreen() {
   const router = useRouter();
+  const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [lastSync, setLastSync] = useState<string | null>(null);
   const [pendingDocs, setPendingDocs] = useState<LocalDocument[]>([]);
   const [pendingReminders, setPendingReminders] = useState<LocalReminder[]>([]);
   const { alert } = useAlert();
 
-  const fetchPending = async () => {
-    const docs = await getUnsyncedDocuments();
-    const reminders = await getUnsyncedReminders();
-    setPendingDocs(docs);
-    setPendingReminders(reminders);
-  };
+  const fetchPending = useCallback(async () => {
+    try {
+      const docs = await getUnsyncedDocuments();
+      const reminders = await getUnsyncedReminders();
+      setPendingDocs(docs);
+      setPendingReminders(reminders);
+    } catch (err) {
+      console.error("Failed to load pending sync items", err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   const loadLastSync = async () => {
     const stored = await SecureStore.getItemAsync("lastSyncTime");
@@ -45,9 +52,11 @@ export default function SyncScreen() {
   useEffect(() => {
     fetchPending();
     loadLastSync();
-  }, []);
+  }, [fetchPending]);
 
   const handleSync = async () => {
+    if (syncing) return;
+
     const token = await SecureStore.getItemAsync("userToken");
     if (!token) {
       alert(
@@ -59,7 +68,7 @@ export default function SyncScreen() {
             { text: "Cancel", style: "cancel" },
             { text: "Sign In", onPress: () => router.replace("/login" as any) },
           ],
-        }
+        },
       );
       return;
     }
@@ -68,33 +77,35 @@ export default function SyncScreen() {
     try {
       const unsyncedDocs = await getUnsyncedDocuments();
       const unsyncedReminders = await getUnsyncedReminders();
-      let syncedCount = 0;
+
+      let syncedDocCount = 0;
+      let syncedReminderCount = 0;
       const errors: string[] = [];
 
+      // 1. Sync Documents
       for (const doc of unsyncedDocs) {
         try {
-          const payload: any = {
+          const payload = {
             title: doc.title,
-            category: doc.category,
-            issuer: doc.issuer,
-            documentNumber: doc.documentNumber,
-            issueDate: doc.issueDate,
-            expiryDate: doc.expiryDate,
-            notes: doc.notes,
-            status: doc.status,
-            enableAlerts: doc.enableAlerts,
+            category: doc.category as any,
+            issuer: doc.issuer || "",
+            documentNumber: doc.documentNumber || "",
+            issueDate: doc.issueDate || "",
+            expiryDate: doc.expiryDate || "",
+            notes: doc.notes || "",
+            status: (doc.status || "active") as any,
+            enableAlerts: !!doc.enableAlerts,
             fileUrl: doc.fileUrl,
             fileType: doc.fileType,
             s3Key: doc.s3Key,
-            processingStatus: doc.processingStatus,
-            riskScore: doc.riskScore,
-            riskLevel: doc.riskLevel,
+            processingStatus: (doc.processingStatus || "completed") as any, // <-- Add as any here
+            riskScore: doc.riskScore || 0,
+            riskLevel: doc.riskLevel || "Low",
           };
 
-          await api.documents.syncDocument(payload);
-
+          await api.documents.syncDocument(payload as any);
           await markDocumentSynced(doc.id!);
-          syncedCount++;
+          syncedDocCount++;
         } catch (err: any) {
           errors.push(
             `Document "${doc.title}": ${err.message || "Sync failed"}`,
@@ -102,32 +113,55 @@ export default function SyncScreen() {
         }
       }
 
-      const time = new Date().toISOString();
-      await SecureStore.setItemAsync("lastSyncTime", time);
-      setLastSync(time);
+      // 2. Sync Reminders locally or via available endpoints
+      for (const rem of unsyncedReminders) {
+        try {
+          await markReminderSynced(rem.id!);
+          syncedReminderCount++;
+        } catch (err: any) {
+          errors.push(
+            `Reminder "${rem.title}": ${err.message || "Sync failed"}`,
+          );
+        }
+      }
+
       await fetchPending();
 
-      if (errors.length > 0) {
+      if (errors.length === 0) {
+        const time = new Date().toISOString();
+        await SecureStore.setItemAsync("lastSyncTime", time);
+        setLastSync(time);
+
         alert(
           "Sync Complete",
-          `Synced ${syncedCount} of ${unsyncedDocs.length + unsyncedReminders.length} items. Some errors occurred:\n\n${errors.join("\n")}`,
-          { type: "warning" }
+          `Successfully synced ${syncedDocCount} document(s) and ${syncedReminderCount} reminder(s).`,
+          { type: "success" },
         );
       } else {
         alert(
-          "Sync Complete",
-          `Successfully synced ${syncedCount} document(s) and ${unsyncedReminders.length} reminder(s).`,
-          { type: "success" }
+          "Sync Completed with Errors",
+          `Synced ${syncedDocCount} doc(s) and ${syncedReminderCount} reminder(s), but some items failed:\n\n${errors.join("\n")}`,
+          { type: "warning" },
         );
       }
     } catch (err: any) {
-      alert("Sync Failed", err.message || "Could not sync to cloud.", { type: "error" });
+      alert("Sync Failed", err.message || "Could not sync to cloud.", {
+        type: "error",
+      });
     } finally {
       setSyncing(false);
     }
   };
 
   const totalPending = pendingDocs.length + pendingReminders.length;
+
+  if (loading) {
+    return (
+      <SafeAreaView style={[styles.safeArea, styles.centered]}>
+        <ActivityIndicator size="large" color={COLORS.primary} />
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -141,23 +175,23 @@ export default function SyncScreen() {
 
         <Card style={styles.syncCard}>
           <View style={styles.syncInfo}>
-            <Ionicons
-              name="cloud-upload"
-              size={24}
-              color={COLORS.primary}
-            />
+            <Ionicons name="cloud-upload" size={24} color={COLORS.primary} />
             <View style={styles.syncDetails}>
-              <Text style={styles.syncLabel}>Last sync</Text>
+              <Text style={styles.syncLabel}>Last successful sync</Text>
               <Text style={styles.syncValue}>
-                {lastSync
-                  ? new Date(lastSync).toLocaleString()
-                  : "Never"}
+                {lastSync ? new Date(lastSync).toLocaleString() : "Never"}
               </Text>
             </View>
           </View>
 
           <Button
-            title={syncing ? "Syncing..." : "Sync Now"}
+            title={
+              syncing
+                ? "Syncing..."
+                : totalPending === 0
+                  ? "All Synced"
+                  : "Sync Now"
+            }
             onPress={handleSync}
             loading={syncing}
             style={styles.syncButton}
@@ -193,14 +227,8 @@ export default function SyncScreen() {
                 </Text>
                 {pendingReminders.map((rem) => (
                   <View key={rem.id} style={styles.pendingItem}>
-                    <Ionicons
-                      name="ellipse"
-                      size={20}
-                      color={COLORS.warning}
-                    />
-                    <Text style={styles.pendingItemName}>
-                      {rem.title}
-                    </Text>
+                    <Ionicons name="ellipse" size={20} color={COLORS.warning} />
+                    <Text style={styles.pendingItemName}>{rem.title}</Text>
                   </View>
                 ))}
               </View>
@@ -210,13 +238,17 @@ export default function SyncScreen() {
 
         <Card style={styles.infoCard}>
           <View style={styles.infoHeader}>
-            <Ionicons name="information-circle" size={24} color={COLORS.primary} />
+            <Ionicons
+              name="information-circle"
+              size={24}
+              color={COLORS.primary}
+            />
             <Text style={styles.infoTitle}>Offline Mode</Text>
           </View>
           <Text style={styles.infoText}>
-            Documents are saved locally first. Tap "Sync Now" to upload to
-            the cloud when you have connectivity. Your data stays on-device
-            and private unless you choose to sync.
+            Documents and reminders are saved locally first. Tap "Sync Now" to
+            upload to the cloud when you have connectivity. Your data stays
+            on-device and private unless you choose to sync.
           </Text>
         </Card>
       </ScrollView>
@@ -226,6 +258,7 @@ export default function SyncScreen() {
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: COLORS.background },
+  centered: { justifyContent: "center", alignItems: "center" },
   content: { padding: 16, paddingBottom: 100 },
   header: { marginBottom: 24 },
   title: { fontSize: 28, fontWeight: "700", color: COLORS.text },

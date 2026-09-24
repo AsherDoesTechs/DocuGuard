@@ -1,6 +1,10 @@
 import * as SQLite from "expo-sqlite";
 import * as SecureStore from "expo-secure-store";
-import { LocalDocument, LocalReminder, LocalUserProfile } from "../types/offline";
+import {
+  LocalDocument,
+  LocalReminder,
+  LocalUserProfile,
+} from "../types/offline";
 import { DebugLogger } from "./debugLogger";
 import { ErrorCodes } from "../constants/errorCodes";
 
@@ -15,7 +19,10 @@ async function getDb(): Promise<SQLite.SQLiteDatabase> {
   return db;
 }
 
-async function run(sql: string, params: any[] = []): Promise<SQLite.SQLiteRunResult> {
+async function run(
+  sql: string,
+  params: any[] = [],
+): Promise<SQLite.SQLiteRunResult> {
   const database = await getDb();
   return database.runAsync(sql, ...params);
 }
@@ -25,7 +32,10 @@ async function queryAll<T>(sql: string, params: any[] = []): Promise<T[]> {
   return database.getAllAsync<T>(sql, ...params);
 }
 
-async function querySingle<T>(sql: string, params: any[] = []): Promise<T | null> {
+async function querySingle<T>(
+  sql: string,
+  params: any[] = [],
+): Promise<T | null> {
   const database = await getDb();
   return database.getFirstAsync<T>(sql, ...params);
 }
@@ -169,36 +179,44 @@ export async function initDatabase() {
 }
 
 // Document operations
-export async function createDocument(doc: Partial<LocalDocument>): Promise<number> {
+export async function createDocument(
+  doc: Partial<LocalDocument>,
+): Promise<number> {
   try {
-    const result = await run(`
+    const result = await run(
+      `
       INSERT INTO documents 
         (title, category, issuer, document_number, issue_date, expiry_date, notes, 
          status, enable_alerts, file_url, file_type, s3_key, processing_status, 
          risk_score, risk_level, needs_sync, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, [
-      doc.title,
-      doc.category || "other",
-      doc.issuer || "",
-      doc.documentNumber || "",
-      doc.issueDate,
-      doc.expiryDate,
-      doc.notes || "",
-      doc.status || "active",
-      doc.enableAlerts ? 1 : 0,
-      doc.fileUrl || null,
-      doc.fileType || null,
-      doc.s3Key || null,
-      doc.processingStatus || "completed",
-      doc.riskScore || 0,
-      doc.riskLevel || "Low",
-      1,
-      new Date().toISOString(),
-      new Date().toISOString(),
-    ]);
+    `,
+      [
+        doc.title,
+        doc.category || "other",
+        doc.issuer || "",
+        doc.documentNumber || "",
+        doc.issueDate,
+        doc.expiryDate,
+        doc.notes || "",
+        doc.status || "active",
+        doc.enableAlerts ? 1 : 0,
+        doc.fileUrl || null,
+        doc.fileType || null,
+        doc.s3Key || null,
+        doc.processingStatus || "completed",
+        doc.riskScore || 0,
+        doc.riskLevel || "Low",
+        1,
+        new Date().toISOString(),
+        new Date().toISOString(),
+      ],
+    );
     const docId = result.lastInsertRowId as number;
-    DebugLogger.debug("LocalDatabase", "Document created", { docId, title: doc.title });
+    DebugLogger.debug("LocalDatabase", "Document created", {
+      docId,
+      title: doc.title,
+    });
     return docId;
   } catch (err) {
     DebugLogger.error(
@@ -222,7 +240,9 @@ export async function getAllDocuments(): Promise<LocalDocument[]> {
              created_at AS "createdAt", updated_at AS "updatedAt"
       FROM documents ORDER BY expiry_date ASC
     `);
-    DebugLogger.debug("LocalDatabase", "Documents loaded", { count: rows.length });
+    DebugLogger.debug("LocalDatabase", "Documents loaded", {
+      count: rows.length,
+    });
     return rows;
   } catch (err) {
     DebugLogger.error(
@@ -235,7 +255,9 @@ export async function getAllDocuments(): Promise<LocalDocument[]> {
   }
 }
 
-export async function getDocumentById(id: number): Promise<LocalDocument | null> {
+export async function getDocumentById(
+  id: number,
+): Promise<LocalDocument | null> {
   try {
     const row = await querySingle<LocalDocument>(
       `SELECT id, title, category, issuer, document_number AS "documentNumber",
@@ -247,7 +269,10 @@ export async function getDocumentById(id: number): Promise<LocalDocument | null>
        FROM documents WHERE id = ?`,
       [id],
     );
-    DebugLogger.debug("LocalDatabase", "Document fetched", { docId: id, found: !!row });
+    DebugLogger.debug("LocalDatabase", "Document fetched", {
+      docId: id,
+      found: !!row,
+    });
     return row;
   } catch (err) {
     DebugLogger.error(
@@ -262,7 +287,8 @@ export async function getDocumentById(id: number): Promise<LocalDocument | null>
 
 export async function updateDocument(id: number, doc: Partial<LocalDocument>) {
   try {
-    await run(`
+    await run(
+      `
       UPDATE documents SET
         title = COALESCE(?, title),
         category = COALESCE(?, category),
@@ -282,24 +308,26 @@ export async function updateDocument(id: number, doc: Partial<LocalDocument>) {
         needs_sync = 1,
         updated_at = datetime('now')
       WHERE id = ?
-    `, [
-      doc.title,
-      doc.category,
-      doc.issuer,
-      doc.documentNumber,
-      doc.issueDate,
-      doc.expiryDate,
-      doc.notes,
-      doc.status,
-      doc.enableAlerts ? 1 : 0,
-      doc.fileUrl,
-      doc.fileType,
-      doc.s3Key,
-      doc.processingStatus,
-      doc.riskScore,
-      doc.riskLevel,
-      id,
-    ]);
+    `,
+      [
+        doc.title,
+        doc.category,
+        doc.issuer,
+        doc.documentNumber,
+        doc.issueDate,
+        doc.expiryDate,
+        doc.notes,
+        doc.status,
+        doc.enableAlerts ? 1 : 0,
+        doc.fileUrl,
+        doc.fileType,
+        doc.s3Key,
+        doc.processingStatus,
+        doc.riskScore,
+        doc.riskLevel,
+        id,
+      ],
+    );
     DebugLogger.debug("LocalDatabase", "Document updated", { docId: id });
   } catch (err) {
     DebugLogger.error(
@@ -315,7 +343,10 @@ export async function updateDocument(id: number, doc: Partial<LocalDocument>) {
 export async function deleteDocument(id: number) {
   try {
     await run(`DELETE FROM documents WHERE id = ?`, [id]);
-    await run(`DELETE FROM sync_queue WHERE table_name = 'documents' AND record_id = ?`, [id]);
+    await run(
+      `DELETE FROM sync_queue WHERE table_name = 'documents' AND record_id = ?`,
+      [id],
+    );
     DebugLogger.debug("LocalDatabase", "Document deleted", { docId: id });
   } catch (err) {
     DebugLogger.error(
@@ -334,10 +365,13 @@ export async function setDocumentProcessingStatus(
   riskScore?: number,
   riskLevel?: string,
 ) {
-  await run(`
+  await run(
+    `
     UPDATE documents SET processing_status = ?, risk_score = COALESCE(?, risk_score), risk_level = COALESCE(?, risk_level), updated_at = datetime('now')
     WHERE id = ?
-  `, [status, riskScore, riskLevel, id]);
+  `,
+    [status, riskScore, riskLevel, id],
+  );
 }
 
 // Reminder operations
@@ -350,27 +384,33 @@ export async function getAllReminders(): Promise<LocalReminder[]> {
 }
 
 export async function updateReminderStatus(id: number, isRead: boolean) {
-  await run(`UPDATE reminders SET is_read = ? WHERE id = ?`, [isRead ? 1 : 0, id]);
+  await run(`UPDATE reminders SET is_read = ? WHERE id = ?`, [
+    isRead ? 1 : 0,
+    id,
+  ]);
 }
 
 // Profile operations
 export async function saveUserProfile(profile: LocalUserProfile) {
-  await run(`
+  await run(
+    `
     INSERT OR REPLACE INTO user_profile 
       (id, name, email, document_count, expiring_count, expired_count,
        notifications_enabled, notify_email, notify_expiry, two_factor)
     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `, [
-    profile.name,
-    profile.email,
-    profile.documentCount,
-    profile.expiringCount,
-    profile.expiredCount,
-    profile.notificationsEnabled ? 1 : 0,
-    profile.notifyEmail ? 1 : 0,
-    profile.notifyExpiry ? 1 : 0,
-    profile.twoFactor ? 1 : 0,
-  ]);
+  `,
+    [
+      profile.name,
+      profile.email,
+      profile.documentCount,
+      profile.expiringCount,
+      profile.expiredCount,
+      profile.notificationsEnabled ? 1 : 0,
+      profile.notifyEmail ? 1 : 0,
+      profile.notifyExpiry ? 1 : 0,
+      profile.twoFactor ? 1 : 0,
+    ],
+  );
 }
 
 export async function getUserProfile(): Promise<LocalUserProfile | null> {
@@ -415,10 +455,13 @@ export async function getUserSettings(): Promise<LocalUserSettings | null> {
   return row;
 }
 
-export async function saveUserSettings(settings: Partial<LocalUserSettings>): Promise<number> {
+export async function saveUserSettings(
+  settings: Partial<LocalUserSettings>,
+): Promise<number> {
   const existing = await getUserSettings();
   if (existing) {
-    await run(`
+    await run(
+      `
       UPDATE user_settings SET
         default_category = COALESCE(?, default_category),
         auto_backup = COALESCE(?, auto_backup),
@@ -433,40 +476,85 @@ export async function saveUserSettings(settings: Partial<LocalUserSettings>): Pr
         data_exported_at = COALESCE(?, data_exported_at),
         updated_at = datetime('now')
       WHERE user_id = 1
-    `, [
-      settings.defaultCategory,
-      settings.autoBackup !== undefined ? (settings.autoBackup ? 1 : 0) : null,
-      settings.reminderBeforeDays,
-      settings.reminder30days !== undefined ? (settings.reminder30days ? 1 : 0) : null,
-      settings.reminder7days !== undefined ? (settings.reminder7days ? 1 : 0) : null,
-      settings.reminder1day !== undefined ? (settings.reminder1day ? 1 : 0) : null,
-      settings.reminderOnDay !== undefined ? (settings.reminderOnDay ? 1 : 0) : null,
-      settings.themeMode,
-      settings.fontSize,
-      settings.biometricLock !== undefined ? (settings.biometricLock ? 1 : 0) : null,
-      settings.dataExportedAt,
-    ]);
+    `,
+      [
+        settings.defaultCategory,
+        settings.autoBackup !== undefined
+          ? settings.autoBackup
+            ? 1
+            : 0
+          : null,
+        settings.reminderBeforeDays,
+        settings.reminder30days !== undefined
+          ? settings.reminder30days
+            ? 1
+            : 0
+          : null,
+        settings.reminder7days !== undefined
+          ? settings.reminder7days
+            ? 1
+            : 0
+          : null,
+        settings.reminder1day !== undefined
+          ? settings.reminder1day
+            ? 1
+            : 0
+          : null,
+        settings.reminderOnDay !== undefined
+          ? settings.reminderOnDay
+            ? 1
+            : 0
+          : null,
+        settings.themeMode,
+        settings.fontSize,
+        settings.biometricLock !== undefined
+          ? settings.biometricLock
+            ? 1
+            : 0
+          : null,
+        settings.dataExportedAt,
+      ],
+    );
     return existing.id || 1;
   }
-  const result = await run(`
+  const result = await run(
+    `
     INSERT INTO user_settings
       (user_id, default_category, auto_backup, reminder_before_days,
        reminder_30days, reminder_7days, reminder_1day, reminder_on_day,
        theme_mode, font_size, biometric_lock, data_exported_at)
     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `, [
-    settings.defaultCategory || 'other',
-    settings.autoBackup !== undefined ? (settings.autoBackup ? 1 : 0) : 1,
-    settings.reminderBeforeDays || 7,
-    settings.reminder30days !== undefined ? (settings.reminder30days ? 1 : 0) : 1,
-    settings.reminder7days !== undefined ? (settings.reminder7days ? 1 : 0) : 1,
-    settings.reminder1day !== undefined ? (settings.reminder1day ? 1 : 0) : 1,
-    settings.reminderOnDay !== undefined ? (settings.reminderOnDay ? 1 : 0) : 1,
-    settings.themeMode || 'system',
-    settings.fontSize || 'medium',
-    settings.biometricLock !== undefined ? (settings.biometricLock ? 1 : 0) : 0,
-    settings.dataExportedAt || null,
-  ]);
+  `,
+    [
+      settings.defaultCategory || "other",
+      settings.autoBackup !== undefined ? (settings.autoBackup ? 1 : 0) : 1,
+      settings.reminderBeforeDays || 7,
+      settings.reminder30days !== undefined
+        ? settings.reminder30days
+          ? 1
+          : 0
+        : 1,
+      settings.reminder7days !== undefined
+        ? settings.reminder7days
+          ? 1
+          : 0
+        : 1,
+      settings.reminder1day !== undefined ? (settings.reminder1day ? 1 : 0) : 1,
+      settings.reminderOnDay !== undefined
+        ? settings.reminderOnDay
+          ? 1
+          : 0
+        : 1,
+      settings.themeMode || "system",
+      settings.fontSize || "medium",
+      settings.biometricLock !== undefined
+        ? settings.biometricLock
+          ? 1
+          : 0
+        : 0,
+      settings.dataExportedAt || null,
+    ],
+  );
   return result.lastInsertRowId as number;
 }
 
@@ -494,17 +582,22 @@ export async function getLoginSessions(): Promise<LocalLoginSession[]> {
   return rows;
 }
 
-export async function addLoginSession(session: Partial<LocalLoginSession>): Promise<number> {
-  const result = await run(`
+export async function addLoginSession(
+  session: Partial<LocalLoginSession>,
+): Promise<number> {
+  const result = await run(
+    `
     INSERT INTO login_sessions
       (user_id, device_name, platform, ip_address, location, is_current, created_at, last_active)
     VALUES (1, ?, ?, ?, ?, 1, datetime('now'), datetime('now'))
-  `, [
-    session.deviceName || 'Unknown Device',
-    session.platform || 'iOS',
-    session.ipAddress || '127.0.0.1',
-    session.location || 'Unknown Location',
-  ]);
+  `,
+    [
+      session.deviceName || "Unknown Device",
+      session.platform || "iOS",
+      session.ipAddress || "127.0.0.1",
+      session.location || "Unknown Location",
+    ],
+  );
   return result.lastInsertRowId as number;
 }
 
@@ -512,7 +605,9 @@ export async function terminateLoginSession(sessionId: number): Promise<void> {
   await run(`DELETE FROM login_sessions WHERE id = ?`, [sessionId]);
 }
 
-export async function terminateAllOtherSessions(currentSessionId: number): Promise<void> {
+export async function terminateAllOtherSessions(
+  currentSessionId: number,
+): Promise<void> {
   await run(`DELETE FROM login_sessions WHERE id != ?`, [currentSessionId]);
 }
 
@@ -527,6 +622,20 @@ export async function getUnsyncedDocuments(): Promise<LocalDocument[]> {
     FROM documents WHERE needs_sync = 1
   `);
   return rows;
+}
+
+export async function markReminderSynced(id: number) {
+  await run(`UPDATE reminders SET needs_sync = 0 WHERE id = ?`, [id]);
+}
+
+export async function markReminderAsRead(id: number): Promise<void> {
+  await run(`UPDATE reminders SET is_read = 1, needs_sync = 1 WHERE id = ?`, [
+    id,
+  ]);
+}
+
+export async function markAllRemindersAsRead(): Promise<void> {
+  await run(`UPDATE reminders SET is_read = 1, needs_sync = 1`);
 }
 
 export async function markDocumentSynced(id: number) {
@@ -580,20 +689,26 @@ export async function logDocumentAction(
 }
 
 export async function getDocumentHistory(docId: number) {
-  const rows = await queryAll<any>(`
+  const rows = await queryAll<any>(
+    `
     SELECT id, action, title, category, issuer, document_number AS "documentNumber",
            issue_date AS "issueDate", expiry_date AS "expiryDate", notes, status,
            created_at AS "createdAt"
     FROM document_history 
     WHERE document_id = ?
     ORDER BY created_at DESC
-  `, [docId]);
+  `,
+    [docId],
+  );
   return rows;
 }
 
 // Expiring/expired document queries
-export async function getExpiringDocuments(days: number = 30): Promise<LocalDocument[]> {
-  const rows = await queryAll<LocalDocument>(`
+export async function getExpiringDocuments(
+  days: number = 30,
+): Promise<LocalDocument[]> {
+  const rows = await queryAll<LocalDocument>(
+    `
     SELECT id, title, category, issuer, document_number AS "documentNumber",
            issue_date AS "issueDate", expiry_date AS "expiryDate", notes, status,
            enable_alerts AS "enableAlerts", file_url AS "fileUrl", 
@@ -604,7 +719,9 @@ export async function getExpiringDocuments(days: number = 30): Promise<LocalDocu
     WHERE status != 'expired'
     AND date(expiry_date) BETWEEN date('now') AND date('now', '+' || ? || ' days')
     ORDER BY expiry_date ASC
-  `, [days]);
+  `,
+    [days],
+  );
   return rows;
 }
 
@@ -631,7 +748,9 @@ export async function updateDocumentStatus(id: number, status: string) {
 }
 
 // Reminder operations
-export async function createReminder(reminder: Partial<LocalReminder>): Promise<number> {
+export async function createReminder(
+  reminder: Partial<LocalReminder>,
+): Promise<number> {
   const result = await run(
     `INSERT INTO reminders 
        (title, description, due_date, severity, is_read, needs_sync, created_at)

@@ -1,346 +1,366 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
   StyleSheet,
-  TouchableOpacity,
+  ScrollView,
   Alert,
-  ActivityIndicator,
-  TextInput,
+  TouchableOpacity,
+  Animated,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
-import { Ionicons } from "@expo/vector-icons";
+import { Link, useRouter } from "expo-router";
 import * as LocalAuthentication from "expo-local-authentication";
 import * as SecureStore from "expo-secure-store";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Ionicons } from "@expo/vector-icons";
+import { Input, Button, Card } from "../../components/ui";
+import { useForm } from "../../hooks/useForm";
+import { COLORS } from "../../constants";
+import { api } from "../../services/api";
+import {
+  loginSchema,
+  type LoginInput,
+  validateSchema,
+} from "@/shared/validation";
 
-import { API_BASE_URL } from "../../services/api";
-import { COLORS } from "@/constants";
-import { Toast } from "../../components/ui/Toast";
-import type { ToastType } from "../../components/ui/Toast";
-
-export default function BiometricLoginScreen() {
+export default function LoginScreen() {
   const router = useRouter();
-  const [isAuthenticating, setIsAuthenticating] = useState(false);
-  const [biometricsEnabled, setBiometricsEnabled] = useState(false);
-  const [pin, setPin] = useState("");
-  const [showPinEntry, setShowPinEntry] = useState(false);
-  const [pinError, setPinError] = useState("");
-  const [toast, setToast] = useState<{
-    visible: boolean;
-    message: string;
-    type: ToastType;
-  }>({ visible: false, message: "", type: "success" });
+  const [isBiometricSupported, setIsBiometricSupported] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  // 6. Stop the pulse animation when the screen unmounts
+  useEffect(() => {
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 1.04, // Subtler scaling effect
+          duration: 1000,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 1,
+          duration: 1000,
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    animation.start();
+    return () => animation.stop();
+  }, [pulseAnim]);
+
+  // 3 & 4. Check hardware capability, OS enrollment, and app-level biometric toggle
   useEffect(() => {
     (async () => {
-      const stored = await AsyncStorage.getItem("biometricEnabled");
-      setBiometricsEnabled(stored === "true");
+      const compatible = await LocalAuthentication.hasHardwareAsync();
+      const enrolled = await LocalAuthentication.isEnrolledAsync();
+      const biometricSetting =
+        await SecureStore.getItemAsync("biometricEnabled");
+
+      setIsBiometricSupported(
+        compatible && enrolled && biometricSetting === "true",
+      );
     })();
   }, []);
 
-  const handlePinSubmit = async () => {
-    if (!pin) return;
-    const storedPin = await AsyncStorage.getItem("biometricPin");
-    if (storedPin !== pin) {
-      setPinError("Incorrect PIN");
-      setPin("");
-      return;
-    }
-    setShowPinEntry(false);
-    setPinError("");
-    await performBiometricAuth();
-  };
+  const form = useForm<LoginInput>({
+    initialValues: { email: "", password: "", rememberMe: false },
+    validate: (values: LoginInput) => {
+      const result = validateSchema(loginSchema, values);
+      if (result.success) {
+        return {};
+      }
+      return result.errors as Partial<Record<keyof LoginInput, string>>;
+    },
+    onSubmit: async (values) => {
+      try {
+        // 11. Email normalization
+        const normalizedValues = {
+          ...values,
+          email: values.email.trim().toLowerCase(),
+        };
 
-  const performBiometricAuth = async () => {
+        const response = await api.auth.login(normalizedValues);
+
+        // 2 & 3. Store token securely using standardized SecureStore
+        if (response?.data?.token) {
+          await SecureStore.setItemAsync("userToken", response.data.token);
+        }
+
+        // Handle rememberMe persistence securely
+        if (values.rememberMe) {
+          await SecureStore.setItemAsync(
+            "rememberedEmail",
+            normalizedValues.email,
+          );
+        } else {
+          await SecureStore.deleteItemAsync("rememberedEmail");
+        }
+
+        router.replace("/(tabs)/documents" as any);
+      } catch (err: any) {
+        // 9. Improved error handling feedback
+        const status = err?.response?.status;
+        let errorMessage = "Please check your credentials and try again.";
+
+        if (!err?.response) {
+          errorMessage =
+            "Network error. Please check your internet connection.";
+        } else if (status === 429) {
+          errorMessage =
+            "Too many failed attempts. Please wait before trying again.";
+        } else if (status >= 500) {
+          errorMessage =
+            "Something went wrong on our servers. Please try again later.";
+        } else if (err?.response?.data?.error) {
+          errorMessage = err.response.data.error;
+        }
+
+        Alert.alert("Login Failed", errorMessage);
+      }
+    },
+  });
+
+  // Simplified and secure native biometric prompt handling
+  const handleBiometricAuth = async () => {
     try {
-      setIsAuthenticating(true);
-
       const hasHardware = await LocalAuthentication.hasHardwareAsync();
       const isEnrolled = await LocalAuthentication.isEnrolledAsync();
 
       if (!hasHardware || !isEnrolled) {
         Alert.alert(
-          "Not Available",
-          "Biometric authentication is not set up on this device.",
+          "Biometrics Unavailable",
+          "Please set up Face ID or fingerprint recognition on your device settings first.",
         );
-        setIsAuthenticating(false);
         return;
       }
 
       const result = await LocalAuthentication.authenticateAsync({
-        promptMessage: "Authenticate to access your vault",
-        fallbackLabel: "Use PIN",
+        promptMessage: "Unlock your DocuGuard vault",
+        cancelLabel: "Cancel",
+        disableDeviceFallback: false,
       });
 
-      if (result.success) {
-        const token = await SecureStore.getItemAsync("userToken");
-        if (!token) {
-          Alert.alert(
-            "Session Expired",
-            "Please log in with your password first.",
-          );
-          router.replace("/(auth)/login" as any);
-          return;
-        }
-
-        const response = await fetch(`${API_BASE_URL}/profile`, {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            Accept: "application/json",
-          },
-        });
-
-        if (!response.ok) {
-          await SecureStore.deleteItemAsync("userToken").catch(() => {});
-          Alert.alert("Session Expired", "Please sign in again.");
-          router.replace("/(auth)/login" as any);
-          return;
-        }
-
-        setToast({
-          visible: true,
-          message: "Authentication successful",
-          type: "success",
-        });
-        router.replace("/(tabs)/documents" as any);
+      if (!result.success) {
+        return; // User cancelled or failed authentication gracefully
       }
-    } catch (err) {
-      Alert.alert("Authentication Error", "Biometric login failed.");
-    } finally {
-      setIsAuthenticating(false);
-    }
-  };
 
-  const handleBiometricLogin = async () => {
-    if (biometricsEnabled) {
-      setShowPinEntry(true);
-      setPinError("");
-      return;
+      const token = await SecureStore.getItemAsync("userToken");
+      if (!token) {
+        Alert.alert(
+          "Session Expired",
+          "Please sign in with your password first to re-establish your secure session.",
+        );
+        return;
+      }
+
+      // Navigate straight into documents vault upon verified biometric match
+      router.replace("/(tabs)/documents" as any);
+    } catch (error) {
+      Alert.alert(
+        "Authentication Error",
+        "An unexpected error occurred during biometric validation. Please try again.",
+      );
     }
-    await performBiometricAuth();
   };
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.content}>
-        <View style={styles.iconContainer}>
-          <Ionicons name="finger-print" size={80} color={COLORS.primary} />
+      <ScrollView
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View style={styles.header}>
+          <Text style={styles.title}>Welcome Back</Text>
+          <Text style={styles.subtitle}>
+            Sign in to access your secure documents
+          </Text>
         </View>
 
-        <Text style={styles.title}>Welcome Back</Text>
-        <Text style={styles.subtitle}>Unlock your document vault securely</Text>
+        <Card>
+          <Input
+            label="Email"
+            placeholder="you@example.com"
+            value={form.values.email}
+            onChangeText={form.handleChange("email")}
+            onBlur={form.handleBlur("email")}
+            error={form.touched.email ? form.errors.email : undefined}
+            keyboardType="email-address"
+            autoComplete="email"
+            textContentType="emailAddress"
+          />
 
-        {showPinEntry ? (
-          <View style={styles.pinContainer}>
-            <Text style={styles.pinLabel}>Enter your PIN to continue</Text>
-            <View style={styles.pinRow}>
-              {[0, 1, 2].map((i) => (
-                <View
-                  key={i}
-                  style={[
-                    styles.pinDot,
-                    i < pin.length && styles.pinDotActive,
-                  ]}
-                />
-              ))}
-            </View>
-            <TextInput
-              style={styles.pinInput}
-              placeholder="Enter PIN"
-              placeholderTextColor="#999"
-              keyboardType="number-pad"
-              maxLength={6}
-              value={pin}
-              onChangeText={setPin}
-              autoCorrect={false}
-              secureTextEntry
-              onSubmitEditing={handlePinSubmit}
+          <View style={styles.passwordWrapper}>
+            <Input
+              label="Password"
+              placeholder="••••••••"
+              value={form.values.password}
+              onChangeText={form.handleChange("password")}
+              onBlur={form.handleBlur("password")}
+              error={form.touched.password ? form.errors.password : undefined}
+              secureTextEntry={!showPassword}
+              autoComplete="password"
+              textContentType="password"
             />
-            {pinError ? (
-              <Text style={styles.pinError}>{pinError}</Text>
-            ) : null}
             <TouchableOpacity
-              style={styles.pinSubmit}
-              onPress={handlePinSubmit}
+              style={styles.eyeIcon}
+              onPress={() => setShowPassword(!showPassword)}
+              accessibilityRole="button"
+              accessibilityLabel={
+                showPassword ? "Hide password" : "Show password"
+              }
             >
-              <Text style={styles.pinSubmitText}>Continue</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.cancelPin}
-              onPress={() => {
-                setShowPinEntry(false);
-                setPin("");
-                setPinError("");
-              }}
-            >
-              <Text style={styles.cancelPinText}>Cancel</Text>
+              <Ionicons
+                name={showPassword ? "eye-off" : "eye"}
+                size={22}
+                color={COLORS.textSecondary}
+              />
             </TouchableOpacity>
           </View>
-        ) : (
-          <>
+
+          <View style={styles.row}>
             <TouchableOpacity
-              style={styles.button}
-              onPress={handleBiometricLogin}
-              disabled={isAuthenticating}
+              style={styles.checkboxContainer}
+              disabled={form.isSubmitting}
+              onPress={() =>
+                form.handleChange("rememberMe")(!form.values.rememberMe)
+              }
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: !!form.values.rememberMe }}
+              accessibilityLabel="Remember me"
             >
-              {isAuthenticating ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <>
-                  <Ionicons
-                    name="scan"
-                    size={20}
-                    color="#fff"
-                    style={{ marginRight: 8 }}
-                  />
-                  <Text style={styles.buttonText}>Authenticate</Text>
-                </>
-              )}
+              <Ionicons
+                name={form.values.rememberMe ? "checkbox" : "square-outline"}
+                size={22}
+                color={
+                  form.values.rememberMe ? COLORS.primary : COLORS.textSecondary
+                }
+              />
+              <Text style={styles.checkboxLabel}>Remember me</Text>
             </TouchableOpacity>
-          </>
+
+            <Link href="/(auth)/forgot-password" asChild>
+              <TouchableOpacity>
+                <Text style={styles.forgotPasswordText}>Forgot password?</Text>
+              </TouchableOpacity>
+            </Link>
+          </View>
+
+          <View style={{ marginTop: 12 }}>
+            <Button
+              title="Sign In"
+              onPress={form.handleSubmit}
+              loading={form.isSubmitting}
+            />
+          </View>
+        </Card>
+
+        {isBiometricSupported && (
+          <View style={styles.biometricSection}>
+            <Text style={styles.orText}>OR USE BIOMETRICS</Text>
+            <TouchableOpacity
+              onPress={handleBiometricAuth}
+              style={styles.fingerprintButton}
+              disabled={form.isSubmitting}
+              accessibilityRole="button"
+              accessibilityLabel="Sign in using Face ID or fingerprint"
+            >
+              <Animated.View
+                style={[
+                  styles.fingerprintRing,
+                  { transform: [{ scale: pulseAnim }] },
+                ]}
+              >
+                <Ionicons
+                  name="finger-print"
+                  size={40}
+                  color={COLORS.primary}
+                />
+              </Animated.View>
+            </TouchableOpacity>
+            <Text style={styles.biometricHint}>Use Face ID or Fingerprint</Text>
+          </View>
         )}
 
-        {!showPinEntry && (
-          <TouchableOpacity
-            style={styles.fallbackButton}
-            onPress={() => router.replace("/(auth)/login" as any)}
-          >
-            <Text style={styles.fallbackText}>Use Password Instead</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-      <Toast
-        visible={toast.visible}
-        message={toast.message}
-        type={toast.type}
-        onDismiss={() => setToast((t) => ({ ...t, visible: false }))}
-      />
+        <View style={styles.footer}>
+          <Text style={styles.footerText}>Don't have an account? </Text>
+          <Link href="/(auth)/register" asChild>
+            <TouchableOpacity>
+              <Text style={styles.link}>Sign up</Text>
+            </TouchableOpacity>
+          </Link>
+        </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-  },
-  content: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 24,
-  },
-  iconContainer: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: `${COLORS.primary}15`,
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 24,
-  },
+  container: { flex: 1, backgroundColor: COLORS.background },
+  content: { padding: 20 },
+  header: { alignItems: "center", marginBottom: 30, marginTop: 20 },
   title: {
-    fontSize: 26,
+    fontSize: 28,
     fontWeight: "700",
     color: COLORS.text,
     marginBottom: 8,
   },
-  subtitle: {
-    fontSize: 14,
-    color: COLORS.textSecondary || "#777",
-    marginBottom: 40,
-    textAlign: "center",
-  },
-  button: {
+  subtitle: { fontSize: 14, color: COLORS.textSecondary, textAlign: "center" },
+  passwordWrapper: { position: "relative" },
+  eyeIcon: { position: "absolute", right: 18, top: 43 },
+  row: {
     flexDirection: "row",
-    backgroundColor: COLORS.primary,
-    paddingVertical: 14,
-    paddingHorizontal: 32,
-    borderRadius: 12,
+    justifyContent: "space-between",
     alignItems: "center",
-    justifyContent: "center",
-    width: "100%",
-    maxWidth: 280,
-    marginBottom: 16,
+    marginVertical: 12,
   },
-  buttonText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  fallbackButton: {
-    paddingVertical: 10,
-  },
-  fallbackText: {
+  checkboxContainer: { flexDirection: "row", alignItems: "center", gap: 8 },
+  checkboxLabel: { color: COLORS.textSecondary, fontSize: 14 },
+  forgotPasswordText: {
     color: COLORS.primary,
     fontSize: 14,
-    fontWeight: "600",
+    fontWeight: "500",
   },
-  pinContainer: {
-    alignItems: "center",
-    width: "100%",
-    maxWidth: 280,
-  },
-  pinLabel: {
-    fontSize: 14,
+  biometricSection: { marginTop: 30, alignItems: "center" },
+  orText: {
     color: COLORS.textSecondary,
-    marginBottom: 16,
-  },
-  pinRow: {
-    flexDirection: "row",
-    gap: 12,
-    marginBottom: 16,
-  },
-  pinDot: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    borderWidth: 2,
-    borderColor: COLORS.border,
-  },
-  pinDotActive: {
-    backgroundColor: COLORS.primary,
-    borderColor: COLORS.primary,
-  },
-  pinInput: {
-    width: "100%",
-    height: 48,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    textAlign: "center",
-    fontSize: 18,
-    letterSpacing: 4,
-    backgroundColor: "#fff",
-    marginBottom: 8,
-  },
-  pinError: {
-    color: COLORS.danger,
     fontSize: 12,
     marginBottom: 12,
+    letterSpacing: 1,
   },
-  pinSubmit: {
-    backgroundColor: COLORS.primary,
-    paddingVertical: 12,
-    paddingHorizontal: 32,
-    borderRadius: 12,
-    marginTop: 8,
-    marginBottom: 12,
+  fingerprintButton: {
+    width: 80,
+    height: 80,
+    justifyContent: "center",
     alignItems: "center",
   },
-  pinSubmitText: {
-    color: "#fff",
-    fontWeight: "600",
-    fontSize: 14,
+  fingerprintRing: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    borderWidth: 2,
+    borderColor: COLORS.primary,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#EFF6FF",
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 5,
+    elevation: 3,
   },
-  cancelPin: {
-    paddingVertical: 8,
-  },
-  cancelPinText: {
+  biometricHint: {
+    marginTop: 8,
+    fontSize: 12,
     color: COLORS.textSecondary,
-    fontSize: 13,
   },
+  footer: {
+    flexDirection: "row",
+    justifyContent: "center",
+    marginTop: 30,
+    paddingBottom: 20,
+  },
+  footerText: { color: COLORS.textSecondary, fontSize: 14 },
+  link: { color: COLORS.primary, fontSize: 14, fontWeight: "600" },
 });
