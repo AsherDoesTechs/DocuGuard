@@ -58,6 +58,7 @@ interface UserProfile {
   notifyExpiry: boolean;
   twoFactor: boolean;
   biometricEnabled: boolean;
+  appLockEnabled: boolean;
   subscription: SubscriptionDetails;
   serialNumber: string;
 }
@@ -186,6 +187,7 @@ export default function ProfileScreen() {
     enabled: false,
     type: "unknown",
   });
+  const [appLockEnabled, setAppLockEnabled] = useState(false);
   const [savingSecurity, setSavingSecurity] = useState(false);
 
   const [notifyEmail, setNotifyEmail] = useState(true);
@@ -247,12 +249,15 @@ export default function ProfileScreen() {
       }
 
       const storedBiometric = await AsyncStorage.getItem("biometricEnabled");
+      const storedAppLock = await AsyncStorage.getItem("appLockEnabled");
+
       setBiometric({
         available: hasHardware,
         enrolled: isEnrolled,
         enabled: storedBiometric === "true" && hasHardware && isEnrolled,
         type: bioType,
       });
+      setAppLockEnabled(storedAppLock === "true");
     } catch (err) {
       console.warn("Biometric check failed:", err);
     }
@@ -288,6 +293,7 @@ export default function ProfileScreen() {
             serialNumber,
           },
           biometricEnabled: false,
+          appLockEnabled: false,
         });
         setPersonalInfo({
           name: localProfile.name || "",
@@ -426,6 +432,25 @@ export default function ProfileScreen() {
     }
   };
 
+  const handleToggleAppLock = async (value: boolean) => {
+    if (value && (!biometric.available || !biometric.enrolled)) {
+      return Alert.alert(
+        "Error",
+        "App lock requires device biometrics or passcode to be configured.",
+      );
+    }
+    try {
+      await AsyncStorage.setItem("appLockEnabled", String(value));
+      setAppLockEnabled(value);
+      showToast(
+        value ? "App Lock enabled successfully" : "App Lock disabled",
+        "success",
+      );
+    } catch {
+      showToast("Failed to update App Lock preference", "error");
+    }
+  };
+
   const handleSaveSecurity = async () => {
     if (!passwords.current) {
       return Alert.alert("Error", "Please enter your current password.");
@@ -447,6 +472,7 @@ export default function ProfileScreen() {
         currentPassword: passwords.current,
         twoFactor,
         biometricEnabled: biometric.enabled,
+        appLockEnabled,
       };
       if (passwords.new) {
         payload.newPassword = passwords.new;
@@ -529,7 +555,11 @@ export default function ProfileScreen() {
           style: "destructive",
           onPress: async () => {
             try {
-              await AsyncStorage.multiRemove(["userToken", "biometricEnabled"]);
+              await AsyncStorage.multiRemove([
+                "userToken",
+                "biometricEnabled",
+                "appLockEnabled",
+              ]);
               router.replace("/auth/login" as any);
             } catch {
               showToast("Failed to sign out cleanly", "error");
@@ -742,6 +772,22 @@ export default function ProfileScreen() {
                       onValueChange={handleToggleBiometric}
                     />
                   </View>
+
+                  {/* App Lock Section Added Below */}
+                  <Text style={[styles.sectionSubtitle, { marginTop: 15 }]}>
+                    App Protection
+                  </Text>
+                  <View style={styles.rowBetween}>
+                    <Text style={styles.label}>
+                      Require App Lock on Startup
+                    </Text>
+                    <Switch
+                      disabled={!biometric.available || !biometric.enrolled}
+                      value={appLockEnabled}
+                      onValueChange={handleToggleAppLock}
+                    />
+                  </View>
+
                   {!biometric.enrolled && (
                     <Text style={styles.warningText}>
                       Biometrics not enrolled on this device settings.
@@ -941,24 +987,55 @@ export default function ProfileScreen() {
   );
 }
 
+// Ensure you keep your existing stylesheets or definitions below
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
-  scrollContent: { padding: 16, paddingBottom: 40 },
+  scrollContent: { padding: 16 },
   headerContainer: {
     flexDirection: "row",
     alignItems: "center",
     marginBottom: 20,
   },
-  headerTextContainer: { flex: 1, marginLeft: 16 },
-  userName: { fontSize: 20, fontWeight: "700", color: COLORS.text },
-  userEmail: { fontSize: 14, color: COLORS.textSecondary, marginTop: 2 },
-  badgeContainer: {
-    flexDirection: "row",
-    marginTop: 6,
-    gap: 10,
+  uniqueAvatarContainer: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: COLORS.primary,
+    justifyContent: "center",
     alignItems: "center",
+    overflow: "hidden",
   },
-  badgeText: { fontSize: 12, fontWeight: "600", color: COLORS.primary },
+  abstractShape: { position: "absolute" },
+  shape1: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: "rgba(255,255,255,0.2)",
+    top: -5,
+    left: -5,
+  },
+  shape2: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "rgba(255,255,255,0.1)",
+    bottom: -10,
+    right: -10,
+  },
+  shape3: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: "rgba(255,255,255,0.15)",
+    top: 15,
+    right: 10,
+  },
+  avatarInitials: { color: "#fff", fontSize: 20, fontWeight: "bold" },
+  headerTextContainer: { marginLeft: 15, flex: 1 },
+  userName: { fontSize: 18, fontWeight: "bold", color: COLORS.text },
+  userEmail: { fontSize: 14, color: COLORS.textSecondary, marginBottom: 4 },
+  badgeContainer: { flexDirection: "row", gap: 10 },
+  badgeText: { fontSize: 12, color: COLORS.primary, fontWeight: "600" },
   serialText: { fontSize: 12, color: COLORS.textSecondary },
   storageCard: { marginBottom: 20, padding: 16 },
   storageHeader: {
@@ -967,19 +1044,19 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   storageTitle: {
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: "600",
-    color: COLORS.text,
     marginLeft: 8,
+    color: COLORS.text,
   },
   storageDetails: {
-    fontSize: 13,
+    fontSize: 14,
     color: COLORS.textSecondary,
-    marginBottom: 10,
+    marginBottom: 8,
   },
   progressBarBackground: {
     height: 8,
-    backgroundColor: "#E5E7EB",
+    backgroundColor: COLORS.border,
     borderRadius: 4,
     overflow: "hidden",
   },
@@ -988,61 +1065,53 @@ const styles = StyleSheet.create({
   settingRow: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: COLORS.surface || "#fff",
     padding: 16,
+    backgroundColor: COLORS.surface,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: COLORS.border || "#E5E7EB",
+    borderColor: COLORS.border,
   },
   activeSettingRow: { borderColor: COLORS.primary },
-  settingInfo: { flex: 1, marginLeft: 12, marginRight: 8 },
-  settingTitle: { fontSize: 15, fontWeight: "600", color: COLORS.text },
-  settingSubtitle: { fontSize: 12, color: COLORS.textSecondary, marginTop: 2 },
+  settingInfo: { flex: 1, marginLeft: 12, marginRight: 12 },
+  settingTitle: { fontSize: 16, fontWeight: "500", color: COLORS.text },
+  settingSubtitle: { fontSize: 13, color: COLORS.textSecondary, marginTop: 2 },
   expandedSection: {
-    backgroundColor: "#F9FAFB",
     padding: 16,
+    backgroundColor: COLORS.surface,
     borderRadius: 12,
-    marginTop: -4,
-    marginBottom: 6,
+    marginTop: -6,
+    marginBottom: 10,
     borderWidth: 1,
-    borderColor: COLORS.border || "#E5E7EB",
+    borderColor: COLORS.border,
   },
   inputLabel: {
-    fontSize: 13,
-    fontWeight: "600",
+    fontSize: 14,
+    fontWeight: "500",
     color: COLORS.text,
     marginBottom: 6,
     marginTop: 10,
   },
   input: {
-    backgroundColor: "#fff",
     borderWidth: 1,
-    borderColor: "#D1D5DB",
+    borderColor: COLORS.border,
     borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    padding: 12,
     fontSize: 14,
     color: COLORS.text,
-    marginBottom: 10,
+    backgroundColor: COLORS.background,
+    marginBottom: 12,
   },
   saveButton: {
     backgroundColor: COLORS.primary,
-    paddingVertical: 12,
+    padding: 12,
     borderRadius: 8,
     alignItems: "center",
-    marginTop: 10,
+    justifyContent: "center",
   },
-  verifyButton: {
-    backgroundColor: COLORS.success || "#10B981",
-    paddingVertical: 12,
-    borderRadius: 8,
-    alignItems: "center",
-    marginTop: 10,
-  },
-  saveButtonText: { color: "#fff", fontWeight: "600", fontSize: 14 },
+  saveButtonText: { color: "#fff", fontSize: 14, fontWeight: "600" },
   sectionSubtitle: {
-    fontSize: 14,
-    fontWeight: "700",
+    fontSize: 15,
+    fontWeight: "600",
     color: COLORS.text,
     marginBottom: 8,
   },
@@ -1050,47 +1119,47 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginVertical: 6,
+    marginVertical: 8,
   },
   label: { fontSize: 14, color: COLORS.text },
-  totpSetupContainer: { marginTop: 10, marginBottom: 10 },
+  totpSetupContainer: {
+    marginTop: 10,
+    padding: 12,
+    backgroundColor: COLORS.background,
+    borderRadius: 8,
+  },
   totpInstructions: {
     fontSize: 13,
     color: COLORS.textSecondary,
-    marginBottom: 4,
+    marginBottom: 6,
   },
-  totpUriText: {
-    fontSize: 11,
-    color: COLORS.primary,
-    backgroundColor: "#EEF2FF",
-    padding: 8,
+  totpUriText: { fontSize: 12, color: COLORS.primary, marginBottom: 10 },
+  verifyButton: {
+    backgroundColor: COLORS.secondary || COLORS.primary,
+    padding: 10,
     borderRadius: 6,
-    marginBottom: 10,
+    alignItems: "center",
   },
   warningText: { fontSize: 12, color: COLORS.danger, marginTop: 4 },
   sessionRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    backgroundColor: "#fff",
-    padding: 10,
-    borderRadius: 8,
-    marginTop: 6,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
   },
-  sessionDevice: { fontSize: 13, fontWeight: "600", color: COLORS.text },
-  sessionMeta: { fontSize: 11, color: COLORS.textSecondary, marginTop: 2 },
-  revokeText: { fontSize: 13, fontWeight: "600", color: COLORS.danger },
-  selectorRow: { flexDirection: "row", gap: 8, marginTop: 4 },
+  sessionDevice: { fontSize: 14, fontWeight: "500", color: COLORS.text },
+  sessionMeta: { fontSize: 12, color: COLORS.textSecondary },
+  revokeText: { fontSize: 13, color: COLORS.danger, fontWeight: "600" },
+  selectorRow: { flexDirection: "row", gap: 10, marginTop: 6 },
   selectorChip: {
     flex: 1,
-    paddingVertical: 8,
-    alignItems: "center",
-    borderRadius: 6,
+    paddingVertical: 10,
     borderWidth: 1,
-    borderColor: "#D1D5DB",
-    backgroundColor: "#fff",
+    borderColor: COLORS.border,
+    borderRadius: 8,
+    alignItems: "center",
   },
   selectorChipActive: {
     backgroundColor: COLORS.primary,
@@ -1098,40 +1167,4 @@ const styles = StyleSheet.create({
   },
   selectorChipText: { fontSize: 12, fontWeight: "600", color: COLORS.text },
   selectorChipTextActive: { color: "#fff" },
-  uniqueAvatarContainer: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: COLORS.primary,
-    justifyContent: "center",
-    alignItems: "center",
-    position: "relative",
-    overflow: "hidden",
-  },
-  abstractShape: { position: "absolute", opacity: 0.2 },
-  shape1: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: "#fff",
-    top: -5,
-    left: -5,
-  },
-  shape2: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "#fff",
-    bottom: -10,
-    right: -10,
-  },
-  shape3: {
-    width: 20,
-    height: 20,
-    borderRadius: 4,
-    backgroundColor: "#fff",
-    top: 20,
-    right: 5,
-  },
-  avatarInitials: { color: "#fff", fontSize: 20, fontWeight: "700" },
 });

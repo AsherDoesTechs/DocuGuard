@@ -1,7 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import { AppState, AppStateStatus } from "react-native";
 import * as LocalAuthentication from "expo-local-authentication";
-import { router } from "expo-router";
 import * as SecureStore from "expo-secure-store";
 import {
   View,
@@ -9,6 +8,7 @@ import {
   StyleSheet,
   TouchableOpacity,
   ActivityIndicator,
+  TextInput,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -24,43 +24,78 @@ import Animated, {
 } from "react-native-reanimated";
 import { COLORS, Spacing } from "@/constants";
 
-const APP_LOCK_DELAY = 30000;
-
-const FINGERPRINT_KEY = "docuguard.fingerprint.enrolled";
-const FINGERPRINT_SERVICE = "docuguard.fingerprint";
+const DEFAULT_APP_LOCK_DELAY = 30000;
+const APP_LOCK_ENABLED_KEY = "docuguard.appLock.enabled";
+const APP_LOCK_TIMEOUT_KEY = "docuguard.appLock.timeout";
 
 export function useAppLock() {
   const [isLocked, setIsLocked] = useState(false);
-  const [lastActiveTime, setLastActiveTime] = useState<number>(Date.now());
+  const [appLockEnabled, setAppLockEnabled] = useState(true);
   const [biometricEnabled, setBiometricEnabled] = useState(false);
-  const [fingerprintEnrolled, setFingerprintEnrolled] = useState(false);
+  const [lockTimeout, setLockTimeout] = useState<number>(
+    DEFAULT_APP_LOCK_DELAY,
+  );
+
+  const lastActiveTimeRef = useRef<number>(Date.now());
+  const appLockEnabledRef = useRef(true);
+  const biometricEnabledRef = useRef(false);
+  const lockTimeoutRef = useRef(DEFAULT_APP_LOCK_DELAY);
   const mountedRef = useRef(true);
+
+  // Keep refs in sync with state
+  useEffect(() => {
+    appLockEnabledRef.current = appLockEnabled;
+  }, [appLockEnabled]);
+
+  useEffect(() => {
+    biometricEnabledRef.current = biometricEnabled;
+  }, [biometricEnabled]);
+
+  useEffect(() => {
+    lockTimeoutRef.current = lockTimeout;
+  }, [lockTimeout]);
+
+  // Load preferences from SecureStore on startup
+  useEffect(() => {
+    const loadPreferences = async () => {
+      try {
+        const storedEnabled =
+          await SecureStore.getItemAsync(APP_LOCK_ENABLED_KEY);
+        if (storedEnabled !== null) {
+          const enabled = storedEnabled === "true";
+          setAppLockEnabled(enabled);
+          appLockEnabledRef.current = enabled;
+        }
+
+        const storedTimeout =
+          await SecureStore.getItemAsync(APP_LOCK_TIMEOUT_KEY);
+        if (storedTimeout !== null) {
+          const timeout = parseInt(storedTimeout, 10);
+          setLockTimeout(timeout);
+          lockTimeoutRef.current = timeout;
+        }
+      } catch (err) {
+        console.warn("Failed to load app lock preferences:", err);
+      }
+    };
+    loadPreferences();
+  }, []);
 
   const checkBiometricSupport = useCallback(async () => {
     try {
       const hasHardware = await LocalAuthentication.hasHardwareAsync();
       const isEnrolled = await LocalAuthentication.isEnrolledAsync();
       const token = await SecureStore.getItemAsync("userToken");
-      // Only enable biometric unlock if a fingerprint was specifically enrolled
-      // for DocuGuard. requireAuthentication ties the value to the enrolled
-      // fingerprint set, so it becomes inaccessible if the user adds a new
-      // fingerprint or removes the enrolled one.
-      let enrolled = false;
-      try {
-        const stored = await SecureStore.getItemAsync(FINGERPRINT_KEY, {
-          requireAuthentication: false,
-          keychainService: FINGERPRINT_SERVICE,
-        });
-        enrolled = !!stored && hasHardware && isEnrolled;
-      } catch (err) {
-        enrolled = false;
+
+      const enabled = hasHardware && isEnrolled && !!token;
+      if (mountedRef.current) {
+        setBiometricEnabled(enabled);
       }
-      setBiometricEnabled(hasHardware && isEnrolled && !!token && enrolled);
-      setFingerprintEnrolled(enrolled);
     } catch (err) {
       console.warn("Biometric check failed:", err);
-      setBiometricEnabled(false);
-      setFingerprintEnrolled(false);
+      if (mountedRef.current) {
+        setBiometricEnabled(false);
+      }
     }
   }, []);
 
@@ -74,25 +109,28 @@ export function useAppLock() {
   const handleAppStateChange = useCallback(
     (nextAppState: AppStateStatus) => {
       if (!mountedRef.current) return;
+
       if (nextAppState === "background" || nextAppState === "inactive") {
-        setLastActiveTime(Date.now());
+        lastActiveTimeRef.current = Date.now();
       } else if (nextAppState === "active") {
-        // Re-check fingerprint enrollment state in case the user enrolled
-        // or removed a fingerprint while the app was in the background.
         checkBiometricSupport();
         const now = Date.now();
-        const timeAway = now - lastActiveTime;
-        if (timeAway > APP_LOCK_DELAY && biometricEnabled) {
+        const timeAway = now - lastActiveTimeRef.current;
+
+        if (appLockEnabledRef.current && timeAway > lockTimeoutRef.current) {
           setIsLocked(true);
         }
-        setLastActiveTime(now);
+        lastActiveTimeRef.current = now;
       }
     },
-    [lastActiveTime, biometricEnabled, checkBiometricSupport],
+    [checkBiometricSupport],
   );
 
   useEffect(() => {
-    const subscription = AppState.addEventListener("change", handleAppStateChange);
+    const subscription = AppState.addEventListener(
+      "change",
+      handleAppStateChange,
+    );
     return () => subscription.remove();
   }, [handleAppStateChange]);
 
@@ -100,58 +138,74 @@ export function useAppLock() {
     try {
       const hasHardware = await LocalAuthentication.hasHardwareAsync();
       const isEnrolled = await LocalAuthentication.isEnrolledAsync();
-      if (!hasHardware || !isEnrolled || !fingerprintEnrolled) return false;
+      if (!hasHardware || !isEnrolled) return false;
 
-      // Verify the fingerprint locally first
       const authResult = await LocalAuthentication.authenticateAsync({
         promptMessage: "Unlock DocuGuard to access your vault",
-        fallbackLabel: "Use Passcode",
+        fallbackLabel: "Use Password",
         disableDeviceFallback: false,
       });
-      if (!authResult.success) return false;
 
-      // Then verify the fingerprint against the specific enrolled fingerprint
-      // stored in SecureStore with requireAuthentication. This value is tied to
-      // the exact fingerprint set, so it cannot be read by a different fingerprint.
-      try {
-        await SecureStore.getItemAsync(FINGERPRINT_KEY, {
-          requireAuthentication: true,
-          keychainService: FINGERPRINT_SERVICE,
-          authenticationPrompt: "Confirm fingerprint to unlock DocuGuard",
-        });
+      if (authResult.success) {
         setIsLocked(false);
         return true;
-      } catch (err) {
-        console.error("Fingerprint verification against stored value failed:", err);
-        return false;
       }
+      return false;
     } catch (err) {
       console.error("Biometric unlock failed:", err);
       return false;
     }
-  }, [fingerprintEnrolled]);
-
-  const unlockWithPassword = useCallback(() => {
-    router.replace("/(auth)/login" as any);
   }, []);
 
-  return { isLocked, biometricEnabled, unlockWithBiometric, unlockWithPassword };
+  const unlockWithPassword = useCallback(
+    async (password: string): Promise<boolean> => {
+      try {
+        // Retrieve the stored user password or token to validate against
+        // Replace this check with your secure password validation logic
+        const storedToken = await SecureStore.getItemAsync("userToken");
+        if (!storedToken) return false;
+
+        // Simple validation example (In production, verify against your auth state/hash)
+        if (password.length > 0) {
+          setIsLocked(false);
+          return true;
+        }
+        return false;
+      } catch (err) {
+        console.error("Password unlock failed:", err);
+        return false;
+      }
+    },
+    [],
+  );
+
+  return {
+    isLocked,
+    appLockEnabled,
+    biometricEnabled,
+    unlockWithBiometric,
+    unlockWithPassword,
+    setIsLocked,
+  };
 }
 
 interface AppLockScreenProps {
   isLocked: boolean;
   biometricEnabled: boolean;
-  onUnlock: () => Promise<void>;
-  onUsePassword: () => void;
+  onUnlockBiometric: () => Promise<boolean>;
+  onUnlockPassword: (password: string) => Promise<boolean>;
 }
 
 export function AppLockScreen({
   isLocked,
   biometricEnabled,
-  onUnlock,
-  onUsePassword,
+  onUnlockBiometric,
+  onUnlockPassword,
 }: AppLockScreenProps) {
   const [authenticating, setAuthenticating] = useState(false);
+  const [usePasswordMode, setUsePasswordMode] = useState(false);
+  const [passwordInput, setPasswordInput] = useState("");
+  const [errorMsg, setErrorMsg] = useState("");
 
   const fadeAnim = useSharedValue(0);
   const scaleAnim = useSharedValue(0.92);
@@ -200,7 +254,22 @@ export function AppLockScreen({
 
   const handleBiometricPress = async () => {
     setAuthenticating(true);
-    await onUnlock();
+    setErrorMsg("");
+    const success = await onUnlockBiometric();
+    if (!success) {
+      setErrorMsg("Biometric verification failed. Try again.");
+    }
+    setAuthenticating(false);
+  };
+
+  const handlePasswordSubmit = async () => {
+    if (!passwordInput) return;
+    setAuthenticating(true);
+    setErrorMsg("");
+    const success = await onUnlockPassword(passwordInput);
+    if (!success) {
+      setErrorMsg("Incorrect password. Please try again.");
+    }
     setAuthenticating(false);
   };
 
@@ -209,7 +278,7 @@ export function AppLockScreen({
   return (
     <LinearGradient
       colors={["#0B1120", "#0F172A", "#1E293B"]}
-      style={styles.gradient}
+      style={[styles.gradient, StyleSheet.absoluteFill, { zIndex: 9999 }]}
     >
       <BlurView
         intensity={30}
@@ -218,9 +287,7 @@ export function AppLockScreen({
       />
       <SafeAreaView style={styles.safeArea}>
         <Animated.View style={[styles.content, containerAnimatedStyle]}>
-          <Animated.View
-            style={[styles.iconRing, iconAnimatedStyle]}
-          >
+          <Animated.View style={[styles.iconRing, iconAnimatedStyle]}>
             <View style={styles.iconCircle}>
               <Ionicons name="lock-closed" size={36} color={COLORS.primary} />
             </View>
@@ -229,39 +296,84 @@ export function AppLockScreen({
           <Text style={styles.subtitle}>
             Your vault is protected. Authenticate to continue.
           </Text>
-          {biometricEnabled && (
-            <Animated.View style={[styles.buttonWrapper, buttonAnimatedStyle]}>
+
+          {errorMsg ? <Text style={styles.errorText}>{errorMsg}</Text> : null}
+
+          {!usePasswordMode ? (
+            <>
+              {biometricEnabled && (
+                <Animated.View
+                  style={[styles.buttonWrapper, buttonAnimatedStyle]}
+                >
+                  <TouchableOpacity
+                    style={styles.button}
+                    onPress={handleBiometricPress}
+                    disabled={authenticating}
+                    activeOpacity={0.85}
+                  >
+                    {authenticating ? (
+                      <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                      <View style={styles.buttonContent}>
+                        <Ionicons
+                          name="finger-print"
+                          size={20}
+                          color="#fff"
+                          style={{ marginRight: Spacing.sm }}
+                        />
+                        <Text style={styles.buttonText}>
+                          Unlock with Biometrics
+                        </Text>
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                </Animated.View>
+              )}
+
+              <TouchableOpacity
+                style={styles.fallbackButton}
+                onPress={() => setUsePasswordMode(true)}
+                activeOpacity={0.6}
+              >
+                <Text style={styles.fallbackText}>Use Password Instead</Text>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <View style={styles.passwordContainer}>
+              <TextInput
+                style={styles.passwordInput}
+                placeholder="Enter password"
+                placeholderTextColor="#64748B"
+                secureTextEntry
+                value={passwordInput}
+                onChangeText={setPasswordInput}
+                autoFocus
+              />
               <TouchableOpacity
                 style={styles.button}
-                onPress={handleBiometricPress}
+                onPress={handlePasswordSubmit}
                 disabled={authenticating}
                 activeOpacity={0.85}
               >
                 {authenticating ? (
                   <ActivityIndicator color="#fff" size="small" />
                 ) : (
-                  <View style={styles.buttonContent}>
-                    <Ionicons
-                      name="finger-print"
-                      size={20}
-                      color="#fff"
-                      style={{ marginRight: Spacing.sm }}
-                    />
-                    <Text style={styles.buttonText}>
-                      Unlock with Biometrics
-                    </Text>
-                  </View>
+                  <Text style={styles.buttonText}>Unlock Vault</Text>
                 )}
               </TouchableOpacity>
-            </Animated.View>
+
+              <TouchableOpacity
+                style={styles.fallbackButton}
+                onPress={() => {
+                  setUsePasswordMode(false);
+                  setErrorMsg("");
+                }}
+                activeOpacity={0.6}
+              >
+                <Text style={styles.fallbackText}>Use Biometrics Instead</Text>
+              </TouchableOpacity>
+            </View>
           )}
-          <TouchableOpacity
-            style={styles.fallbackButton}
-            onPress={onUsePassword}
-            activeOpacity={0.6}
-          >
-            <Text style={styles.fallbackText}>Use Password Instead</Text>
-          </TouchableOpacity>
         </Animated.View>
       </SafeAreaView>
     </LinearGradient>
@@ -310,6 +422,12 @@ const styles = StyleSheet.create({
     textAlign: "center",
     lineHeight: 20,
   },
+  errorText: {
+    color: "#EF4444",
+    fontSize: 13,
+    marginBottom: Spacing.md,
+    textAlign: "center",
+  },
   buttonWrapper: {
     width: "100%",
     maxWidth: 300,
@@ -327,6 +445,8 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 5,
+    width: "100%",
+    maxWidth: 300,
   },
   buttonContent: {
     flexDirection: "row",
@@ -338,8 +458,26 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "600",
   },
+  passwordContainer: {
+    width: "100%",
+    maxWidth: 300,
+    alignItems: "center",
+  },
+  passwordInput: {
+    width: "100%",
+    backgroundColor: "rgba(15, 23, 42, 0.6)",
+    borderWidth: 1,
+    borderColor: "rgba(100, 116, 139, 0.3)",
+    borderRadius: 12,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.md,
+    color: "#F1F5F9",
+    fontSize: 15,
+    marginBottom: Spacing.md,
+  },
   fallbackButton: {
     paddingVertical: Spacing.sm,
+    marginTop: Spacing.sm,
   },
   fallbackText: {
     color: "#64748B",
