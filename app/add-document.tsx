@@ -11,7 +11,6 @@ import {
   KeyboardAvoidingView,
   Image,
   ActivityIndicator,
-  Modal,
 } from "react-native";
 import DateTimePicker, {
   DateTimePickerEvent,
@@ -33,14 +32,8 @@ const MAX_ISSUER_LENGTH = 150;
 const MAX_DOCUMENT_NUMBER_LENGTH = 50;
 const MAX_NOTES_LENGTH = 1000;
 
-const STEPS = [
-  "Type",
-  "Category",
-  "Document",
-  "Information",
-  "Scan",
-  "Review",
-] as const;
+// Updated STEPS array (Information step removed)
+const STEPS = ["Type", "Category", "Document", "Scan", "Review"] as const;
 
 interface CategoryItem {
   id: string;
@@ -268,7 +261,7 @@ const DOCUMENTS_BY_CATEGORY: Record<string, SpecificDocumentItem[]> = {
       id: "employment-id",
       title: "Company ID",
       description: "Employee identification card",
-      icon: "person-outline", // Fixed icon name
+      icon: "person-outline",
       defaultIssuer: "",
       category: "employment",
     },
@@ -304,16 +297,6 @@ function formatDate(date: Date): string {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
-}
-
-function parseDate(value: string | null): Date | null {
-  if (!value) return null;
-  const parts = value.split("-").map(Number);
-  if (parts.length !== 3) return null;
-  const [year, month, day] = parts;
-  const date = new Date(year, month - 1, day);
-  if (Number.isNaN(date.getTime())) return null;
-  return date;
 }
 
 function sanitizeText(value: string, maxLength: number): string {
@@ -532,6 +515,7 @@ export default function AddDocumentScreen() {
     if (item.defaultIssuer) {
       setIssuer(item.defaultIssuer);
     }
+    // Moves directly to Scan / Upload (Step index 3)
     setTimeout(() => setStep(3), 150);
   }
 
@@ -552,7 +536,8 @@ export default function AddDocumentScreen() {
         mimeType: asset.mimeType ?? undefined,
       });
 
-      setStep(5);
+      // Moves to Review / Edit (Step index 4)
+      setStep(4);
       showToast("Document uploaded. Ready for review.", "success");
     } catch (error) {
       Alert.alert(
@@ -577,7 +562,7 @@ export default function AddDocumentScreen() {
       if (extracted.issueDate) setIssueDate(extracted.issueDate);
       if (extracted.expiryDate) setExpiryDate(extracted.expiryDate);
 
-      setStep(5);
+      setStep(4);
       showToast(
         `Document scanned successfully (${extracted.confidence}% confidence)`,
         "success",
@@ -587,7 +572,7 @@ export default function AddDocumentScreen() {
         "The document was scanned, but information could not be extracted.",
         "warning",
       );
-      setStep(5);
+      setStep(4);
     } finally {
       setOcrLoading(false);
     }
@@ -649,7 +634,6 @@ export default function AddDocumentScreen() {
 
   async function saveDocument() {
     if (!validateInformation()) {
-      setStep(3);
       return;
     }
 
@@ -671,7 +655,7 @@ export default function AddDocumentScreen() {
         enableAlerts: true,
         processingStatus: selectedFile ? "processing" : "completed",
         needsSync: !!token,
-        fileType: selectedFile?.mimeType ?? undefined, // Fixed null conversion
+        fileType: selectedFile?.mimeType ?? undefined,
       };
 
       const localId = await createDocument(payload);
@@ -829,15 +813,122 @@ export default function AddDocumentScreen() {
     );
   }
 
-  function renderInformationStep() {
+  function renderScanStep() {
     return (
       <View>
-        <Text style={styles.questionTitle}>Document Information</Text>
+        <Text style={styles.questionTitle}>Scan or Upload</Text>
         <Text style={styles.questionSubtitle}>
-          Enter the document details. Information extracted during scanning will
-          automatically appear here.
+          Scan the document with your camera or upload an existing PDF or image.
         </Text>
 
+        <TouchableOpacity
+          style={styles.scanOption}
+          onPress={() => setScannerVisible(true)}
+        >
+          <View style={styles.scanIcon}>
+            <Ionicons name="camera-outline" size={34} color={COLORS.primary} />
+          </View>
+          <View style={styles.choiceContent}>
+            <Text style={styles.choiceTitle}>Scan Document</Text>
+            <Text style={styles.choiceDescription}>
+              Use your camera to capture the document.
+            </Text>
+          </View>
+          <Ionicons
+            name="chevron-forward"
+            size={22}
+            color={COLORS.textSecondary}
+          />
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.scanOption} onPress={pickDocument}>
+          <View style={styles.scanIcon}>
+            <Ionicons
+              name="cloud-upload-outline"
+              size={34}
+              color={COLORS.primary}
+            />
+          </View>
+          <View style={styles.choiceContent}>
+            <Text style={styles.choiceTitle}>Upload File</Text>
+            <Text style={styles.choiceDescription}>
+              Select a PDF or image from your device.
+            </Text>
+          </View>
+          <Ionicons
+            name="chevron-forward"
+            size={22}
+            color={COLORS.textSecondary}
+          />
+        </TouchableOpacity>
+
+        {/* Updated skip step index to point directly to Review (Step index 4) */}
+        <TouchableOpacity style={styles.skipButton} onPress={() => setStep(4)}>
+          <Text style={styles.skipButtonText}>Continue without scanning</Text>
+        </TouchableOpacity>
+
+        {selectedFile ? (
+          <View style={styles.filePreview}>
+            <Ionicons
+              name={
+                selectedFile.mimeType === "application/pdf"
+                  ? "document-text-outline"
+                  : "image-outline"
+              }
+              size={25}
+              color={COLORS.primary}
+            />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.fileName} numberOfLines={1}>
+                {selectedFile.name}
+              </Text>
+              <Text style={styles.fileType}>
+                {getFileTypeLabel(selectedFile.mimeType)}
+              </Text>
+            </View>
+            <TouchableOpacity onPress={() => setSelectedFile(null)}>
+              <Ionicons name="close-circle" size={23} color={COLORS.danger} />
+            </TouchableOpacity>
+          </View>
+        ) : null}
+      </View>
+    );
+  }
+
+  function renderReviewStep() {
+    return (
+      <View>
+        <Text style={styles.questionTitle}>Review & Edit Information</Text>
+        <Text style={styles.questionSubtitle}>
+          Check or update the document details before saving.
+        </Text>
+
+        {selectedFile?.uri && selectedFile.mimeType?.startsWith("image/") ? (
+          <View style={styles.previewCard}>
+            <Image
+              source={{ uri: selectedFile.uri }}
+              style={styles.previewImage}
+              resizeMode="contain"
+            />
+          </View>
+        ) : null}
+
+        {extractedData ? (
+          <View style={styles.extractionCard}>
+            <View style={styles.extractionHeader}>
+              <Ionicons name="sparkles" size={20} color={COLORS.primary} />
+              <Text style={styles.extractionTitle}>Automatic Extraction</Text>
+            </View>
+            <View style={styles.confidenceRow}>
+              <Text style={styles.confidenceLabel}>Extraction confidence</Text>
+              <Text style={styles.confidenceValue}>
+                {extractedData.confidence}%
+              </Text>
+            </View>
+          </View>
+        ) : null}
+
+        {/* Full Input Fields integrated right into Review/Edit step */}
         <Field
           label="Document Name"
           value={title}
@@ -919,170 +1010,6 @@ export default function AddDocumentScreen() {
         />
 
         <TouchableOpacity
-          style={styles.primaryButton}
-          onPress={() => {
-            if (validateInformation()) {
-              setStep(4);
-            }
-          }}
-        >
-          <Text style={styles.primaryButtonText}>Continue to Scan</Text>
-          <Ionicons name="arrow-forward" size={20} color="#fff" />
-        </TouchableOpacity>
-      </View>
-    );
-  }
-
-  function renderScanStep() {
-    return (
-      <View>
-        <Text style={styles.questionTitle}>Scan or Upload</Text>
-        <Text style={styles.questionSubtitle}>
-          Scan the document with your camera or upload an existing PDF or image.
-        </Text>
-
-        <TouchableOpacity
-          style={styles.scanOption}
-          onPress={() => setScannerVisible(true)}
-        >
-          <View style={styles.scanIcon}>
-            <Ionicons name="camera-outline" size={34} color={COLORS.primary} />
-          </View>
-          <View style={styles.choiceContent}>
-            <Text style={styles.choiceTitle}>Scan Document</Text>
-            <Text style={styles.choiceDescription}>
-              Use your camera to capture the document.
-            </Text>
-          </View>
-          <Ionicons
-            name="chevron-forward"
-            size={22}
-            color={COLORS.textSecondary}
-          />
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.scanOption} onPress={pickDocument}>
-          <View style={styles.scanIcon}>
-            <Ionicons
-              name="cloud-upload-outline"
-              size={34}
-              color={COLORS.primary}
-            />
-          </View>
-          <View style={styles.choiceContent}>
-            <Text style={styles.choiceTitle}>Upload File</Text>
-            <Text style={styles.choiceDescription}>
-              Select a PDF or image from your device.
-            </Text>
-          </View>
-          <Ionicons
-            name="chevron-forward"
-            size={22}
-            color={COLORS.textSecondary}
-          />
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.skipButton} onPress={() => setStep(5)}>
-          <Text style={styles.skipButtonText}>Continue without scanning</Text>
-        </TouchableOpacity>
-
-        {selectedFile ? (
-          <View style={styles.filePreview}>
-            <Ionicons
-              name={
-                selectedFile.mimeType === "application/pdf"
-                  ? "document-text-outline"
-                  : "image-outline"
-              }
-              size={25}
-              color={COLORS.primary}
-            />
-            <View style={{ flex: 1 }}>
-              <Text style={styles.fileName} numberOfLines={1}>
-                {selectedFile.name}
-              </Text>
-              <Text style={styles.fileType}>
-                {getFileTypeLabel(selectedFile.mimeType)}
-              </Text>
-            </View>
-            <TouchableOpacity onPress={() => setSelectedFile(null)}>
-              <Ionicons name="close-circle" size={23} color={COLORS.danger} />
-            </TouchableOpacity>
-          </View>
-        ) : null}
-      </View>
-    );
-  }
-
-  function renderReviewStep() {
-    return (
-      <View>
-        <Text style={styles.questionTitle}>Review Information</Text>
-        <Text style={styles.questionSubtitle}>
-          Check the extracted information before saving the document.
-        </Text>
-
-        {selectedFile?.uri && selectedFile.mimeType?.startsWith("image/") ? (
-          <View style={styles.previewCard}>
-            <Image
-              source={{ uri: selectedFile.uri }}
-              style={styles.previewImage}
-              resizeMode="contain"
-            />
-          </View>
-        ) : null}
-
-        {extractedData ? (
-          <View style={styles.extractionCard}>
-            <View style={styles.extractionHeader}>
-              <Ionicons name="sparkles" size={20} color={COLORS.primary} />
-              <Text style={styles.extractionTitle}>Automatic Extraction</Text>
-            </View>
-            <View style={styles.confidenceRow}>
-              <Text style={styles.confidenceLabel}>Extraction confidence</Text>
-              <Text style={styles.confidenceValue}>
-                {extractedData.confidence}%
-              </Text>
-            </View>
-          </View>
-        ) : null}
-
-        <Field
-          label="Document Name"
-          value={title}
-          required
-          placeholder="Document Name"
-          onChangeText={(value) =>
-            setTitle(sanitizeText(value, MAX_TITLE_LENGTH))
-          }
-        />
-
-        <Field
-          label="Document Number"
-          value={documentNumber}
-          required
-          placeholder="Document Number"
-          onChangeText={(value) =>
-            setDocumentNumber(sanitizeDocumentNumber(value))
-          }
-        />
-
-        <Field
-          label="Issuing Agency"
-          value={issuer}
-          required
-          placeholder="Issuing Agency"
-          onChangeText={(value) =>
-            setIssuer(sanitizeText(value, MAX_ISSUER_LENGTH))
-          }
-        />
-
-        <TouchableOpacity style={styles.editButton} onPress={() => setStep(3)}>
-          <Ionicons name="create-outline" size={20} color={COLORS.primary} />
-          <Text style={styles.editButtonText}>Edit Details Manually</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
           style={[styles.primaryButton, saving && { opacity: 0.7 }]}
           onPress={saveDocument}
           disabled={saving}
@@ -1120,35 +1047,40 @@ export default function AddDocumentScreen() {
           {step === 0 && renderTypeStep()}
           {step === 1 && renderCategoryStep()}
           {step === 2 && renderSpecificDocumentStep()}
-          {step === 3 && renderInformationStep()}
-          {step === 4 && renderScanStep()}
-          {step === 5 && renderReviewStep()}
+          {step === 3 && renderScanStep()}
+          {step === 4 && renderReviewStep()}
         </ScrollView>
-
-        {datePicker && (
-          <DateTimePicker
-            value={parseDate(issueDate || expiryDate) || new Date()}
-            mode="date"
-            display={Platform.OS === "ios" ? "spinner" : "default"}
-            onChange={handleDateChange}
-          />
-        )}
-
-        {scannerVisible && (
-          <Modal visible={scannerVisible} animationType="slide">
-            <DocumentScannerComponent
-              onClose={() => setScannerVisible(false)}
-              {...({ onScanComplete: handleScanSuccess } as any)}
-            />
-          </Modal>
-        )}
       </KeyboardAvoidingView>
+
+      {scannerVisible && (
+        <Modal visible={scannerVisible} animationType="slide">
+          <DocumentScannerComponent
+            onScanSuccess={handleScanSuccess}
+            onClose={() => setScannerVisible(false)}
+          />
+        </Modal>
+      )}
+
+      {datePicker && (
+        <DateTimePicker
+          value={
+            parseDate(datePicker === "issueDate" ? issueDate : expiryDate) ||
+            new Date()
+          }
+          mode="date"
+          display="default"
+          onChange={handleDateChange}
+        />
+      )}
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.background },
+  container: {
+    flex: 1,
+    backgroundColor: COLORS.background,
+  },
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -1156,218 +1088,285 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
   },
-  backButton: { padding: 4 },
-  headerTitle: { fontSize: 18, fontWeight: "600", color: COLORS.text },
-  scrollContent: { padding: 16, paddingBottom: 40 },
-  stepHeader: { marginBottom: 20 },
+  backButton: {
+    padding: 4,
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: "600",
+    color: COLORS.text,
+  },
+  stepHeader: {
+    paddingHorizontal: 20,
+    marginBottom: 16,
+  },
   stepLabel: {
     fontSize: 12,
-    fontWeight: "600",
+    fontWeight: "700",
     color: COLORS.primary,
     marginBottom: 4,
   },
   stepTitle: {
-    fontSize: 20,
-    fontWeight: "bold",
+    fontSize: 22,
+    fontWeight: "700",
     color: COLORS.text,
     marginBottom: 12,
   },
-  progressRow: { flexDirection: "row", gap: 4 },
+  progressRow: {
+    flexDirection: "row",
+    gap: 6,
+  },
   progressSegment: {
     flex: 1,
     height: 4,
     backgroundColor: "#E5E7EB",
     borderRadius: 2,
   },
-  progressSegmentActive: { backgroundColor: COLORS.primary },
+  progressSegmentActive: {
+    backgroundColor: COLORS.primary,
+  },
+  scrollContent: {
+    paddingHorizontal: 20,
+    paddingBottom: 40,
+  },
   questionTitle: {
     fontSize: 18,
-    fontWeight: "bold",
+    fontWeight: "700",
     color: COLORS.text,
     marginBottom: 6,
   },
   questionSubtitle: {
     fontSize: 14,
     color: COLORS.textSecondary,
-    marginBottom: 16,
+    marginBottom: 20,
   },
   largeChoice: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: COLORS.surface,
-    padding: 16,
+    backgroundColor: "#fff",
     borderRadius: 12,
+    padding: 16,
     marginBottom: 12,
     borderWidth: 1,
     borderColor: "#E5E7EB",
   },
   choiceIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: "#F3F4F6",
-    alignItems: "center",
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: "#EFF6FF",
     justifyContent: "center",
+    alignItems: "center",
     marginRight: 16,
   },
-  choiceContent: { flex: 1, marginRight: 8 },
+  choiceContent: {
+    flex: 1,
+  },
   choiceTitle: {
     fontSize: 16,
     fontWeight: "600",
     color: COLORS.text,
     marginBottom: 4,
   },
-  choiceDescription: { fontSize: 13, color: COLORS.textSecondary },
+  choiceDescription: {
+    fontSize: 13,
+    color: COLORS.textSecondary,
+  },
   categoryCard: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: COLORS.surface,
-    padding: 14,
+    backgroundColor: "#fff",
     borderRadius: 12,
-    marginBottom: 10,
+    padding: 16,
+    marginBottom: 12,
     borderWidth: 1,
     borderColor: "#E5E7EB",
   },
   categoryIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "#F3F4F6",
-    alignItems: "center",
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "#EFF6FF",
     justifyContent: "center",
-    marginRight: 14,
+    alignItems: "center",
+    marginRight: 16,
   },
   documentChoice: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: COLORS.surface,
-    padding: 14,
+    backgroundColor: "#fff",
     borderRadius: 12,
-    marginBottom: 10,
+    padding: 16,
+    marginBottom: 12,
     borderWidth: 1,
     borderColor: "#E5E7EB",
   },
   documentChoiceIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "#F3F4F6",
-    alignItems: "center",
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "#EFF6FF",
     justifyContent: "center",
-    marginRight: 14,
+    alignItems: "center",
+    marginRight: 16,
   },
-  field: { marginBottom: 16 },
+  field: {
+    marginBottom: 16,
+  },
   fieldLabel: {
     fontSize: 14,
-    fontWeight: "500",
+    fontWeight: "600",
     color: COLORS.text,
     marginBottom: 6,
   },
-  required: { color: COLORS.danger },
+  required: {
+    color: COLORS.danger,
+  },
   input: {
-    backgroundColor: COLORS.surface,
+    backgroundColor: "#fff",
     borderWidth: 1,
     borderColor: "#D1D5DB",
     borderRadius: 8,
     paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 15,
+    height: 48,
     color: COLORS.text,
+    fontSize: 15,
   },
-  multilineInput: { height: 100, paddingTop: 10 },
+  multilineInput: {
+    height: 100,
+    paddingTop: 12,
+  },
   dateButton: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: COLORS.surface,
+    backgroundColor: "#fff",
     borderWidth: 1,
     borderColor: "#D1D5DB",
     borderRadius: 8,
     paddingHorizontal: 12,
-    paddingVertical: 12,
+    height: 48,
   },
-  dateText: { flex: 1, marginLeft: 10, fontSize: 15, color: COLORS.text },
-  datePlaceholder: { flex: 1, marginLeft: 10, fontSize: 15, color: "#9CA3AF" },
+  dateText: {
+    flex: 1,
+    marginLeft: 10,
+    color: COLORS.text,
+    fontSize: 15,
+  },
+  datePlaceholder: {
+    flex: 1,
+    marginLeft: 10,
+    color: "#9CA3AF",
+    fontSize: 15,
+  },
   primaryButton: {
     flexDirection: "row",
     backgroundColor: COLORS.primary,
-    borderRadius: 8,
-    paddingVertical: 14,
-    alignItems: "center",
+    borderRadius: 10,
+    height: 50,
     justifyContent: "center",
+    alignItems: "center",
+    marginTop: 20,
     gap: 8,
-    marginTop: 10,
   },
-  primaryButtonText: { color: "#fff", fontSize: 16, fontWeight: "600" },
+  primaryButtonText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "600",
+  },
   scanOption: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: COLORS.surface,
-    padding: 16,
+    backgroundColor: "#fff",
     borderRadius: 12,
+    padding: 16,
     marginBottom: 12,
     borderWidth: 1,
     borderColor: "#E5E7EB",
   },
   scanIcon: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: "#F3F4F6",
-    alignItems: "center",
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    backgroundColor: "#EFF6FF",
     justifyContent: "center",
+    alignItems: "center",
     marginRight: 16,
   },
   skipButton: {
-    padding: 12,
     alignItems: "center",
-    marginTop: 4,
-    marginBottom: 16,
+    paddingVertical: 12,
+    marginTop: 8,
   },
-  skipButtonText: { color: COLORS.primary, fontSize: 15, fontWeight: "500" },
+  skipButtonText: {
+    color: COLORS.primary,
+    fontSize: 15,
+    fontWeight: "600",
+  },
   filePreview: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#F3F4F6",
+    borderRadius: 10,
     padding: 12,
-    borderRadius: 8,
+    marginTop: 16,
     gap: 12,
   },
-  fileName: { fontSize: 14, fontWeight: "500", color: COLORS.text },
-  fileType: { fontSize: 12, color: COLORS.textSecondary },
+  fileName: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: COLORS.text,
+  },
+  fileType: {
+    fontSize: 11,
+    color: COLORS.textSecondary,
+    marginTop: 2,
+  },
   previewCard: {
-    height: 200,
-    backgroundColor: "#000",
-    borderRadius: 8,
+    height: 180,
+    backgroundColor: "#F9FAFB",
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
     marginBottom: 16,
     overflow: "hidden",
+    justifyContent: "center",
+    alignItems: "center",
   },
-  previewImage: { width: "100%", height: "100%" },
+  previewImage: {
+    width: "100%",
+    height: "100%",
+  },
   extractionCard: {
-    backgroundColor: "#F3F4F6",
-    padding: 12,
-    borderRadius: 8,
+    backgroundColor: "#EFF6FF",
+    borderRadius: 10,
+    padding: 14,
     marginBottom: 16,
+    borderWidth: 1,
+    borderColor: "#BFDBFE",
   },
   extractionHeader: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
+    gap: 8,
     marginBottom: 6,
   },
-  extractionTitle: { fontSize: 14, fontWeight: "600", color: COLORS.text },
-  confidenceRow: { flexDirection: "row", justifyContent: "space-between" },
-  confidenceLabel: { fontSize: 13, color: COLORS.textSecondary },
-  confidenceValue: { fontSize: 13, fontWeight: "600", color: COLORS.text },
-  editButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: COLORS.primary,
-    borderRadius: 8,
-    marginBottom: 12,
+  extractionTitle: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: COLORS.primary,
   },
-  editButtonText: { color: COLORS.primary, fontSize: 15, fontWeight: "500" },
+  confidenceRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  confidenceLabel: {
+    fontSize: 13,
+    color: COLORS.textSecondary,
+  },
+  confidenceValue: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: COLORS.primary,
+  },
 });

@@ -349,3 +349,17 @@ Improve others that you can see
 Input autofill field datas or swipe to autofill the texts on the input fields for user datas efficiency
 
 Input proper lockup app to the docuguard when it leaves the app not always but frequent like the other functions on the app phone to ensure more security.
+
+Let's focus on the [FEATURE].
+
+- Make sure it works correctly.
+- Make sure all user actions work.
+- Handle valid and invalid input.
+- Validate required fields.
+- Handle empty input.
+- Handle loading, success, and error states.
+- Handle edge cases and unexpected input.
+- Make sure the data is handled correctly.
+- Make sure it doesn't crash.
+- Make sure it doesn't break existing features.
+- Test the complete user flow from start to finish.

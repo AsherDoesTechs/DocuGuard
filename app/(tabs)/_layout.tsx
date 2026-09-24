@@ -6,7 +6,7 @@ import { TabBar } from "../../components/ui/TabBar";
 
 const TAB_ITEMS = [
   {
-    name: "home",
+    name: "index",
     icon: "home" as const,
     label: "Home",
   },
@@ -94,7 +94,7 @@ export default function TabsLayout() {
       )}
     >
       <Tabs.Screen
-        name="home"
+        name="index"
         options={{
           title: "Home",
         }}
