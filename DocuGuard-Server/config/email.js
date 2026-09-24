@@ -78,6 +78,27 @@ function buildVerificationEmailHtml(name, verificationLink, expiresIn = "24 hour
       </td>
     </tr>
 
+    <!-- What you'll get -->
+    <tr>
+      <td style="padding: 0 32px 24px;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+          <tr>
+            <td style="padding: 20px; background-color: #F0F9FF; border-radius: 12px; border: 1px solid #BAE6FD;">
+              <h3 style="margin: 0 0 16px; color: #0369A1; font-size: 16px; font-weight: 600;">What you can do with DocuGuard:</h3>
+              <ul style="margin: 0; padding-left: 20px; color: #075985; font-size: 14px; line-height: 1.8;">
+                <li><strong>Scan & digitize</strong> documents instantly with AI-powered OCR</li>
+                <li><strong>Organize & categorize</strong> receipts, contracts, IDs, and notes automatically</li>
+                <li><strong>Search everything</strong> by text, date, category, or custom tags</li>
+                <li><strong>Set smart reminders</strong> for expiring documents, renewals, and deadlines</li>
+                <li><strong>Export & backup</strong> to PDF, CSV, or cloud storage</li>
+                <li><strong>Sync across devices</strong> securely with end-to-end encryption</li>
+              </ul>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+
     <!-- CTA Button -->
     <tr>
       <td style="padding: 0 32px 32px; text-align: center;">
@@ -162,6 +183,15 @@ function buildPasswordResetEmailHtml(resetLink) {
       <td style="padding: 40px 32px;">
         <h2 style="margin: 0 0 16px; color: #111827; font-size: 22px; font-weight: 600;">Reset your password</h2>
         <p style="margin: 0 0 24px; color: #4B5563; font-size: 16px;">We received a request to reset your password. Click the button below to create a new password. This link will expire in 1 hour.</p>
+
+        <!-- Security notice -->
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-bottom: 24px;">
+          <tr>
+            <td style="padding: 16px; background-color: #FEF2F2; border-radius: 10px; border: 1px solid #FECACA;">
+              <p style="margin: 0; color: #991B1B; font-size: 13px;"><strong>Security tip:</strong> DocuGuard will never ask for your password via email. If you didn't request this reset, please ignore this email and your account will remain secure.</p>
+            </td>
+          </tr>
+        </table>
 
         <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin: 32px 0;">
           <tr>
