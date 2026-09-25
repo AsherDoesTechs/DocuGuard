@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo } from "react";
 import {
   View,
   TextInput,
@@ -8,8 +8,9 @@ import {
   StyleProp,
   TextStyle,
 } from "react-native";
-import { useColors, Spacing } from "@/constants";
+import { useColors } from "@/context/ThemeContext";
 import { useFeedbackTrigger } from "./FeedbackButton";
+import { Spacing } from "@/constants/spacing";
 
 interface InputProps {
   label?: string | React.ReactNode;
@@ -45,6 +46,39 @@ export default function Input({
     light();
   };
 
+  const styles = useMemo(
+    () =>
+      StyleSheet.create({
+        container: {
+          width: "100%",
+          marginVertical: Spacing.xs,
+        },
+        label: {
+          fontSize: 14,
+          fontWeight: "500",
+          marginBottom: Spacing.xs,
+        },
+        labelContainer: {
+          marginBottom: Spacing.xs,
+        },
+        input: {
+          borderWidth: 1,
+          borderRadius: 12,
+          padding: Spacing.md,
+          fontSize: 16,
+        },
+        inputError: {
+          borderWidth: 2,
+        },
+        errorText: {
+          fontSize: 12,
+          marginTop: 4,
+          fontWeight: "500",
+        },
+      }),
+    [],
+  );
+
   return (
     <View style={styles.container}>
       {label &&
@@ -76,32 +110,3 @@ export default function Input({
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    width: "100%",
-    marginVertical: Spacing.xs,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: "500",
-    marginBottom: Spacing.xs,
-  },
-  labelContainer: {
-    marginBottom: Spacing.xs,
-  },
-  input: {
-    borderWidth: 1,
-    borderRadius: 12,
-    padding: Spacing.md,
-    fontSize: 16,
-  },
-  inputError: {
-    borderWidth: 2,
-  },
-  errorText: {
-    fontSize: 12,
-    marginTop: 4,
-    fontWeight: "500",
-  },
-});

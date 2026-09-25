@@ -132,20 +132,17 @@ export const AlertModal = ({
   const handleButtonPress = async (button: AlertButton) => {
     if (Platform.OS !== "web") {
       try {
-        const { Haptics } = await import("expo-haptics");
+        const Haptics = await import("expo-haptics");
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       } catch {}
     }
     if (button.onPress) {
       await button.onPress();
     }
-    // Note: onDismiss is handled by the animation cleanup
   };
 
   const handleDismiss = () => {
-    if (buttons.length === 0) {
-      // Trigger the fade out animation
-    }
+    onDismiss?.();
   };
 
   const animatedStyle = {
@@ -176,7 +173,7 @@ export const AlertModal = ({
           onPress={handleDismiss}
         >
           <Animated.View style={[styles.cardContainer, animatedStyle]}>
-            <Animated.View style={[styles.iconRing, cfg.bg, iconAnimatedStyle]}>
+            <Animated.View style={[styles.iconRing, { backgroundColor: cfg.bg }, iconAnimatedStyle]}>
               <Ionicons name={cfg.icon} size={28} color={cfg.color} />
             </Animated.View>
             <Text style={styles.title}>{title}</Text>

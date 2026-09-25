@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo } from "react";
 import {
   TouchableOpacity,
   Text,
@@ -7,8 +7,9 @@ import {
   StyleProp,
   ViewStyle,
 } from "react-native";
-import { useColors, Spacing } from "@/constants";
+import { useColors } from "@/context/ThemeContext";
 import { useFeedbackTrigger } from "./FeedbackButton";
+import { Spacing } from "@/constants/spacing";
 
 interface ButtonProps {
   title: string;
@@ -41,6 +42,44 @@ export default function Button({
     }
   };
 
+  const styles = useMemo(
+    () =>
+      StyleSheet.create({
+        button: {
+          backgroundColor: colors.primary,
+          paddingVertical: Spacing.md,
+          paddingHorizontal: Spacing.lg,
+          borderRadius: 12,
+          alignItems: "center",
+          justifyContent: "center",
+          marginVertical: Spacing.sm,
+        },
+        secondaryButton: {
+          backgroundColor: "transparent",
+          borderWidth: 1,
+          borderColor: colors.border,
+        },
+        dangerButton: {
+          backgroundColor: colors.error,
+        },
+        successButton: {
+          backgroundColor: colors.success,
+        },
+        warningButton: {
+          backgroundColor: colors.warning,
+        },
+        text: {
+          color: "#fff",
+          fontSize: 16,
+          fontWeight: "600",
+        },
+        secondaryText: {
+          color: colors.text,
+        },
+      }),
+    [colors],
+  );
+
   return (
     <TouchableOpacity
       style={[
@@ -64,37 +103,3 @@ export default function Button({
     </TouchableOpacity>
   );
 }
-
-const styles = StyleSheet.create({
-  button: {
-    backgroundColor: colors.primary,
-    paddingVertical: Spacing.md,
-    paddingHorizontal: Spacing.lg,
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-    marginVertical: Spacing.sm,
-  },
-  secondaryButton: {
-    backgroundColor: "transparent",
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  dangerButton: {
-    backgroundColor: colors.error,
-  },
-  successButton: {
-    backgroundColor: colors.success,
-  },
-  warningButton: {
-    backgroundColor: colors.warning,
-  },
-  text: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  secondaryText: {
-    color: colors.text,
-  },
-});
