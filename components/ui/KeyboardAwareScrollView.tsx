@@ -9,7 +9,9 @@ import {
 } from "react-native";
 import { useFeedback } from "@/hooks/useFeedback";
 
-interface KeyboardAwareScrollViewProps extends React.ComponentProps<typeof ScrollView> {
+interface KeyboardAwareScrollViewProps extends React.ComponentProps<
+  typeof ScrollView
+> {
   behavior?: "padding" | "height" | "position";
   keyboardVerticalOffset?: number;
   onContentSizeChange?: (width: number, height: number) => void;
@@ -44,10 +46,7 @@ export function KeyboardAwareScrollView({
     >
       <ScrollView
         ref={scrollRef}
-        contentContainerStyle={[
-          styles.contentContainer,
-          contentContainerStyle,
-        ]}
+        contentContainerStyle={[styles.contentContainer, contentContainerStyle]}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
         onContentSizeChange={onContentSizeChange}
@@ -87,8 +86,6 @@ export function useKeyboardAwareScroll() {
     dismissKeyboard,
   };
 }
-
-import { Keyboard } from "react-native";
 
 const styles = StyleSheet.create({
   container: {
