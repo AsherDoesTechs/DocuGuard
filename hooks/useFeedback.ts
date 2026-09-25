@@ -1,172 +1,406 @@
 import * as Haptics from "expo-haptics";
-import { Audio } from "expo-av";
+import { Audio, InterruptionModeIOS, InterruptionModeAndroid } from "expo-av";
 import { useEffect, useRef, useState } from "react";
 
-export type FeedbackType = "success" | "error" | "warning" | "info" | "light" | "medium" | "heavy" | "selection";
+export type FeedbackType =
+  | "success"
+  | "error"
+  | "warning"
+  | "info"
+  | "light"
+  | "medium"
+  | "heavy"
+  | "selection";
+
+/**
+ * Static sound imports.
+ *
+ * File:
+ * DocuGuard/hooks/useFeedback.ts
+ *
+ * Sounds:
+ * DocuGuard/assets/sounds/*.mp3
+ *
+ * Because this file is inside /hooks,
+ * ../assets is required.
+ */
+const SOUND_FILES: Record<FeedbackType, any> = {
+  success: require("../assets/sounds/success.mp3"),
+  error: require("../assets/sounds/error.mp3"),
+  warning: require("../assets/sounds/warning.mp3"),
+  info: require("../assets/sounds/info.mp3"),
+  light: require("../assets/sounds/light.mp3"),
+  medium: require("../assets/sounds/medium.mp3"),
+  heavy: require("../assets/sounds/heavy.mp3"),
+  selection: require("../assets/sounds/selection.mp3"),
+};
 
 class FeedbackManager {
   private sounds: Map<FeedbackType, Audio.Sound> = new Map();
+
   private loaded = false;
-  private loading = false;
+
+  /**
+   * Shared loading promise.
+   *
+   * Prevents multiple components from loading
+   * the sounds simultaneously.
+   */
+  private loadPromise: Promise<void> | null = null;
+
+  /**
+   * Global feedback settings.
+   */
   private soundEnabled = true;
   private hapticEnabled = true;
 
-  async loadSounds() {
-    if (this.loaded || this.loading) return;
-    this.loading = true;
+  /**
+   * UI sound volume.
+   *
+   * 0.3 keeps sounds subtle and modern.
+   */
+  private readonly soundVolume = 0.4;
 
+  /**
+   * Load all feedback sounds.
+   */
+  async loadSounds(): Promise<void> {
+    // Already loaded.
+    if (this.loaded) {
+      return;
+    }
+
+    // Already loading.
+    // Wait for the existing operation.
+    if (this.loadPromise) {
+      return this.loadPromise;
+    }
+
+    this.loadPromise = this.initializeSounds();
+
+    try {
+      await this.loadPromise;
+    } finally {
+      this.loadPromise = null;
+    }
+  }
+
+  /**
+   * Initialize the audio system
+   * and load all UI feedback sounds.
+   *
+   * IMPORTANT:
+   *
+   * playsInSilentModeIOS: false
+   *
+   * This allows iOS Silent Mode to suppress
+   * normal UI sounds while haptics can still work.
+   */
+  private async initializeSounds(): Promise<void> {
     try {
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: false,
         staysActiveInBackground: false,
-        interruptionModeIOS: Audio.INTERRUPTION_MODE_IOS_DUCK_OTHERS,
-        playsInSilentModeIOS: true,
+
+        // Respect the iPhone silent switch.
+        playsInSilentModeIOS: false,
+
+        interruptionModeIOS: InterruptionModeIOS.DuckOthers,
+
         shouldDuckAndroid: true,
-        interruptionModeAndroid: Audio.INTERRUPTION_MODE_ANDROID_DUCK_OTHERS,
+
+        interruptionModeAndroid: InterruptionModeAndroid.DuckOthers,
       });
 
-      const soundTypes: FeedbackType[] = ["success", "error", "warning", "info", "light", "medium", "heavy", "selection"];
-      
+      const soundTypes: FeedbackType[] = [
+        "success",
+        "error",
+        "warning",
+        "info",
+        "light",
+        "medium",
+        "heavy",
+        "selection",
+      ];
+
       for (const type of soundTypes) {
         try {
-          const { sound } = await Audio.Sound.createAsync(require(`./assets/sounds/${type}.mp3`), {
+          const { sound } = await Audio.Sound.createAsync(SOUND_FILES[type], {
             shouldPlay: false,
-            volume: 0.5,
+            volume: this.soundVolume,
           });
+
           this.sounds.set(type, sound);
-        } catch {
-          // Sound file not found, will use system fallback
+        } catch (error) {
+          // If one sound fails, continue loading the others.
+          console.warn(`[Feedback] Failed to load ${type} sound:`, error);
         }
       }
+
       this.loaded = true;
     } catch (error) {
-      console.warn("Failed to load feedback sounds:", error);
-    } finally {
-      this.loading = false;
+      console.warn("[Feedback] Failed to initialize audio:", error);
+
+      /**
+       * Haptics can still work even if audio
+       * initialization fails.
+       */
+      this.loaded = true;
     }
   }
 
-  async playSound(type: FeedbackType) {
-    if (!this.loaded) await this.loadSounds();
-    if (!this.soundEnabled) return;
-    
-    const sound = this.sounds.get(type);
-    if (sound) {
-      try {
-        await sound.replayAsync();
-        return;
-      } catch (error) {
-        console.warn(`Failed to play ${type} sound:`, error);
+  /**
+   * Play a feedback sound.
+   */
+  async playSound(type: FeedbackType): Promise<void> {
+    if (!this.soundEnabled) {
+      return;
+    }
+
+    try {
+      if (!this.loaded) {
+        await this.loadSounds();
       }
+
+      const sound = this.sounds.get(type);
+
+      if (!sound) {
+        console.warn(`[Feedback] No sound available for "${type}".`);
+        return;
+      }
+
+      await sound.replayAsync();
+    } catch (error) {
+      console.warn(`[Feedback] Failed to play ${type} sound:`, error);
     }
-    // Fallback: Use system sounds via AudioServicesPlaySystemSound (iOS) or ToneGenerator (Android)
-    // This is a no-op in JS but we log for debugging
-    console.log(`[Sound] ${type} (fallback)`);
   }
 
-  async playHaptic(type: FeedbackType) {
-    if (!this.hapticEnabled) return;
-    
+  /**
+   * Trigger haptic feedback.
+   */
+  async playHaptic(type: FeedbackType): Promise<void> {
+    if (!this.hapticEnabled) {
+      return;
+    }
+
     try {
       switch (type) {
         case "success":
-          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          await Haptics.notificationAsync(
+            Haptics.NotificationFeedbackType.Success,
+          );
           break;
+
         case "error":
-          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+          await Haptics.notificationAsync(
+            Haptics.NotificationFeedbackType.Error,
+          );
           break;
+
         case "warning":
-          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+          await Haptics.notificationAsync(
+            Haptics.NotificationFeedbackType.Warning,
+          );
           break;
+
         case "light":
           await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
           break;
+
         case "medium":
           await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
           break;
+
         case "heavy":
           await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
           break;
+
         case "selection":
           await Haptics.selectionAsync();
           break;
+
         case "info":
           await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
           break;
+
         default:
           await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          break;
       }
     } catch (error) {
-      console.warn("Haptic feedback failed:", error);
+      // Haptic feedback should never crash the app.
+      console.warn(`[Feedback] Haptic feedback failed for ${type}:`, error);
     }
   }
 
-  async trigger(type: FeedbackType, options?: { sound?: boolean; haptic?: boolean }) {
-    const { sound = true, haptic = true } = options || {};
-    await Promise.all([
-      sound ? this.playSound(type) : Promise.resolve(),
-      haptic ? this.playHaptic(type) : Promise.resolve(),
-    ]);
+  /**
+   * Trigger sound and/or haptic feedback.
+   */
+  async trigger(
+    type: FeedbackType,
+    options?: {
+      sound?: boolean;
+      haptic?: boolean;
+    },
+  ): Promise<void> {
+    const { sound = true, haptic = true } = options ?? {};
+
+    const tasks: Promise<void>[] = [];
+
+    if (sound) {
+      tasks.push(this.playSound(type));
+    }
+
+    if (haptic) {
+      tasks.push(this.playHaptic(type));
+    }
+
+    await Promise.all(tasks);
   }
 
-  setSoundEnabled(enabled: boolean) {
+  /**
+   * Enable or disable sounds.
+   */
+  setSoundEnabled(enabled: boolean): void {
     this.soundEnabled = enabled;
   }
 
-  setHapticEnabled(enabled: boolean) {
+  /**
+   * Enable or disable haptics.
+   */
+  setHapticEnabled(enabled: boolean): void {
     this.hapticEnabled = enabled;
   }
 
-  async unload() {
+  /**
+   * Check whether sounds are enabled.
+   */
+  isSoundEnabled(): boolean {
+    return this.soundEnabled;
+  }
+
+  /**
+   * Check whether haptics are enabled.
+   */
+  isHapticEnabled(): boolean {
+    return this.hapticEnabled;
+  }
+
+  /**
+   * Unload all sounds.
+   */
+  async unload(): Promise<void> {
     for (const sound of this.sounds.values()) {
       try {
         await sound.unloadAsync();
-      } catch {}
+      } catch {
+        // Ignore unload errors.
+      }
     }
+
     this.sounds.clear();
+
     this.loaded = false;
+    this.loadPromise = null;
   }
 }
 
+/**
+ * Global FeedbackManager instance.
+ */
 export const feedbackManager = new FeedbackManager();
 
+/**
+ * React hook for feedback.
+ */
 export function useFeedback() {
   const [ready, setReady] = useState(false);
+
   const initialized = useRef(false);
 
   useEffect(() => {
-    if (!initialized.current) {
-      initialized.current = true;
-      feedbackManager.loadSounds().then(() => setReady(true));
+    if (initialized.current) {
+      return;
     }
+
+    initialized.current = true;
+
+    let mounted = true;
+
+    feedbackManager
+      .loadSounds()
+      .then(() => {
+        if (mounted) {
+          setReady(true);
+        }
+      })
+      .catch((error) => {
+        console.warn("[Feedback] Failed to initialize:", error);
+
+        if (mounted) {
+          setReady(true);
+        }
+      });
+
+    return () => {
+      mounted = false;
+    };
   }, []);
 
-  const trigger = async (type: FeedbackType, options?: { sound?: boolean; haptic?: boolean }) => {
+  const trigger = async (
+    type: FeedbackType,
+    options?: {
+      sound?: boolean;
+      haptic?: boolean;
+    },
+  ): Promise<void> => {
     await feedbackManager.trigger(type, options);
   };
 
-  return { trigger, ready };
+  return {
+    trigger,
+    ready,
+  };
 }
 
+/**
+ * Wrap a function with feedback.
+ *
+ * Feedback is triggered after the function
+ * successfully completes.
+ */
 export function withFeedback<T extends (...args: any[]) => any>(
   fn: T,
   type: FeedbackType = "light",
-  options?: { sound?: boolean; haptic?: boolean }
+  options?: {
+    sound?: boolean;
+    haptic?: boolean;
+  },
 ): T {
   return (async (...args: Parameters<T>) => {
     const result = await fn(...args);
+
     await feedbackManager.trigger(type, options);
+
     return result;
   }) as T;
 }
 
-// Button wrapper with built-in feedback
+/**
+ * Button wrapper with haptic-only feedback.
+ *
+ * Sound is disabled for normal button presses.
+ */
 export function createFeedbackButton(
   onPress: () => void,
-  type: FeedbackType = "selection"
+  type: FeedbackType = "selection",
 ) {
   return () => {
-    feedbackManager.trigger(type, { sound: false, haptic: true });
+    void feedbackManager.trigger(type, {
+      sound: false,
+      haptic: true,
+    });
+
     onPress();
   };
 }
