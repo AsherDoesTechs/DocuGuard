@@ -166,6 +166,25 @@ export async function initDatabase() {
       )
     `);
 
+    // Document tags table
+    await database.execAsync(`
+      CREATE TABLE IF NOT EXISTS document_tags (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        document_id INTEGER NOT NULL,
+        tag TEXT NOT NULL,
+        created_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (document_id) REFERENCES documents (id) ON DELETE CASCADE
+      )
+    `);
+
+    // Create index for tag lookups
+    await database.execAsync(`
+      CREATE INDEX IF NOT EXISTS idx_document_tags_document_id ON document_tags(document_id);
+    `);
+    await database.execAsync(`
+      CREATE INDEX IF NOT EXISTS idx_document_tags_tag ON document_tags(tag);
+    `);
+
     DebugLogger.info("LocalDatabase", "Database initialized successfully");
   } catch (err) {
     DebugLogger.error(
@@ -213,6 +232,12 @@ export async function createDocument(
       ],
     );
     const docId = result.lastInsertRowId as number;
+    
+    // Add tags if provided
+    if (doc.tags && doc.tags.length > 0) {
+      await addDocumentTags(docId, doc.tags);
+    }
+    
     DebugLogger.debug("LocalDatabase", "Document created", {
       docId,
       title: doc.title,
@@ -240,6 +265,14 @@ export async function getAllDocuments(): Promise<LocalDocument[]> {
              created_at AS "createdAt", updated_at AS "updatedAt"
       FROM documents ORDER BY expiry_date ASC
     `);
+    
+    // Fetch tags for each document
+    for (const doc of rows) {
+      if (doc.id) {
+        doc.tags = await getDocumentTags(doc.id);
+      }
+    }
+    
     DebugLogger.debug("LocalDatabase", "Documents loaded", {
       count: rows.length,
     });
@@ -269,6 +302,9 @@ export async function getDocumentById(
        FROM documents WHERE id = ?`,
       [id],
     );
+    if (row) {
+      row.tags = await getDocumentTags(id);
+    }
     DebugLogger.debug("LocalDatabase", "Document fetched", {
       docId: id,
       found: !!row,
@@ -328,6 +364,12 @@ export async function updateDocument(id: number, doc: Partial<LocalDocument>) {
         id,
       ],
     );
+    
+    // Update tags if provided
+    if (doc.tags !== undefined) {
+      await replaceDocumentTags(id, doc.tags);
+    }
+    
     DebugLogger.debug("LocalDatabase", "Document updated", { docId: id });
   } catch (err) {
     DebugLogger.error(
@@ -372,6 +414,130 @@ export async function setDocumentProcessingStatus(
   `,
     [status, riskScore, riskLevel, id],
   );
+}
+
+// Document Tags operations
+export async function addDocumentTags(documentId: number, tags: string[]) {
+  if (!tags.length) return;
+  try {
+    const database = await getDb();
+    for (const tag of tags) {
+      const trimmedTag = tag.trim().toLowerCase();
+      if (!trimmedTag) continue;
+      await database.runAsync(
+        `INSERT OR IGNORE INTO document_tags (document_id, tag) VALUES (?, ?)`,
+        [documentId, trimmedTag],
+      );
+    }
+    DebugLogger.debug("LocalDatabase", "Tags added", { documentId, tags });
+  } catch (err) {
+    DebugLogger.error(
+      "LocalDatabase",
+      "Failed to add document tags",
+      { error: err, documentId },
+      ErrorCodes.LOCAL_WRITE_FAILED,
+    );
+    throw err;
+  }
+}
+
+export async function removeDocumentTag(documentId: number, tag: string) {
+  try {
+    await run(`DELETE FROM document_tags WHERE document_id = ? AND tag = ?`, [
+      documentId,
+      tag.trim().toLowerCase(),
+    ]);
+    DebugLogger.debug("LocalDatabase", "Tag removed", { documentId, tag });
+  } catch (err) {
+    DebugLogger.error(
+      "LocalDatabase",
+      "Failed to remove document tag",
+      { error: err, documentId },
+      ErrorCodes.LOCAL_WRITE_FAILED,
+    );
+    throw err;
+  }
+}
+
+export async function getDocumentTags(documentId: number): Promise<string[]> {
+  try {
+    const rows = await queryAll<{ tag: string }>(
+      `SELECT tag FROM document_tags WHERE document_id = ? ORDER BY tag`,
+      [documentId],
+    );
+    return rows.map((r) => r.tag);
+  } catch (err) {
+    DebugLogger.error(
+      "LocalDatabase",
+      "Failed to get document tags",
+      { error: err, documentId },
+      ErrorCodes.LOCAL_DB_QUERY,
+    );
+    return [];
+  }
+}
+
+export async function getAllTags(): Promise<string[]> {
+  try {
+    const rows = await queryAll<{ tag: string }>(
+      `SELECT DISTINCT tag FROM document_tags ORDER BY tag`,
+    );
+    return rows.map((r) => r.tag);
+  } catch (err) {
+    DebugLogger.error(
+      "LocalDatabase",
+      "Failed to get all tags",
+      { error: err },
+      ErrorCodes.LOCAL_DB_QUERY,
+    );
+    return [];
+  }
+}
+
+export async function getDocumentsByTag(tag: string): Promise<number[]> {
+  try {
+    const rows = await queryAll<{ document_id: number }>(
+      `SELECT document_id FROM document_tags WHERE tag = ?`,
+      [tag.trim().toLowerCase()],
+    );
+    return rows.map((r) => r.document_id);
+  } catch (err) {
+    DebugLogger.error(
+      "LocalDatabase",
+      "Failed to get documents by tag",
+      { error: err, tag },
+      ErrorCodes.LOCAL_DB_QUERY,
+    );
+    return [];
+  }
+}
+
+export async function replaceDocumentTags(documentId: number, tags: string[]) {
+  try {
+    const database = await getDb();
+    await database.runAsync(`DELETE FROM document_tags WHERE document_id = ?`, [
+      documentId,
+    ]);
+    if (tags.length) {
+      for (const tag of tags) {
+        const trimmedTag = tag.trim().toLowerCase();
+        if (!trimmedTag) continue;
+        await database.runAsync(
+          `INSERT INTO document_tags (document_id, tag) VALUES (?, ?)`,
+          [documentId, trimmedTag],
+        );
+      }
+    }
+    DebugLogger.debug("LocalDatabase", "Tags replaced", { documentId, tags });
+  } catch (err) {
+    DebugLogger.error(
+      "LocalDatabase",
+      "Failed to replace document tags",
+      { error: err, documentId },
+      ErrorCodes.LOCAL_WRITE_FAILED,
+    );
+    throw err;
+  }
 }
 
 // Reminder operations

@@ -22,6 +22,7 @@ export interface LocalDocument {
   authenticity?: "real" | "replica" | "fake";
   authenticityScore?: number;
   authenticityReason?: string;
+  tags?: string[];
 }
 
 export interface LocalReminder {

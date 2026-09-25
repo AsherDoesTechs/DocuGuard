@@ -8,6 +8,7 @@ import { useAppLock, AppLockScreen } from "../hooks/useAppLock";
 import { initDatabase } from "../services/localDatabase";
 import { checkAndScheduleAlerts } from "../services/notificationScheduler";
 import { AlertProvider } from "@/components/ui/AlertService";
+import { ThemeProvider } from "@/context/ThemeContext";
 
 export default function RootLayout() {
   usePushNotifications();
@@ -24,29 +25,31 @@ export default function RootLayout() {
   }, []);
 
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <SafeAreaProvider>
-        <AlertProvider>
-          <Stack screenOptions={{ headerShown: false }}>
-            <Stack.Screen name="index" />
-            <Stack.Screen name="(auth)" />
-            <Stack.Screen name="(tabs)" />
-            <Stack.Screen name="add-document" />
-            <Stack.Screen name="edit-document/[id]" />
-            <Stack.Screen name="document-details/[id]" />
-            <Stack.Screen name="subscription-payment" />
-            <Stack.Screen name="biometric-login" />
-          </Stack>
-          {isLocked && (
-            <AppLockScreen
-              isLocked={isLocked}
-              biometricEnabled={biometricEnabled}
-              onUnlockBiometric={unlockWithBiometric}
-              onUnlockPassword={unlockWithPassword}
-            />
-          )}
-        </AlertProvider>
-      </SafeAreaProvider>
-    </GestureHandlerRootView>
+    <ThemeProvider>
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <SafeAreaProvider>
+          <AlertProvider>
+            <Stack screenOptions={{ headerShown: false }}>
+              <Stack.Screen name="index" />
+              <Stack.Screen name="(auth)" />
+              <Stack.Screen name="(tabs)" />
+              <Stack.Screen name="add-document" />
+              <Stack.Screen name="edit-document/[id]" />
+              <Stack.Screen name="document-details/[id]" />
+              <Stack.Screen name="subscription-payment" />
+              <Stack.Screen name="biometric-login" />
+            </Stack>
+            {isLocked && (
+              <AppLockScreen
+                isLocked={isLocked}
+                biometricEnabled={biometricEnabled}
+                onUnlockBiometric={unlockWithBiometric}
+                onUnlockPassword={unlockWithPassword}
+              />
+            )}
+          </AlertProvider>
+        </SafeAreaProvider>
+      </GestureHandlerRootView>
+    </ThemeProvider>
   );
 }
