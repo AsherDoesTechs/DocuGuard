@@ -21,10 +21,11 @@ import { Toast } from "../../components/ui/Toast";
 import type { ToastType } from "../../components/ui/Toast";
 import { COLORS } from "@/constants";
 import { RefreshableContainer } from "@/components/ui/RefreshableContainer";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as SecureStore from "expo-secure-store";
 import { api } from "../../services/api";
 import { getUserProfile, getAllDocuments } from "../../services/localDatabase";
 import * as LocalAuthentication from "expo-local-authentication";
+import * as SecureStore from "expo-secure-store";
 
 type SettingsTab =
   | "none"
@@ -248,8 +249,8 @@ export default function ProfileScreen() {
         bioType = "iris";
       }
 
-      const storedBiometric = await AsyncStorage.getItem("biometricEnabled");
-      const storedAppLock = await AsyncStorage.getItem("appLockEnabled");
+      const storedBiometric = await SecureStore.getItemAsync("biometricEnabled");
+      const storedAppLock = await SecureStore.getItemAsync("docuguard.appLock.enabled");
 
       setBiometric({
         available: hasHardware,
@@ -305,7 +306,7 @@ export default function ProfileScreen() {
         setNotifyExpiry(localProfile.notifyExpiry ?? true);
       }
 
-      const token = await AsyncStorage.getItem("userToken");
+      const token = await SecureStore.getItemAsync("userToken");
       if (token) {
         try {
           const res = await api.client.get("/profile");
@@ -351,7 +352,7 @@ export default function ProfileScreen() {
   const handleSetup2FA = async () => {
     try {
       setSettingUp2FA(true);
-      const token = await AsyncStorage.getItem("userToken");
+      const token = await SecureStore.getItemAsync("userToken");
       const res = await api.client.post(
         "/profile/security/2fa/setup",
         {},
@@ -380,7 +381,7 @@ export default function ProfileScreen() {
     }
     try {
       setVerifying2FA(true);
-      const token = await AsyncStorage.getItem("userToken");
+      const token = await SecureStore.getItemAsync("userToken");
       await api.client.post(
         "/profile/security/2fa/verify",
         {
@@ -421,7 +422,7 @@ export default function ProfileScreen() {
       }
     }
     try {
-      await AsyncStorage.setItem("biometricEnabled", String(value));
+      await SecureStore.setItemAsync("biometricEnabled", String(value));
       setBiometric((prev) => ({ ...prev, enabled: value }));
       showToast(
         value ? "Biometrics enabled" : "Biometrics disabled",
@@ -440,7 +441,7 @@ export default function ProfileScreen() {
       );
     }
     try {
-      await AsyncStorage.setItem("appLockEnabled", String(value));
+      await SecureStore.setItemAsync("docuguard.appLock.enabled", String(value));
       setAppLockEnabled(value);
       showToast(
         value ? "App Lock enabled successfully" : "App Lock disabled",
@@ -467,7 +468,7 @@ export default function ProfileScreen() {
 
     try {
       setSavingSecurity(true);
-      const token = await AsyncStorage.getItem("userToken");
+      const token = await SecureStore.getItemAsync("userToken");
       const payload: Record<string, unknown> = {
         currentPassword: passwords.current,
         twoFactor,
@@ -500,7 +501,7 @@ export default function ProfileScreen() {
     }
     try {
       setSavingPersonal(true);
-      const token = await AsyncStorage.getItem("userToken");
+      const token = await SecureStore.getItemAsync("userToken");
       await api.client.patch("/profile", personalInfo, {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -515,7 +516,7 @@ export default function ProfileScreen() {
 
   const fetchLoginSessions = useCallback(async () => {
     try {
-      const token = await AsyncStorage.getItem("userToken");
+      const token = await SecureStore.getItemAsync("userToken");
       if (!token) return;
       setLoadingSessions(true);
       const res = await api.client.get("/auth/sessions", {
@@ -533,7 +534,7 @@ export default function ProfileScreen() {
 
   const revokeSession = async (sessionId: string) => {
     try {
-      const token = await AsyncStorage.getItem("userToken");
+      const token = await SecureStore.getItemAsync("userToken");
       await api.client.delete(`/auth/sessions/${sessionId}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -555,11 +556,9 @@ export default function ProfileScreen() {
           style: "destructive",
           onPress: async () => {
             try {
-              await AsyncStorage.multiRemove([
-                "userToken",
-                "biometricEnabled",
-                "appLockEnabled",
-              ]);
+              await SecureStore.deleteItemAsync("userToken");
+              await SecureStore.deleteItemAsync("biometricEnabled");
+              await SecureStore.deleteItemAsync("docuguard.appLock.enabled");
               router.replace("/auth/login" as any);
             } catch {
               showToast("Failed to sign out cleanly", "error");

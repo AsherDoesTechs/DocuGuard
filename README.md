@@ -278,12 +278,16 @@ DocuGuard is being developed as a Bachelor of Science in Information Technology 
 ---
 
 eas build --platform android --profile preview
+.\gradlew.bat app:assembleRelease -x lint -x test --configure-on-demand --build-cache
 
 # 📄 License
 
 This project is intended for academic and educational purposes. Future versions may be expanded for public or commercial use.
 
 # CHATGPT Prompt:
+
+Give me things to improve and add in here [Code]
+Then Pass it to Gemini For Code Generation.
 
 [Title]
 [Description]..
@@ -363,9 +367,3 @@ Let's focus on the [FEATURE].
 - Make sure it doesn't crash.
 - Make sure it doesn't break existing features.
 - Test the complete user flow from start to finish.
-
-The Profile Has no Sign Out
-The Login has no Biometric or Fingerprint for easy signing
-the Documents do not show in the Home Page
-it should be the image on the left side and the attributes or descriptions on the right side
-someof the functions on the Profile are still not working.

@@ -4,12 +4,14 @@ import { Stack } from "expo-router";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { usePushNotifications } from "../hooks/usePushNotifications";
+import { useAppLock, AppLockScreen } from "../hooks/useAppLock";
 import { initDatabase } from "../services/localDatabase";
 import { checkAndScheduleAlerts } from "../services/notificationScheduler";
 import { AlertProvider } from "@/components/ui/AlertService";
 
 export default function RootLayout() {
   usePushNotifications();
+  const { isLocked, biometricEnabled, unlockWithBiometric, unlockWithPassword } = useAppLock();
 
   useEffect(() => {
     initDatabase().catch((err) => {
@@ -35,6 +37,14 @@ export default function RootLayout() {
             <Stack.Screen name="subscription-payment" />
             <Stack.Screen name="biometric-login" />
           </Stack>
+          {isLocked && (
+            <AppLockScreen
+              isLocked={isLocked}
+              biometricEnabled={biometricEnabled}
+              onUnlockBiometric={unlockWithBiometric}
+              onUnlockPassword={unlockWithPassword}
+            />
+          )}
         </AlertProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
