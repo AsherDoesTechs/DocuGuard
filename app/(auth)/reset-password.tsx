@@ -151,6 +151,7 @@ export default function ResetPasswordScreen() {
               title="Update Password"
               onPress={form.handleSubmit}
               loading={form.isSubmitting}
+              feedbackType="success"
             />
           </View>
         </Card>

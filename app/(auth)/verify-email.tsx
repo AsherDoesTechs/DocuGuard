@@ -134,11 +134,14 @@ export default function VerifyEmailScreen() {
                   title="Resend verification link"
                   onPress={handleResend}
                   loading={resending}
+                  feedbackType="info"
                 />
 
                 <Button
                   title="Return to sign in"
                   onPress={() => router.replace("/(auth)/login" as any)}
+                  variant="secondary"
+                  feedbackType="light"
                 />
               </>
             )}

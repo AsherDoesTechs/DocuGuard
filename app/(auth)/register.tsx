@@ -208,6 +208,7 @@ export default function RegisterScreen() {
               title="Create Account"
               onPress={form.handleSubmit}
               loading={form.isSubmitting}
+              feedbackType="success"
             />
           </View>
         </Card>

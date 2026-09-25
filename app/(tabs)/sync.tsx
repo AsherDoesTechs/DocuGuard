@@ -184,17 +184,18 @@ export default function SyncScreen() {
             </View>
           </View>
 
-          <Button
+<Button
             title={
               syncing
                 ? "Syncing..."
                 : totalPending === 0
-                  ? "All Synced"
-                  : "Sync Now"
+                ? "All Synced"
+                : "Sync Now"
             }
             onPress={handleSync}
             loading={syncing}
             style={styles.syncButton}
+            feedbackType="success"
           />
         </Card>
 

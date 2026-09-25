@@ -85,6 +85,7 @@ export default function ForgotPasswordScreen() {
               title="Send Reset Link"
               onPress={form.handleSubmit}
               loading={form.isSubmitting}
+              feedbackType="info"
             />
           </View>
         </Card>

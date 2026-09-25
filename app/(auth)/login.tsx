@@ -216,6 +216,7 @@ export default function LoginScreen() {
               title="Sign In"
               onPress={form.handleSubmit}
               loading={form.isSubmitting}
+              feedbackType="success"
             />
           </View>
         </Card>

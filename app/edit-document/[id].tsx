@@ -197,7 +197,12 @@ export default function EditDocumentScreen() {
           <Input label="Expiry Date" placeholder="YYYY-MM-DD" value={form.values.expiryDate} onChangeText={form.handleChange("expiryDate")} onBlur={form.handleBlur("expiryDate")} error={form.touched.expiryDate ? form.errors.expiryDate : undefined} />
           <Input label="Notes" placeholder="Add any additional notes..." value={form.values.notes} onChangeText={form.handleChange("notes")} onBlur={form.handleBlur("notes")} />
           <View style={{ marginTop: 16 }}>
-            <Button title="Save Changes" onPress={form.handleSubmit} loading={form.isSubmitting} />
+            <Button
+              title="Save Changes"
+              onPress={form.handleSubmit}
+              loading={form.isSubmitting}
+              feedbackType="success"
+            />
           </View>
         </Card>
       </ScrollView>

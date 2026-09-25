@@ -7,15 +7,16 @@ import {
   StyleProp,
   ViewStyle,
 } from "react-native";
-import Colors from "../../constants/colors";
-import Spacing from "../../constants/spacing";
+import { useColors, Spacing } from "@/constants";
+import { useFeedbackTrigger } from "./FeedbackButton";
 
 interface ButtonProps {
   title: string;
   onPress: () => void;
-  variant?: "primary" | "secondary" | "danger";
+  variant?: "primary" | "secondary" | "danger" | "success" | "warning";
   loading?: boolean;
   style?: StyleProp<ViewStyle>;
+  feedbackType?: "success" | "error" | "warning" | "info" | "light" | "medium" | "heavy" | "selection";
 }
 
 export default function Button({
@@ -24,9 +25,21 @@ export default function Button({
   variant = "primary",
   loading,
   style,
+  feedbackType = "selection",
 }: ButtonProps) {
+  const colors = useColors();
+  const { custom: triggerFeedback } = useFeedbackTrigger();
   const isSecondary = variant === "secondary";
   const isDanger = variant === "danger";
+  const isSuccess = variant === "success";
+  const isWarning = variant === "warning";
+
+  const handlePress = () => {
+    if (!loading && onPress) {
+      triggerFeedback(feedbackType, { sound: false, haptic: true });
+      onPress();
+    }
+  };
 
   return (
     <TouchableOpacity
@@ -34,13 +47,15 @@ export default function Button({
         styles.button,
         isSecondary && styles.secondaryButton,
         isDanger && styles.dangerButton,
+        isSuccess && styles.successButton,
+        isWarning && styles.warningButton,
         style,
       ]}
-      onPress={onPress}
+      onPress={handlePress}
       disabled={loading}
     >
       {loading ? (
-        <ActivityIndicator color={isSecondary ? Colors.primary : "#fff"} />
+        <ActivityIndicator color={isSecondary ? colors.primary : "#fff"} />
       ) : (
         <Text style={[styles.text, isSecondary && styles.secondaryText]}>
           {title}
@@ -52,7 +67,7 @@ export default function Button({
 
 const styles = StyleSheet.create({
   button: {
-    backgroundColor: Colors.primary,
+    backgroundColor: colors.primary,
     paddingVertical: Spacing.md,
     paddingHorizontal: Spacing.lg,
     borderRadius: 12,
@@ -63,10 +78,16 @@ const styles = StyleSheet.create({
   secondaryButton: {
     backgroundColor: "transparent",
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: colors.border,
   },
   dangerButton: {
-    backgroundColor: Colors.error,
+    backgroundColor: colors.error,
+  },
+  successButton: {
+    backgroundColor: colors.success,
+  },
+  warningButton: {
+    backgroundColor: colors.warning,
   },
   text: {
     color: "#fff",
@@ -74,6 +95,6 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   secondaryText: {
-    color: Colors.text,
+    color: colors.text,
   },
 });

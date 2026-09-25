@@ -8,8 +8,8 @@ import {
   StyleProp,
   TextStyle,
 } from "react-native";
-import Colors from "../../constants/colors";
-import Spacing from "../../constants/spacing";
+import { useColors, Spacing } from "@/constants";
+import { useFeedbackTrigger } from "./FeedbackButton";
 
 interface InputProps {
   label?: string | React.ReactNode;
@@ -38,31 +38,41 @@ export default function Input({
   autoComplete,
   textContentType,
 }: InputProps) {
+  const colors = useColors();
+  const { light } = useFeedbackTrigger();
+
+  const handleFocus = () => {
+    light();
+  };
+
   return (
     <View style={styles.container}>
-      {/* If label is a string, it will be rendered as a Text child automatically.
-        If it's a JSX Element (e.g. <Text><Icon /> Text</Text>), it renders as is.
-      */}
       {label &&
         (typeof label === "string" ? (
-          <Text style={styles.label}>{label}</Text>
+          <Text style={[styles.label, { color: colors.text }]}>{label}</Text>
         ) : (
           <View style={styles.labelContainer}>{label}</View>
         ))}
       <TextInput
-        style={[styles.input, error ? styles.inputError : null, style]}
+        style={[
+          styles.input,
+          { backgroundColor: colors.inputBackground, borderColor: colors.inputBorder, color: colors.text },
+          error ? styles.inputError : null,
+          style,
+        ]}
         placeholder={placeholder}
-        placeholderTextColor={Colors.textMuted}
+        placeholderTextColor={colors.textMuted}
         value={value}
         onChangeText={onChangeText}
         onBlur={onBlur}
+        onFocus={handleFocus}
         secureTextEntry={secureTextEntry}
         keyboardType={keyboardType}
         autoCapitalize="none"
         autoComplete={autoComplete as any}
         textContentType={textContentType as any}
       />
-      {error && <Text style={styles.errorText}>{error}</Text>}
+      {error && <Text style={[styles.errorText, { color: colors.error }]}>{error}</Text>}
     </View>
   );
 }
@@ -75,26 +85,21 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 14,
     fontWeight: "500",
-    color: "#1f2937",
     marginBottom: Spacing.xs,
   },
   labelContainer: {
     marginBottom: Spacing.xs,
   },
   input: {
-    backgroundColor: "#fff",
     borderWidth: 1,
-    borderColor: "#e5e7eb",
     borderRadius: 12,
     padding: Spacing.md,
     fontSize: 16,
-    color: "#1f2937",
   },
   inputError: {
-    borderColor: Colors.error,
+    borderWidth: 2,
   },
   errorText: {
-    color: Colors.error,
     fontSize: 12,
     marginTop: 4,
     fontWeight: "500",
