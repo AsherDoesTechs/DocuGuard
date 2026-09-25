@@ -25,7 +25,6 @@ import * as SecureStore from "expo-secure-store";
 import { api } from "../../services/api";
 import { getUserProfile, getAllDocuments } from "../../services/localDatabase";
 import * as LocalAuthentication from "expo-local-authentication";
-import * as SecureStore from "expo-secure-store";
 
 type SettingsTab =
   | "none"
@@ -249,8 +248,11 @@ export default function ProfileScreen() {
         bioType = "iris";
       }
 
-      const storedBiometric = await SecureStore.getItemAsync("biometricEnabled");
-      const storedAppLock = await SecureStore.getItemAsync("docuguard.appLock.enabled");
+      const storedBiometric =
+        await SecureStore.getItemAsync("biometricEnabled");
+      const storedAppLock = await SecureStore.getItemAsync(
+        "docuguard.appLock.enabled",
+      );
 
       setBiometric({
         available: hasHardware,
@@ -441,7 +443,10 @@ export default function ProfileScreen() {
       );
     }
     try {
-      await SecureStore.setItemAsync("docuguard.appLock.enabled", String(value));
+      await SecureStore.setItemAsync(
+        "docuguard.appLock.enabled",
+        String(value),
+      );
       setAppLockEnabled(value);
       showToast(
         value ? "App Lock enabled successfully" : "App Lock disabled",
