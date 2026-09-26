@@ -63,6 +63,35 @@ async function scheduleExpiringSoonNotification(doc: LocalDocument) {
   const identifier = `expiring_${doc.id}`;
   await Notifications.cancelScheduledNotificationAsync(identifier);
 
+  const intervals = doc.reminderIntervals && doc.reminderIntervals.length > 0
+    ? doc.reminderIntervals
+    : [doc.reminderIntervalDays || 30, 7, 1];
+
+  for (const days of intervals) {
+    const triggerDate = new Date(doc.expiryDate);
+    triggerDate.setDate(triggerDate.getDate() - days);
+
+    const now = new Date();
+    if (triggerDate <= now) continue;
+
+    const notifIdentifier = `expiring_${doc.id}_${days}d`;
+
+    await Notifications.cancelScheduledNotificationAsync(notifIdentifier);
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: "Document Expiring Soon",
+        body: `${doc.title} expires on ${doc.expiryDate}. Time to renew.`,
+        data: { documentId: doc.id, type: "expiring" },
+        sound: "default",
+      },
+      identifier: notifIdentifier,
+      trigger: {
+        type: SchedulableTriggerInputTypes.DATE,
+        date: triggerDate,
+      },
+    });
+  }
+
   await Notifications.scheduleNotificationAsync({
     content: {
       title: "Document Expiring Soon",
@@ -70,7 +99,7 @@ async function scheduleExpiringSoonNotification(doc: LocalDocument) {
       data: { documentId: doc.id, type: "expiring" },
       sound: "default",
     },
-    identifier,
+    identifier: identifier + "_ongoing",
     trigger: {
       type: SchedulableTriggerInputTypes.DAILY,
       hour: 9,
@@ -127,6 +156,14 @@ async function scheduleReminderNotifications() {
 export async function cancelDocumentNotifications(docId: number) {
   await Notifications.cancelScheduledNotificationAsync(`expired_${docId}`);
   await Notifications.cancelScheduledNotificationAsync(`expiring_${docId}`);
+  await Notifications.cancelScheduledNotificationAsync(`expiring_${docId}_ongoing`);
+  const prefixes = [`expiring_${docId}_`, `expired_${docId}_`];
+  const all = await Notifications.getAllScheduledNotificationsAsync();
+  for (const notif of all) {
+    if (prefixes.some((p) => notif.identifier?.startsWith(p))) {
+      await Notifications.cancelScheduledNotificationAsync(notif.identifier);
+    }
+  }
 }
 
 export async function cancelAllNotifications() {

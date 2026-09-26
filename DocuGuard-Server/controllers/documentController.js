@@ -103,67 +103,102 @@ exports.getUploadUrl = async (req, res) => {
 exports.processDocument = async (req, res) => {
   try {
     const validation = validateSchema(processDocumentSchema, req.body);
+
     if (!validation.success) {
       return res.status(400).json({
-        error: Object.values(validation.errors).join(", "),
-        code: ErrorCodes.DOC_VALIDATION,
-        details: validation.errors,
+        status: "error",
+        code: ErrorCodes.VALIDATION_ERROR,
+        errorCode: "VALIDATION_ERROR",
+        error: validation.error,
       });
     }
 
     const userId = req.user.userId;
     const { documentId } = validation.data;
 
-    const docResult = await db.query(
-      `SELECT id, s3_key, file_url FROM documents WHERE id = $1 AND user_id = $2`,
+    const documentResult = await db.query(
+      `
+      SELECT
+        id,
+        title,
+        s3_key,
+        file_url,
+        file_type
+      FROM documents
+      WHERE id = $1
+        AND user_id = $2
+      `,
       [documentId, userId],
     );
 
-    if (docResult.rows.length === 0) {
+    if (documentResult.rows.length === 0) {
       return res.status(404).json({
+        status: "error",
+        code: ErrorCodes.DOCUMENT_NOT_FOUND,
+        errorCode: "DOCUMENT_NOT_FOUND",
         error: "Document not found",
-        code: ErrorCodes.DOC_NOT_FOUND,
       });
     }
 
-    const doc = docResult.rows[0];
-    const s3Key = doc.s3_key;
-    const fileUrl = doc.file_url;
+    const document = documentResult.rows[0];
 
-    if (!s3Key && !fileUrl) {
+    const fileUrl = document.file_url;
+    const storagePath = document.s3_key;
+    const fileType = document.file_type || "application/pdf";
+
+    if (!fileUrl && !storagePath) {
       return res.status(400).json({
-        error: "Document has no file attached. Please upload a file first.",
+        status: "error",
+        code: ErrorCodes.OCR_PROCESS_FAILED,
+        errorCode: "DOCUMENT_FILE_MISSING",
+        error: "Document does not have an uploaded file",
       });
     }
 
-    // Update status to processing
+    /*
+     * file_url is preferred because Azure can analyze
+     * the document directly from a URL.
+     */
+    const azureUrl = fileUrl;
+
+    if (!azureUrl) {
+      return res.status(400).json({
+        status: "error",
+        code: ErrorCodes.OCR_PROCESS_FAILED,
+        errorCode: "DOCUMENT_URL_MISSING",
+        error: "A public document URL is required for Azure processing.",
+      });
+    }
+
     await db.query(
-      `UPDATE documents SET processing_status = 'processing', updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
-      [documentId],
+      `
+      UPDATE documents
+      SET processing_status = 'processing'
+      WHERE id = $1
+        AND user_id = $2
+      `,
+      [documentId, userId],
     );
 
-    // Run OCR/AI extraction
-    const extractedData = await extractDocumentData(fileUrl || s3Key);
+    const extractedData = await extractDocumentData(azureUrl, fileType);
 
-    // Update document with extracted data
     const updateResult = await db.query(
-      `UPDATE documents 
-       SET title = COALESCE($1, title),
-           category = COALESCE($2, category),
-           issuer = COALESCE($3, issuer),
-           document_number = COALESCE($4, document_number),
-           issue_date = COALESCE($5, issue_date),
-           expiry_date = COALESCE($6, expiry_date),
-           risk_score = COALESCE($7, risk_score),
-           risk_level = COALESCE($8, risk_level),
-           processing_status = 'completed',
-           updated_at = CURRENT_TIMESTAMP
-       WHERE id = $9 AND user_id = $10
-       RETURNING id, title, category, issuer, document_number AS "documentNumber", 
-                 issue_date AS "issueDate", expiry_date AS "expiryDate", notes, status, 
-                 enable_alerts AS "enableAlerts", file_url AS "fileUrl", file_type AS "fileType",
-                 s3_key AS "s3Key", processing_status AS "processingStatus",
-                 risk_score AS "riskScore", risk_level AS "riskLevel"`,
+      `
+      UPDATE documents
+      SET
+        title = COALESCE($1, title),
+        category = COALESCE($2, category),
+        issuer = COALESCE($3, issuer),
+        document_number = COALESCE($4, document_number),
+        issue_date = COALESCE($5, issue_date),
+        expiry_date = COALESCE($6, expiry_date),
+        risk_score = $7,
+        risk_level = $8,
+        processing_status = 'completed'
+      WHERE id = $9
+        AND user_id = $10
+      RETURNING *
+      `,
       [
         extractedData.title,
         extractedData.category,
@@ -178,50 +213,57 @@ exports.processDocument = async (req, res) => {
       ],
     );
 
-    // Send processing complete notification
-    try {
-      const userResult = await db.query(
-        `SELECT fcm_token, expo_push_token FROM users WHERE id = $1`,
-        [userId],
-      );
-
-      const pushToken =
-        userResult.rows[0]?.fcm_token || userResult.rows[0]?.expo_push_token;
-      if (pushToken && extractedData.title) {
-        await sendProcessingCompleteNotification(
-          pushToken,
-          extractedData.title,
-          extractedData.riskLevel,
-        );
-      }
-    } catch (notifErr) {
-      console.error("Error sending processing notification:", notifErr);
+    if (updateResult.rows.length === 0) {
+      throw new Error("Document disappeared while processing");
     }
 
-    res.json({
+    const updatedDocument = updateResult.rows[0];
+
+    /*
+     * Notification is optional. Don't let a notification
+     * failure make successful OCR look like a failed OCR.
+     */
+    try {
+      if (req.user.expoPushToken && extractedData.title) {
+        await sendProcessingCompleteNotification(
+          req.user.expoPushToken,
+          extractedData.title,
+        );
+      }
+    } catch (notificationError) {
+      warn("OCR succeeded but notification failed:", notificationError.message);
+    }
+
+    return res.status(200).json({
+      status: "success",
       message: "Document processed successfully",
-      document: updateResult.rows[0],
+      document: updatedDocument,
       extractedData,
     });
-  } catch (err) {
-    console.error("Error processing document:", err);
+  } catch (error) {
+    logError("Document processing error:", error);
 
-    // Update status to failed if we have documentId
     try {
-      const { documentId } = req.body;
-      if (documentId) {
+      if (req.body?.documentId) {
         await db.query(
-          `UPDATE documents SET processing_status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
-          [documentId],
+          `
+          UPDATE documents
+          SET processing_status = 'failed'
+          WHERE id = $1
+            AND user_id = $2
+          `,
+          [req.body.documentId, req.user.userId],
         );
       }
-    } catch (updateErr) {
-      console.error("Error updating processing status:", updateErr);
+    } catch (dbError) {
+      logError("Could not update failed processing status:", dbError);
     }
 
-    res.status(500).json({
-      error: "OCR processing failed",
+    return res.status(500).json({
+      status: "error",
       code: ErrorCodes.OCR_PROCESS_FAILED,
+      errorCode: "OCR_PROCESS_FAILED",
+      error: error.message || "Document processing failed",
     });
   }
 };
@@ -455,7 +497,10 @@ exports.createDocument = async (req, res) => {
 
 // Update an existing document with strict validation & automations
 exports.updateDocument = async (req, res) => {
-  const validation = validateSchema(documentUpdateSchema, { ...req.body, id: parseInt(req.params.id) });
+  const validation = validateSchema(documentUpdateSchema, {
+    ...req.body,
+    id: parseInt(req.params.id),
+  });
   if (!validation.success) {
     return res.status(400).json({
       error: Object.values(validation.errors).join(", "),

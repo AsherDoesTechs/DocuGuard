@@ -10,15 +10,17 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { Input, Card, StatusBadge } from "../../components/ui";
+import { Input, Card, StatusBadge, ExpirationDashboard } from "../../components/ui";
 import { COLORS, DOCUMENT_CATEGORIES } from "../../constants";
 import { formatShortDate } from "../../utils";
 import { RefreshableContainer } from "@/components/ui/RefreshableContainer";
 import {
   getAllDocuments,
   getExpiredDocuments,
+  getDashboardSummary,
   updateDocumentStatus,
   LocalDocument,
+  DocumentDashboardSummary,
 } from "../../services/localDatabase";
 import { cancelDocumentNotifications } from "../../services/notificationScheduler";
 
@@ -30,6 +32,9 @@ export default function DocumentsScreen() {
   // Real data states
   const [documents, setDocuments] = useState<LocalDocument[]>([]);
   const [loading, setLoading] = useState(true);
+  const [dashboardSummary, setDashboardSummary] = useState<DocumentDashboardSummary | null>(
+    null,
+  );
 
   // Function to fetch documents from local database (cleaned up single-pass fetch)
   const fetchDocuments = async () => {
@@ -44,6 +49,9 @@ export default function DocumentsScreen() {
 
       const localDocs = await getAllDocuments();
       setDocuments(localDocs);
+
+      const summary = await getDashboardSummary();
+      setDashboardSummary(summary);
     } catch (err: any) {
       console.error("Failed to fetch documents:", err);
     } finally {
@@ -101,6 +109,8 @@ export default function DocumentsScreen() {
             {filtered.length} documents • Offline Mode
           </Text>
         </View>
+
+        {dashboardSummary && <ExpirationDashboard summary={dashboardSummary} />}
 
         <View style={styles.searchContainer}>
           <Ionicons
@@ -190,21 +200,35 @@ export default function DocumentsScreen() {
                         <Text style={styles.docIssuer}>
                           Issuing Agency: {doc.issuer || "Unknown"}
                         </Text>
-                        <View style={styles.docMeta}>
-                          <Text style={styles.docNumber}>
-                            ID: {maskDocumentNumber(doc.documentNumber)}
+                      <View style={styles.docMeta}>
+                        <Text style={styles.docNumber}>
+                          ID: {maskDocumentNumber(doc.documentNumber)}
+                        </Text>
+                        {doc.syncStatus === "pending" && (
+                          <Ionicons
+                            name="cloud-upload-outline"
+                            size={14}
+                            color={COLORS.warning}
+                          />
+                        )}
+                        {doc.syncStatus === "failed" && (
+                          <Ionicons
+                            name="alert-circle-outline"
+                            size={14}
+                            color={COLORS.danger}
+                          />
+                        )}
+                        <View style={styles.docDate}>
+                          <Ionicons
+                            name="calendar-outline"
+                            size={14}
+                            color={COLORS.textSecondary}
+                          />
+                          <Text style={styles.docDateText}>
+                            Expires {formatShortDate(doc.expiryDate)}
                           </Text>
-                          <View style={styles.docDate}>
-                            <Ionicons
-                              name="calendar-outline"
-                              size={14}
-                              color={COLORS.textSecondary}
-                            />
-                            <Text style={styles.docDateText}>
-                              Expires {formatShortDate(doc.expiryDate)}
-                            </Text>
-                          </View>
                         </View>
+                      </View>
                       </View>
                       <StatusBadge status={doc.status} />
                     </View>

@@ -19,6 +19,7 @@ import {
   getDocumentById,
   deleteDocument,
   updateDocument,
+  getDocumentHistory,
 } from "@/services/localDatabase";
 import * as SecureStore from "expo-secure-store";
 import { api } from "@/services/api";
@@ -50,6 +51,8 @@ export default function DocumentDetailsScreen() {
   const [isDownloading, setIsDownloading] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
   const [copySuccess, setCopySuccess] = useState<string | null>(null);
+  const [history, setHistory] = useState<any[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
   const mountedRef = useRef(true);
 
   const fetchDocumentDetails = useCallback(async () => {
@@ -86,10 +89,27 @@ export default function DocumentDetailsScreen() {
     }
   }, [id]);
 
+  const fetchHistory = useCallback(async () => {
+    if (!id) return;
+    setLoadingHistory(true);
+    try {
+      const docId = parseInt(id as string, 10);
+      const hist = await getDocumentHistory(docId);
+      if (mountedRef.current) {
+        setHistory(hist || []);
+      }
+    } catch (err) {
+      console.warn("Failed to load history:", err);
+    } finally {
+      if (mountedRef.current) setLoadingHistory(false);
+    }
+  }, [id]);
+
   useEffect(() => {
     fetchDocumentDetails();
+    fetchHistory();
     return () => { mountedRef.current = false; };
-  }, [fetchDocumentDetails]);
+  }, [fetchDocumentDetails, fetchHistory]);
 
   const handleDelete = async () => {
     if (!document) return;
@@ -157,6 +177,38 @@ export default function DocumentDetailsScreen() {
   };
 
   const dismissToast = () => setCopySuccess(null);
+
+  function getHistoryIcon(action: string): keyof typeof Ionicons.glyphMap {
+    switch (action) {
+      case "created":
+        return "add-circle";
+      case "updated":
+        return "create";
+      case "deleted":
+        return "trash";
+      case "synced":
+        return "cloud-upload";
+      case "verified":
+        return "checkmark-circle";
+      case "reminder_sent":
+        return "time";
+      default:
+        return "document-text";
+    }
+  }
+
+  function formatHistoryAction(action: string): string {
+    const map: Record<string, string> = {
+      created: "Document Created",
+      updated: "Document Updated",
+      deleted: "Document Deleted",
+      synced: "Document Synced",
+      verified: "Document Verified",
+      reminder_sent: "Reminder Sent",
+      processed: "OCR Processing Completed",
+    };
+    return map[action] || action.replace(/_/g, " ");
+  }
 
   if (isLoading) return <Loading />;
 
@@ -261,15 +313,49 @@ export default function DocumentDetailsScreen() {
           </Card>
         )}
 
-        {document.riskScore !== undefined && document.riskLevel && (
-          <Card style={styles.riskCard}>
-            <Text style={styles.riskLabel}>AI Risk Assessment</Text>
-            <View style={styles.riskRow}>
-              <Text style={styles.riskScore}>Score: {document.riskScore}/100</Text>
-              <StatusBadge status={document.riskLevel === "Low" ? "success" : document.riskLevel === "Medium" ? "warning" : "danger"} text={document.riskLevel} />
-            </View>
-          </Card>
-        )}
+         {document.riskScore !== undefined && document.riskLevel && (
+           <Card style={styles.riskCard}>
+             <Text style={styles.riskLabel}>AI Risk Assessment</Text>
+             <View style={styles.riskRow}>
+               <Text style={styles.riskScore}>Score: {document.riskScore}/100</Text>
+               <StatusBadge status={document.riskLevel === "Low" ? "success" : document.riskLevel === "Medium" ? "warning" : "danger"} text={document.riskLevel} />
+             </View>
+           </Card>
+         )}
+
+         <Card style={styles.historyCard}>
+           <View style={styles.historyHeader}>
+             <Text style={styles.historyTitle}>Document Activity</Text>
+             <Ionicons name="time-outline" size={20} color={COLORS.textSecondary} />
+           </View>
+           {loadingHistory ? (
+             <ActivityIndicator size="small" color={COLORS.primary} />
+           ) : history.length === 0 ? (
+             <Text style={styles.historyEmpty}>No activity recorded yet</Text>
+           ) : (
+             <View style={styles.historyList}>
+               {history.map((item) => (
+                 <View key={item.id} style={styles.historyItem}>
+                   <View style={styles.historyDot}>
+                     <Ionicons
+                       name={getHistoryIcon(item.action)}
+                       size={14}
+                       color={COLORS.primary}
+                     />
+                   </View>
+                   <View style={styles.historyContent}>
+                     <Text style={styles.historyAction}>
+                       {formatHistoryAction(item.action)}
+                     </Text>
+                     <Text style={styles.historyTime}>
+                       {formatShortDate(item.createdAt || item.created_at)}
+                     </Text>
+                   </View>
+                 </View>
+               ))}
+             </View>
+           )}
+         </Card>
 
         <View style={styles.actions}>
           {document.status !== "verified" && (
@@ -341,4 +427,22 @@ const styles = StyleSheet.create({
   errorText: { fontSize: 16, color: COLORS.textSecondary, textAlign: "center" },
   retryButton: { backgroundColor: COLORS.primary, paddingHorizontal: 24, paddingVertical: 12, borderRadius: 8 },
   retryButtonText: { color: "#fff", fontWeight: "600", fontSize: 16 },
+  historyCard: { marginBottom: 20 },
+  historyHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
+  historyTitle: { fontSize: 16, fontWeight: "700", color: COLORS.text },
+  historyList: { gap: 10 },
+  historyItem: { flexDirection: "row", gap: 10, alignItems: "flex-start" },
+  historyDot: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: `${COLORS.primary}20`,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 2,
+  },
+  historyContent: { flex: 1 },
+  historyAction: { fontSize: 14, fontWeight: "500", color: COLORS.text },
+  historyTime: { fontSize: 12, color: COLORS.textSecondary, marginTop: 2 },
+  historyEmpty: { fontSize: 13, color: COLORS.textSecondary, fontStyle: "italic" },
 });

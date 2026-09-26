@@ -25,7 +25,7 @@ import * as DocumentPicker from "expo-document-picker";
 import { COLORS } from "@/constants";
 import { DocumentScannerComponent } from "@/components/ui/DocumentScanner";
 import { extractDocumentData } from "../utils/ocr";
-import { createDocument, logDocumentAction } from "../services/localDatabase";
+import { createDocument, logDocumentAction, LocalDocument } from "../services/localDatabase";
 import { formatCategoryForBackend } from "@/DocuGuard-Server/utils/categories";
 
 const MAX_TITLE_LENGTH = 100;
@@ -875,6 +875,8 @@ export default function AddDocumentScreen() {
   const [issueDate, setIssueDate] = useState<string>("");
   const [expiryDate, setExpiryDate] = useState<string>("");
   const [notes, setNotes] = useState<string>("");
+  const [reminderIntervals, setReminderIntervals] = useState<number[]>([30]);
+  const [enableAlerts, setEnableAlerts] = useState<boolean>(true);
 
   const [selectedFile, setSelectedFile] = useState<SelectedFileItem | null>(
     null,
@@ -976,37 +978,55 @@ export default function AddDocumentScreen() {
     }
   }
 
-  async function processScan(uri: string) {
+  const processScan = async (uri: string, mimeType = "image/jpeg") => {
     setOcrLoading(true);
 
     try {
       const raw = await extractDocumentData(uri);
+
       const extracted = normalizeExtractedData(raw);
 
       setExtractedData(extracted);
 
-      // Automatically fill up form fields with scanned/extracted information
-      if (extracted.title) setTitle(extracted.title);
-      if (extracted.documentNumber) setDocumentNumber(extracted.documentNumber);
-      if (extracted.issuer) setIssuer(extracted.issuer);
-      if (extracted.issueDate) setIssueDate(extracted.issueDate);
-      if (extracted.expiryDate) setExpiryDate(extracted.expiryDate);
+      if (extracted.title) {
+        setTitle(extracted.title);
+      }
+
+      if (extracted.documentNumber) {
+        setDocumentNumber(extracted.documentNumber);
+      }
+
+      if (extracted.issuer) {
+        setIssuer(extracted.issuer);
+      }
+
+      if (extracted.issueDate) {
+        setIssueDate(extracted.issueDate);
+      }
+
+      if (extracted.expiryDate) {
+        setExpiryDate(extracted.expiryDate);
+      }
 
       setStep(4);
+
       showToast(
-        `Document scanned successfully (${extracted.confidence}% confidence)`,
+        `Document scanned successfully (${extracted.confidence}% extraction completeness)`,
         "success",
       );
-    } catch (error) {
+    } catch (error: any) {
+      console.error("Document OCR error:", error);
+
       showToast(
-        "The document was scanned, but information could not be extracted.",
+        error?.message || "The document could not be processed.",
         "warning",
       );
+
       setStep(4);
     } finally {
       setOcrLoading(false);
     }
-  }
+  };
 
   async function handleScanSuccess(data: { uri: string }) {
     setScannerVisible(false);
@@ -1071,7 +1091,7 @@ export default function AddDocumentScreen() {
 
     try {
       const token = await getStoredToken();
-      const payload = {
+      const payload: Partial<LocalDocument> = {
         title: title.trim(),
         category: formatCategoryForBackend(
           specificDocument?.category || category?.id || "other",
@@ -1082,11 +1102,14 @@ export default function AddDocumentScreen() {
         expiryDate,
         notes: notes.trim(),
         status: "active",
-        enableAlerts: true,
-        processingStatus: selectedFile ? "processing" : "completed",
-        needsSync: !!token,
-        fileType: selectedFile?.mimeType ?? undefined,
-      };
+         enableAlerts: enableAlerts,
+         reminderIntervalDays: reminderIntervals[0] || 7,
+         reminderIntervals: reminderIntervals,
+         processingStatus: selectedFile ? "processing" : "completed",
+         needsSync: !!token,
+         syncStatus: "pending",
+         fileType: selectedFile?.mimeType ?? undefined,
+       };
 
       const localId = await createDocument(payload);
       await logDocumentAction(localId, "created", payload);
@@ -1447,13 +1470,81 @@ export default function AddDocumentScreen() {
           </TouchableOpacity>
         </View>
 
-        <Field
-          label="Notes"
-          value={notes}
-          placeholder="Optional notes"
-          multiline
-          onChangeText={(value) => setNotes(value.slice(0, MAX_NOTES_LENGTH))}
-        />
+         <Field
+           label="Notes"
+           value={notes}
+           placeholder="Optional notes"
+           multiline
+           onChangeText={(value) => setNotes(value.slice(0, MAX_NOTES_LENGTH))}
+         />
+
+         <View style={styles.field}>
+           <Text style={styles.fieldLabel}>
+             Alerts & Reminders
+           </Text>
+           <View style={styles.switchRow}>
+             <Text style={styles.switchLabel}>Enable expiration alerts</Text>
+             <TouchableOpacity
+               style={[
+                 styles.toggleSwitch,
+                 enableAlerts && styles.toggleSwitchActive,
+               ]}
+               onPress={() => setEnableAlerts(!enableAlerts)}
+             >
+               <View
+                 style={[
+                   styles.toggleKnob,
+                   enableAlerts && styles.toggleKnobActive,
+                 ]}
+               />
+             </TouchableOpacity>
+           </View>
+         </View>
+
+         {enableAlerts && (
+           <View style={styles.reminderContainer}>
+             <Text style={styles.reminderTitle}>
+               Remind me before expiration:
+             </Text>
+             {[7, 14, 30, 60, 90].map((days) => (
+               <TouchableOpacity
+                 key={days}
+                 style={styles.reminderOption}
+                 onPress={() => {
+                   if (reminderIntervals.includes(days)) {
+                     setReminderIntervals(
+                       reminderIntervals.filter((d) => d !== days),
+                     );
+                   } else {
+                     setReminderIntervals(
+                       [...reminderIntervals, days].sort((a, b) => a - b),
+                     );
+                   }
+                 }}
+                 activeOpacity={0.7}
+               >
+                 <View
+                   style={[
+                     styles.checkbox,
+                     reminderIntervals.includes(days) &&
+                       styles.checkboxChecked,
+                   ]}
+                 >
+                   {reminderIntervals.includes(days) && (
+                     <Ionicons
+                       name="checkmark"
+                       size={14}
+                       color="#fff"
+                     />
+                   )}
+                 </View>
+                 <Text style={styles.reminderOptionText}>
+                   {days} day{days !== 1 ? "s" : ""} before
+                 </Text>
+               </TouchableOpacity>
+             ))}
+           </View>
+         )}
 
         <TouchableOpacity
           style={[styles.primaryButton, saving && { opacity: 0.7 }]}
@@ -1674,6 +1765,71 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     marginRight: 16,
+  },
+  switchRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 8,
+  },
+  switchLabel: {
+    fontSize: 15,
+    color: COLORS.text,
+  },
+  toggleSwitch: {
+    width: 44,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: "#E5E7EB",
+    padding: 2,
+  },
+  toggleSwitchActive: {
+    backgroundColor: COLORS.primary,
+  },
+  toggleKnob: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: "#fff",
+  },
+  toggleKnobActive: {
+    transform: [{ translateX: 20 }],
+  },
+  reminderContainer: {
+    backgroundColor: "#F9FAFB",
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 16,
+    gap: 6,
+  },
+  reminderTitle: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: COLORS.textSecondary,
+    marginBottom: 6,
+  },
+  reminderOption: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 6,
+  },
+  reminderOptionText: {
+    fontSize: 14,
+    color: COLORS.text,
+  },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 2,
+    borderColor: COLORS.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  checkboxChecked: {
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
   },
   field: {
     marginBottom: 16,

@@ -9,6 +9,8 @@ export interface LocalDocument {
   notes?: string;
   status: string;
   enableAlerts: boolean;
+  reminderIntervalDays?: number;
+  reminderIntervals?: number[];
   fileUrl?: string;
   fileType?: string;
   s3Key?: string;
@@ -17,12 +19,26 @@ export interface LocalDocument {
   riskLevel?: string;
   userId?: string;
   needsSync: boolean;
+  syncStatus?: "synced" | "pending" | "failed";
   createdAt?: string;
   updatedAt?: string;
   authenticity?: "real" | "replica" | "fake";
   authenticityScore?: number;
   authenticityReason?: string;
   tags?: string[];
+}
+
+export interface DocumentDashboardSummary {
+  total: number;
+  valid: number;
+  expiring: number;
+  expired: number;
+  nextExpiring?: {
+    id: number;
+    title: string;
+    daysRemaining: number;
+    expiryDate: string;
+  };
 }
 
 export interface LocalReminder {

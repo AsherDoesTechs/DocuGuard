@@ -4,11 +4,12 @@ import {
   LocalDocument,
   LocalReminder,
   LocalUserProfile,
+  DocumentDashboardSummary,
 } from "../types/offline";
 import { DebugLogger } from "./debugLogger";
 import { ErrorCodes } from "../constants/errorCodes";
 
-export type { LocalDocument, LocalReminder, LocalUserProfile };
+export type { LocalDocument, LocalReminder, LocalUserProfile, DocumentDashboardSummary };
 
 let db: SQLite.SQLiteDatabase | null = null;
 
@@ -56,6 +57,8 @@ export async function initDatabase() {
         notes TEXT,
         status TEXT DEFAULT 'valid',
         enable_alerts BOOLEAN DEFAULT 1,
+        reminder_interval_days INTEGER DEFAULT 7,
+        reminder_intervals TEXT,
         file_url TEXT,
         file_type TEXT,
         s3_key TEXT,
@@ -63,10 +66,33 @@ export async function initDatabase() {
         risk_score REAL DEFAULT 0,
         risk_level TEXT DEFAULT 'Low',
         needs_sync BOOLEAN DEFAULT 0,
+        sync_status TEXT DEFAULT 'pending',
         created_at TEXT DEFAULT (datetime('now')),
         updated_at TEXT DEFAULT (datetime('now'))
       )
     `);
+
+    // Migration: add columns that might be missing from older schemas
+    const tableInfo = await database.getAllAsync<{ name: string }>(
+      `PRAGMA table_info(documents)`,
+    );
+    const existingColumns = new Set(tableInfo.map((col) => col.name));
+
+    if (!existingColumns.has("reminder_interval_days")) {
+      await database.execAsync(
+        `ALTER TABLE documents ADD COLUMN reminder_interval_days INTEGER DEFAULT 7`,
+      );
+    }
+    if (!existingColumns.has("reminder_intervals")) {
+      await database.execAsync(
+        `ALTER TABLE documents ADD COLUMN reminder_intervals TEXT`,
+      );
+    }
+    if (!existingColumns.has("sync_status")) {
+      await database.execAsync(
+        `ALTER TABLE documents ADD COLUMN sync_status TEXT DEFAULT 'pending'`,
+      );
+    }
 
     await database.execAsync(`
       CREATE TABLE IF NOT EXISTS reminders (
@@ -206,9 +232,10 @@ export async function createDocument(
       `
       INSERT INTO documents 
         (title, category, issuer, document_number, issue_date, expiry_date, notes, 
-         status, enable_alerts, file_url, file_type, s3_key, processing_status, 
-         risk_score, risk_level, needs_sync, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         status, enable_alerts, reminder_interval_days, reminder_intervals, file_url, 
+         file_type, s3_key, processing_status, risk_score, risk_level, needs_sync, 
+         sync_status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
       [
         doc.title,
@@ -220,6 +247,8 @@ export async function createDocument(
         doc.notes || "",
         doc.status || "active",
         doc.enableAlerts ? 1 : 0,
+        doc.reminderIntervalDays || 7,
+        doc.reminderIntervals ? JSON.stringify(doc.reminderIntervals) : null,
         doc.fileUrl || null,
         doc.fileType || null,
         doc.s3Key || null,
@@ -227,6 +256,7 @@ export async function createDocument(
         doc.riskScore || 0,
         doc.riskLevel || "Low",
         1,
+        "pending",
         new Date().toISOString(),
         new Date().toISOString(),
       ],
@@ -259,9 +289,11 @@ export async function getAllDocuments(): Promise<LocalDocument[]> {
     const rows = await queryAll<LocalDocument>(`
       SELECT id, title, category, issuer, document_number AS "documentNumber",
              issue_date AS "issueDate", expiry_date AS "expiryDate", notes, status,
-             enable_alerts AS "enableAlerts", file_url AS "fileUrl", 
+             enable_alerts AS "enableAlerts", reminder_interval_days AS "reminderIntervalDays",
+             reminder_intervals AS "reminderIntervals", file_url AS "fileUrl", 
              file_type AS "fileType", processing_status AS "processingStatus",
              risk_score AS "riskScore", risk_level AS "riskLevel",
+             needs_sync AS "needsSync", sync_status AS "syncStatus",
              created_at AS "createdAt", updated_at AS "updatedAt"
       FROM documents ORDER BY expiry_date ASC
     `);
@@ -295,9 +327,11 @@ export async function getDocumentById(
     const row = await querySingle<LocalDocument>(
       `SELECT id, title, category, issuer, document_number AS "documentNumber",
               issue_date AS "issueDate", expiry_date AS "expiryDate", notes, status,
-              enable_alerts AS "enableAlerts", file_url AS "fileUrl", 
+              enable_alerts AS "enableAlerts", reminder_interval_days AS "reminderIntervalDays",
+              reminder_intervals AS "reminderIntervals", file_url AS "fileUrl", 
               file_type AS "fileType", s3_key AS "s3Key", processing_status AS "processingStatus",
               risk_score AS "riskScore", risk_level AS "riskLevel",
+              needs_sync AS "needsSync", sync_status AS "syncStatus",
               created_at AS "createdAt", updated_at AS "updatedAt"
        FROM documents WHERE id = ?`,
       [id],
@@ -335,12 +369,15 @@ export async function updateDocument(id: number, doc: Partial<LocalDocument>) {
         notes = COALESCE(?, notes),
         status = COALESCE(?, status),
         enable_alerts = COALESCE(?, enable_alerts),
+        reminder_interval_days = COALESCE(?, reminder_interval_days),
+        reminder_intervals = COALESCE(?, reminder_intervals),
         file_url = COALESCE(?, file_url),
         file_type = COALESCE(?, file_type),
         s3_key = COALESCE(?, s3_key),
         processing_status = COALESCE(?, processing_status),
         risk_score = COALESCE(?, risk_score),
         risk_level = COALESCE(?, risk_level),
+        sync_status = COALESCE(?, sync_status),
         needs_sync = 1,
         updated_at = datetime('now')
       WHERE id = ?
@@ -355,12 +392,15 @@ export async function updateDocument(id: number, doc: Partial<LocalDocument>) {
         doc.notes,
         doc.status,
         doc.enableAlerts ? 1 : 0,
+        doc.reminderIntervalDays ?? null,
+        doc.reminderIntervals ? JSON.stringify(doc.reminderIntervals) : null,
         doc.fileUrl,
         doc.fileType,
         doc.s3Key,
         doc.processingStatus,
         doc.riskScore,
         doc.riskLevel,
+        doc.syncStatus ?? null,
         id,
       ],
     );
@@ -782,9 +822,11 @@ export async function getUnsyncedDocuments(): Promise<LocalDocument[]> {
   const rows = await queryAll<LocalDocument>(`
     SELECT id, title, category, issuer, document_number AS "documentNumber",
            issue_date AS "issueDate", expiry_date AS "expiryDate", notes, status,
-           enable_alerts AS "enableAlerts", file_url AS "fileUrl", 
-           file_type AS "fileType", s3_key AS "s3Key", processing_status AS "processingStatus",
-           risk_score AS "riskScore", risk_level AS "riskLevel"
+           enable_alerts AS "enableAlerts", reminder_interval_days AS "reminderIntervalDays",
+           file_url AS "fileUrl", 
+           file_type AS "fileType", processing_status AS "processingStatus",
+           risk_score AS "riskScore", risk_level AS "riskLevel",
+           sync_status AS "syncStatus"
     FROM documents WHERE needs_sync = 1
   `);
   return rows;
@@ -877,9 +919,11 @@ export async function getExpiringDocuments(
     `
     SELECT id, title, category, issuer, document_number AS "documentNumber",
            issue_date AS "issueDate", expiry_date AS "expiryDate", notes, status,
-           enable_alerts AS "enableAlerts", file_url AS "fileUrl", 
+           enable_alerts AS "enableAlerts", reminder_interval_days AS "reminderIntervalDays",
+           reminder_intervals AS "reminderIntervals", file_url AS "fileUrl", 
            file_type AS "fileType", processing_status AS "processingStatus",
            risk_score AS "riskScore", risk_level AS "riskLevel",
+           sync_status AS "syncStatus",
            created_at AS "createdAt", updated_at AS "updatedAt"
     FROM documents 
     WHERE status != 'expired'
@@ -895,9 +939,11 @@ export async function getExpiredDocuments(): Promise<LocalDocument[]> {
   const rows = await queryAll<LocalDocument>(`
     SELECT id, title, category, issuer, document_number AS "documentNumber",
            issue_date AS "issueDate", expiry_date AS "expiryDate", notes, status,
-           enable_alerts AS "enableAlerts", file_url AS "fileUrl", 
+           enable_alerts AS "enableAlerts", reminder_interval_days AS "reminderIntervalDays",
+           file_url AS "fileUrl", 
            file_type AS "fileType", processing_status AS "processingStatus",
            risk_score AS "riskScore", risk_level AS "riskLevel",
+           sync_status AS "syncStatus",
            created_at AS "createdAt", updated_at AS "updatedAt"
     FROM documents 
     WHERE date(expiry_date) < date('now') AND status != 'expired'
@@ -911,6 +957,64 @@ export async function updateDocumentStatus(id: number, status: string) {
     `UPDATE documents SET status = ?, updated_at = datetime('now') WHERE id = ?`,
     [status, id],
   );
+}
+
+export async function updateDocumentSyncStatus(id: number, syncStatus: "synced" | "pending" | "failed") {
+  await run(
+    `UPDATE documents SET sync_status = ?, updated_at = datetime('now') WHERE id = ?`,
+    [syncStatus, id],
+  );
+}
+
+export async function getDashboardSummary(): Promise<DocumentDashboardSummary> {
+  const database = await getDb();
+
+  const totalRow = await database.getFirstAsync<{ count: number }>(
+    `SELECT COUNT(*) as count FROM documents`,
+  );
+  const validRow = await database.getFirstAsync<{ count: number }>(
+    `SELECT COUNT(*) as count FROM documents WHERE date(expiry_date) > date('now')`,
+  );
+  const expiringRow = await database.getFirstAsync<{ count: number }>(
+    `SELECT COUNT(*) as count FROM documents WHERE date(expiry_date) BETWEEN date('now') AND date('now', '+30 days')`,
+  );
+  const expiredRow = await database.getFirstAsync<{ count: number }>(
+    `SELECT COUNT(*) as count FROM documents WHERE date(expiry_date) < date('now')`,
+  );
+
+  const nextExpiringRow = await database.getFirstAsync<{
+    id: number;
+    title: string;
+    expiry_date: string;
+  }>(`
+    SELECT id, title, expiry_date
+    FROM documents
+    WHERE date(expiry_date) >= date('now')
+    ORDER BY date(expiry_date) ASC
+    LIMIT 1
+  `);
+
+  let nextExpiring;
+  if (nextExpiringRow) {
+    const expiry = new Date(nextExpiringRow.expiry_date);
+    const now = new Date();
+    const timeDiff = expiry.getTime() - now.setHours(0, 0, 0, 0);
+    const daysRemaining = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
+    nextExpiring = {
+      id: nextExpiringRow.id,
+      title: nextExpiringRow.title,
+      daysRemaining,
+      expiryDate: nextExpiringRow.expiry_date,
+    };
+  }
+
+  return {
+    total: totalRow?.count || 0,
+    valid: validRow?.count || 0,
+    expiring: expiringRow?.count || 0,
+    expired: expiredRow?.count || 0,
+    nextExpiring,
+  };
 }
 
 // Reminder operations
