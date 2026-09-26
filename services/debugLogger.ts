@@ -1,5 +1,6 @@
 import * as SecureStore from "expo-secure-store";
 import * as FileSystem from "expo-file-system";
+import * as FileSystemLegacy from "expo-file-system/legacy";
 import { Platform } from "react-native";
 import Constants from "expo-constants";
 
@@ -19,7 +20,21 @@ let isEnabled = true;
 
 const MAX_LOG_ENTRIES = 100;
 const LOG_FILE = "docuguard_debug.log";
-const LOG_DIR = FileSystem.Paths.document.uri;
+
+function getLogDir(): string {
+  if (Platform.OS === "web") return "web";
+  try {
+    return FileSystem.Paths.document.uri;
+  } catch {
+    return FileSystemLegacy.documentDirectory || "";
+  }
+}
+
+function getLogPath(): string | null {
+  const dir = getLogDir();
+  if (!dir || dir === "web") return null;
+  return `${dir}${LOG_FILE}`;
+}
 
 function getSessionId(): string {
   if (!sessionId) {
@@ -41,21 +56,24 @@ function flushBuffer() {
       console.warn("Failed to persist logs to localStorage:", e);
     }
   } else {
-    const filepath = `${LOG_DIR}/${LOG_FILE}`;
-    const logFile = new FileSystem.File(FileSystem.Paths.document, LOG_FILE);
-    logFile
-      .text()
-      .then((existing) => {
+    const filepath = getLogPath();
+    if (!filepath) {
+      console.warn("Could not resolve log file path");
+    } else {
+      const file = new FileSystem.File(filepath);
+      try {
+        const existing = file.exists ? file.textSync() : "";
         const allLogs = existing ? JSON.parse(existing) : [];
         const combined = [...allLogs, ...logBuffer].slice(-MAX_LOG_ENTRIES * 2);
-        return logFile.write(JSON.stringify(combined, null, 2));
-      })
-      .catch(() => {
-        return logFile.write(JSON.stringify(logBuffer, null, 2));
-      })
-      .catch((e) => {
-        console.warn("Failed to persist logs:", e);
-      });
+        file.write(JSON.stringify(combined, null, 2));
+      } catch (e) {
+        try {
+          file.write(JSON.stringify(logBuffer, null, 2));
+        } catch (writeErr) {
+          console.warn("Failed to persist logs:", writeErr);
+        }
+      }
+    }
   }
 
   logBuffer = [];
@@ -107,8 +125,10 @@ export async function exportDebugLogs(): Promise<string | null> {
   }
 
   try {
-    const logFile = new FileSystem.File(FileSystem.Paths.document, LOG_FILE);
-    const content = await logFile.text();
+    const filepath = getLogPath();
+    if (!filepath) return null;
+    const file = new FileSystem.File(filepath);
+    const content = await file.text();
     return content;
   } catch (e) {
     console.warn("Failed to read debug logs:", e);
@@ -126,8 +146,13 @@ export function clearDebugLogs() {
     localStorage.removeItem(LOG_FILE);
   } else {
     try {
-      const logFile = new FileSystem.File(FileSystem.Paths.document, LOG_FILE);
-      logFile.delete();
+      const filepath = getLogPath();
+       if (filepath) {
+         const file = new FileSystem.File(filepath);
+         if (file.exists) {
+           file.delete();
+         }
+       }
     } catch (e) {
       // File may not exist yet
     }

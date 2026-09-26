@@ -47,16 +47,22 @@ export default function TabsLayout() {
 
   const handleUnlock = useCallback(async () => {
     const success = await unlockWithBiometric();
-
     if (success) {
       setShowLockScreen(false);
     }
+    return success;
   }, [unlockWithBiometric]);
 
-  const handleUsePassword = useCallback(() => {
-    unlockWithPassword();
-    setShowLockScreen(false);
-  }, [unlockWithPassword]);
+  const handleUsePassword = useCallback(
+    async (password: string) => {
+      const success = await unlockWithPassword(password);
+      if (success) {
+        setShowLockScreen(false);
+      }
+      return success;
+    },
+    [unlockWithPassword],
+  );
 
   const handleTabPress = useCallback(
     (tabName: string) => {
@@ -82,8 +88,8 @@ export default function TabsLayout() {
       <AppLockScreen
         isLocked={true}
         biometricEnabled={biometricEnabled}
-        onUnlock={handleUnlock}
-        onUsePassword={handleUsePassword}
+        onUnlockBiometric={handleUnlock}
+        onUnlockPassword={handleUsePassword}
       />
     );
   }
