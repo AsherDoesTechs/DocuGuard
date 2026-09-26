@@ -12,7 +12,12 @@ import { ThemeProvider } from "@/context/ThemeContext";
 
 export default function RootLayout() {
   usePushNotifications();
-  const { isLocked, biometricEnabled, unlockWithBiometric, unlockWithPassword } = useAppLock();
+  const {
+    isLocked,
+    biometricEnabled,
+    unlockWithBiometric,
+    unlockWithPassword,
+  } = useAppLock();
 
   useEffect(() => {
     initDatabase().catch((err) => {
