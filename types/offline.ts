@@ -20,6 +20,7 @@ export interface LocalDocument {
   userId?: string;
   needsSync: boolean;
   syncStatus?: "synced" | "pending" | "failed" | "local";
+  cloudId?: number | null;
   createdAt?: string;
   updatedAt?: string;
   authenticity?: "real" | "replica" | "fake";

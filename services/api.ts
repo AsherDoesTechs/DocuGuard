@@ -99,6 +99,8 @@ export interface RegisterResponse {
 export interface SyncDocumentResponse {
   message?: string;
   document?: any;
+  conflict?: boolean;
+  error?: string;
 }
 
 export const auth = {

@@ -41,6 +41,53 @@ async function querySingle<T>(
   return database.getFirstAsync<T>(sql, ...params);
 }
 
+/**
+ * reminder_intervals is stored as a JSON string but the LocalDocument contract
+ * exposes number[]. Every read path must run rows through this helper or the
+ * scheduler ends up iterating the characters of the raw JSON.
+ */
+function parseReminderIntervals(value: unknown): number[] | undefined {
+  if (value == null) return undefined;
+  if (Array.isArray(value)) return value as number[];
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return undefined;
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        return parsed.filter(
+          (n): n is number => typeof n === "number" && Number.isFinite(n) && n > 0,
+        );
+      }
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+function normalizeDocumentRow<T>(row: T): T {
+  const record = row as unknown as Record<string, unknown>;
+  const intervals = parseReminderIntervals(record.reminderIntervals);
+  if (intervals === undefined) {
+    delete record.reminderIntervals;
+  } else {
+    record.reminderIntervals = intervals;
+  }
+  if (typeof record.enableAlerts === "number") {
+    record.enableAlerts = record.enableAlerts !== 0;
+  }
+  if (typeof record.needsSync === "number") {
+    record.needsSync = record.needsSync !== 0;
+  }
+  return row;
+}
+
+async function queryDocuments(sql: string, params: any[] = []): Promise<LocalDocument[]> {
+  const rows = await queryAll<LocalDocument>(sql, params);
+  return rows.map(normalizeDocumentRow);
+}
+
 export async function initDatabase() {
   try {
     const database = await getDb();
@@ -67,6 +114,7 @@ export async function initDatabase() {
         risk_level TEXT DEFAULT 'Low',
         needs_sync BOOLEAN DEFAULT 0,
         sync_status TEXT DEFAULT 'pending',
+        cloud_id INTEGER,
         created_at TEXT DEFAULT (datetime('now')),
         updated_at TEXT DEFAULT (datetime('now'))
       )
@@ -91,6 +139,11 @@ export async function initDatabase() {
     if (!existingColumns.has("sync_status")) {
       await database.execAsync(
         `ALTER TABLE documents ADD COLUMN sync_status TEXT DEFAULT 'pending'`,
+      );
+    }
+    if (!existingColumns.has("cloud_id")) {
+      await database.execAsync(
+        `ALTER TABLE documents ADD COLUMN cloud_id INTEGER`,
       );
     }
 
@@ -234,8 +287,8 @@ export async function createDocument(
         (title, category, issuer, document_number, issue_date, expiry_date, notes, 
          status, enable_alerts, reminder_interval_days, reminder_intervals, file_url, 
          file_type, s3_key, processing_status, risk_score, risk_level, needs_sync, 
-         sync_status, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         sync_status, cloud_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
       [
         doc.title,
@@ -255,8 +308,9 @@ export async function createDocument(
         doc.processingStatus || "completed",
         doc.riskScore || 0,
         doc.riskLevel || "Low",
-        1,
-        "pending",
+        doc.needsSync === false ? 0 : 1,
+        doc.syncStatus || "pending",
+        doc.cloudId ?? null,
         new Date().toISOString(),
         new Date().toISOString(),
       ],
@@ -286,14 +340,14 @@ export async function createDocument(
 
 export async function getAllDocuments(): Promise<LocalDocument[]> {
   try {
-    const rows = await queryAll<LocalDocument>(`
+    const rows = await queryDocuments(`
       SELECT id, title, category, issuer, document_number AS "documentNumber",
              issue_date AS "issueDate", expiry_date AS "expiryDate", notes, status,
              enable_alerts AS "enableAlerts", reminder_interval_days AS "reminderIntervalDays",
              reminder_intervals AS "reminderIntervals", file_url AS "fileUrl", 
              file_type AS "fileType", s3_key AS "s3Key", processing_status AS "processingStatus",
              risk_score AS "riskScore", risk_level AS "riskLevel",
-             needs_sync AS "needsSync", sync_status AS "syncStatus",
+             needs_sync AS "needsSync", sync_status AS "syncStatus", cloud_id AS "cloudId",
              created_at AS "createdAt", updated_at AS "updatedAt"
       FROM documents ORDER BY expiry_date ASC
     `);
@@ -331,12 +385,13 @@ export async function getDocumentById(
               reminder_intervals AS "reminderIntervals", file_url AS "fileUrl", 
               file_type AS "fileType", s3_key AS "s3Key", processing_status AS "processingStatus",
               risk_score AS "riskScore", risk_level AS "riskLevel",
-              needs_sync AS "needsSync", sync_status AS "syncStatus",
+              needs_sync AS "needsSync", sync_status AS "syncStatus", cloud_id AS "cloudId",
               created_at AS "createdAt", updated_at AS "updatedAt"
        FROM documents WHERE id = ?`,
       [id],
     );
     if (row) {
+      normalizeDocumentRow(row);
       row.tags = await getDocumentTags(id);
     }
     DebugLogger.debug("LocalDatabase", "Document fetched", {
@@ -391,7 +446,9 @@ export async function updateDocument(id: number, doc: Partial<LocalDocument>) {
         doc.expiryDate,
         doc.notes,
         doc.status,
-        doc.enableAlerts ? 1 : 0,
+        // Must be null (not 0) when omitted, otherwise COALESCE treats every
+        // partial update as "turn alerts off".
+        doc.enableAlerts === undefined ? null : doc.enableAlerts ? 1 : 0,
         doc.reminderIntervalDays ?? null,
         doc.reminderIntervals ? JSON.stringify(doc.reminderIntervals) : null,
         doc.fileUrl,
@@ -819,17 +876,16 @@ export async function terminateAllOtherSessions(
 
 // Sync operations
 export async function getUnsyncedDocuments(): Promise<LocalDocument[]> {
-  const rows = await queryAll<LocalDocument>(`
+  return queryDocuments(`
     SELECT id, title, category, issuer, document_number AS "documentNumber",
            issue_date AS "issueDate", expiry_date AS "expiryDate", notes, status,
            enable_alerts AS "enableAlerts", reminder_interval_days AS "reminderIntervalDays",
            reminder_intervals AS "reminderIntervals", file_url AS "fileUrl", 
            file_type AS "fileType", s3_key AS "s3Key", processing_status AS "processingStatus",
            risk_score AS "riskScore", risk_level AS "riskLevel",
-           sync_status AS "syncStatus", created_at AS "createdAt", updated_at AS "updatedAt"
+           sync_status AS "syncStatus", cloud_id AS "cloudId", created_at AS "createdAt", updated_at AS "updatedAt"
     FROM documents WHERE needs_sync = 1
   `);
-  return rows;
 }
 
 export async function addToSyncQueue(
@@ -956,10 +1012,13 @@ export async function getDocumentHistory(docId: number) {
 }
 
 // Expiring/expired document queries
+// Expiration is derived from expiry_date only. The `status` column tracks the
+// user's own lifecycle (active/verified) and must not gate these queries, or the
+// list UI and the scheduler disagree about the same document.
 export async function getExpiringDocuments(
   days: number = 30,
 ): Promise<LocalDocument[]> {
-  const rows = await queryAll<LocalDocument>(
+  return queryDocuments(
     `
     SELECT id, title, category, issuer, document_number AS "documentNumber",
            issue_date AS "issueDate", expiry_date AS "expiryDate", notes, status,
@@ -967,33 +1026,32 @@ export async function getExpiringDocuments(
            reminder_intervals AS "reminderIntervals", file_url AS "fileUrl", 
            file_type AS "fileType", s3_key AS "s3Key", processing_status AS "processingStatus",
            risk_score AS "riskScore", risk_level AS "riskLevel",
-           sync_status AS "syncStatus", needs_sync AS "needsSync",
+           sync_status AS "syncStatus", needs_sync AS "needsSync", cloud_id AS "cloudId",
            created_at AS "createdAt", updated_at AS "updatedAt"
     FROM documents 
-    WHERE status != 'expired'
+    WHERE expiry_date IS NOT NULL AND expiry_date != ''
     AND date(expiry_date) BETWEEN date('now') AND date('now', '+' || ? || ' days')
     ORDER BY expiry_date ASC
   `,
     [days],
   );
-  return rows;
 }
 
 export async function getExpiredDocuments(): Promise<LocalDocument[]> {
-  const rows = await queryAll<LocalDocument>(`
+  return queryDocuments(`
     SELECT id, title, category, issuer, document_number AS "documentNumber",
            issue_date AS "issueDate", expiry_date AS "expiryDate", notes, status,
            enable_alerts AS "enableAlerts", reminder_interval_days AS "reminderIntervalDays",
            reminder_intervals AS "reminderIntervals", file_url AS "fileUrl", 
            file_type AS "fileType", s3_key AS "s3Key", processing_status AS "processingStatus",
            risk_score AS "riskScore", risk_level AS "riskLevel",
-           sync_status AS "syncStatus", needs_sync AS "needsSync",
+           sync_status AS "syncStatus", needs_sync AS "needsSync", cloud_id AS "cloudId",
            created_at AS "createdAt", updated_at AS "updatedAt"
     FROM documents 
-    WHERE date(expiry_date) < date('now') AND status != 'expired'
+    WHERE expiry_date IS NOT NULL AND expiry_date != ''
+    AND date(expiry_date) < date('now')
     ORDER BY expiry_date ASC
   `);
-  return rows;
 }
 
 export async function updateDocumentStatus(id: number, status: string) {
@@ -1003,10 +1061,32 @@ export async function updateDocumentStatus(id: number, status: string) {
   );
 }
 
-export async function updateDocumentSyncStatus(id: number, syncStatus: "synced" | "pending" | "failed") {
+export async function updateDocumentSyncStatus(id: number, syncStatus: "synced" | "pending" | "failed" | "local") {
   await run(
     `UPDATE documents SET sync_status = ?, updated_at = datetime('now') WHERE id = ?`,
     [syncStatus, id],
+  );
+}
+
+/**
+ * Records the backend document id so cloud operations (update/delete) target the
+ * correct server row instead of the local autoincrement key.
+ */
+export async function setDocumentCloudId(id: number, cloudId: number | null): Promise<void> {
+  await run(`UPDATE documents SET cloud_id = ? WHERE id = ?`, [cloudId, id]);
+}
+
+/**
+ * Marks the row for deletion on the next sync instead of removing it, so the
+ * deletion can still be pushed to the cloud. The local id is preserved as the
+ * queue key; cloud_id identifies the server row.
+ */
+export async function softDeleteDocument(id: number): Promise<void> {
+  await run(
+    `UPDATE documents
+     SET status = 'deleted', needs_sync = 1, sync_status = 'pending', updated_at = datetime('now')
+     WHERE id = ?`,
+    [id],
   );
 }
 

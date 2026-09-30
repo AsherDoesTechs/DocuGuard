@@ -11,6 +11,8 @@ import {
   getUnsyncedReminders,
   markReminderSynced,
   updateDocumentSyncStatus,
+  setDocumentCloudId,
+  deleteDocument,
   logDocumentAction,
   LocalDocument,
   LocalReminder,
@@ -47,34 +49,63 @@ export async function syncToCloud(): Promise<SyncResult> {
     for (const doc of unsyncedDocs) {
       try {
         if (doc.status === "deleted") {
-          await api.documents.delete(doc.id!);
-        } else {
-          const payload: any = {
-            title: doc.title,
-            category: formatCategoryForBackend(doc.category),
-            issuer: doc.issuer,
-            documentNumber: doc.documentNumber,
-            issueDate: doc.issueDate,
-            expiryDate: doc.expiryDate,
-            notes: doc.notes,
-            status: doc.status,
-            enableAlerts: doc.enableAlerts,
-            s3Key: doc.s3Key,
-            fileUrl: doc.fileUrl,
-            fileType: doc.fileType,
-            processingStatus: doc.processingStatus,
-            riskScore: doc.riskScore,
-            riskLevel: doc.riskLevel,
-          };
-          await api.documents.syncDocument(payload);
+          // Local ids are unrelated to backend ids. Without a stored cloud id the
+          // row was never uploaded, so drop it locally and do not call the API.
+          if (doc.cloudId) {
+            await api.documents.delete(doc.cloudId);
+          }
+          await deleteDocument(doc.id!);
+          documentsSynced++;
+          continue;
         }
+
+        const payload: any = {
+          title: doc.title,
+          category: formatCategoryForBackend(doc.category),
+          issuer: doc.issuer,
+          documentNumber: doc.documentNumber,
+          issueDate: doc.issueDate,
+          expiryDate: doc.expiryDate,
+          notes: doc.notes,
+          status: doc.status === "verified" ? "verified" : "active",
+          enableAlerts: doc.enableAlerts,
+          s3Key: doc.s3Key,
+          fileUrl: doc.fileUrl,
+          fileType: doc.fileType,
+          processingStatus: doc.processingStatus,
+          riskScore: doc.riskScore,
+          riskLevel: doc.riskLevel,
+          cloudId: doc.cloudId ?? undefined,
+        };
+
+        const result = await api.documents.syncDocument(payload);
+
+        if (result?.conflict) {
+          // Backend matched a different row: keep local data, do not overwrite.
+          await updateDocumentSyncStatus(doc.id!, "failed");
+          errors.push(
+            `Document ${doc.id} ("${doc.title}"): sync conflict, local copy kept`,
+          );
+          continue;
+        }
+
+        const cloudId = result?.document?.id;
+        if (typeof cloudId === "number" && cloudId !== doc.cloudId) {
+          await setDocumentCloudId(doc.id!, cloudId);
+        }
+
         await markDocumentSynced(doc.id!);
         await updateDocumentSyncStatus(doc.id!, "synced");
         await logDocumentAction(doc.id!, "synced", doc);
         documentsSynced++;
       } catch (err: any) {
         await updateDocumentSyncStatus(doc.id!, "failed");
-        if (err?.isOffline) {
+        if (err?.response?.status === 409) {
+          // Backend refused to touch a row it considered a conflict.
+          errors.push(
+            `Document ${doc.id} ("${doc.title}"): sync conflict, local copy kept`,
+          );
+        } else if (err?.isOffline) {
           errors.push(`Document ${doc.id}: offline`);
         } else {
           errors.push(`Document ${doc.id}: ${err.message}`);

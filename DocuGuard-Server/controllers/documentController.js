@@ -607,15 +607,50 @@ exports.syncDocument = async (req, res) => {
     processingStatus,
     riskScore,
     riskLevel,
+    cloudId,
   } = validation.data;
 
   debug("Documents", "Sync document request", { userId, title });
 
   try {
-    const existing = await db.query(
-      `SELECT id FROM documents WHERE document_number = $1 AND user_id = $2`,
-      [documentNumber || title, userId],
-    );
+    // Prefer the id the client already holds. Falling back to a document_number
+    // match can silently overwrite a different document when two share a number.
+    if (cloudId) {
+      const owned = await db.query(
+        `SELECT id FROM documents WHERE id = $1 AND user_id = $2`,
+        [cloudId, userId],
+      );
+
+      if (owned.rows.length === 0) {
+        // The row this client knew about is gone or no longer owned by it.
+        // Do not create or overwrite anything; let the client keep local data.
+        return res.status(409).json({
+          error: "Document was modified or removed on another device",
+          code: ErrorCodes.SYNC_CONFLICT,
+          conflict: true,
+        });
+      }
+    }
+
+    let existing;
+    if (cloudId) {
+      existing = { rows: [{ id: cloudId }] };
+    } else {
+      existing = await db.query(
+        `SELECT id, title FROM documents WHERE document_number = $1 AND user_id = $2`,
+        [documentNumber || title, userId],
+      );
+
+      // Same number but a different document: flag rather than overwrite.
+      if (existing.rows.length > 0 && existing.rows[0].title !== title) {
+        return res.status(409).json({
+          error:
+            "A different document already uses this document number on your account",
+          code: ErrorCodes.SYNC_CONFLICT,
+          conflict: true,
+        });
+      }
+    }
 
     if (existing.rows.length > 0) {
       const updated = await db.query(

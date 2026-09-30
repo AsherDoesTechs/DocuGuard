@@ -11,13 +11,11 @@ import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { Button, Card } from "@/components/ui";
 import { COLORS } from "@/constants";
-import { api } from "../../services/api";
 import * as SecureStore from "expo-secure-store";
+import { syncToCloud } from "../../services/syncService";
 import {
   getUnsyncedDocuments,
-  markDocumentSynced,
   getUnsyncedReminders,
-  markReminderSynced,
 } from "../../services/localDatabase";
 import { LocalDocument, LocalReminder } from "@/types/offline";
 import { useAlert } from "@/components/ui/AlertService";
@@ -75,74 +73,32 @@ export default function SyncScreen() {
 
     setSyncing(true);
     try {
-      const unsyncedDocs = await getUnsyncedDocuments();
-      const unsyncedReminders = await getUnsyncedReminders();
-
-      let syncedDocCount = 0;
-      let syncedReminderCount = 0;
-      const errors: string[] = [];
-
-      // 1. Sync Documents
-      for (const doc of unsyncedDocs) {
-        try {
-          const payload = {
-            title: doc.title,
-            category: doc.category as any,
-            issuer: doc.issuer || "",
-            documentNumber: doc.documentNumber || "",
-            issueDate: doc.issueDate || "",
-            expiryDate: doc.expiryDate || "",
-            notes: doc.notes || "",
-            status: (doc.status || "active") as any,
-            enableAlerts: !!doc.enableAlerts,
-            fileUrl: doc.fileUrl,
-            fileType: doc.fileType,
-            s3Key: doc.s3Key,
-            processingStatus: (doc.processingStatus || "completed") as any, // <-- Add as any here
-            riskScore: doc.riskScore || 0,
-            riskLevel: doc.riskLevel || "Low",
-          };
-
-          await api.documents.syncDocument(payload as any);
-          await markDocumentSynced(doc.id!);
-          syncedDocCount++;
-        } catch (err: any) {
-          errors.push(
-            `Document "${doc.title}": ${err.message || "Sync failed"}`,
-          );
-        }
-      }
-
-      // 2. Sync Reminders locally or via available endpoints
-      for (const rem of unsyncedReminders) {
-        try {
-          await markReminderSynced(rem.id!);
-          syncedReminderCount++;
-        } catch (err: any) {
-          errors.push(
-            `Reminder "${rem.title}": ${err.message || "Sync failed"}`,
-          );
-        }
-      }
+      // Single implementation: handles cloud ids, category formatting, deletions,
+      // conflicts and sync_status bookkeeping.
+      const result = await syncToCloud();
 
       await fetchPending();
 
-      if (errors.length === 0) {
+      if (result.success && (!result.errors || result.errors.length === 0)) {
         const time = new Date().toISOString();
         await SecureStore.setItemAsync("lastSyncTime", time);
         setLastSync(time);
 
         alert(
           "Sync Complete",
-          `Successfully synced ${syncedDocCount} document(s) and ${syncedReminderCount} reminder(s).`,
+          `Successfully synced ${result.documentsSynced} document(s) and ${result.remindersSynced} reminder(s).`,
           { type: "success" },
         );
-      } else {
+      } else if (result.errors && result.errors.length > 0) {
         alert(
           "Sync Completed with Errors",
-          `Synced ${syncedDocCount} doc(s) and ${syncedReminderCount} reminder(s), but some items failed:\n\n${errors.join("\n")}`,
+          `Synced ${result.documentsSynced} doc(s) and ${result.remindersSynced} reminder(s), but some items failed:\n\n${result.errors.join("\n")}`,
           { type: "warning" },
         );
+      } else {
+        alert("Sync Failed", result.message || "Could not sync to cloud.", {
+          type: "error",
+        });
       }
     } catch (err: any) {
       alert("Sync Failed", err.message || "Could not sync to cloud.", {

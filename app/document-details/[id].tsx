@@ -21,8 +21,10 @@ import {
   updateDocument,
   getDocumentHistory,
   logDocumentAction,
+  softDeleteDocument,
   LocalDocument,
 } from "@/services/localDatabase";
+import { cancelDocumentNotifications } from "@/services/notificationScheduler";
 import * as SecureStore from "expo-secure-store";
 import { api } from "@/services/api";
 import * as Clipboard from "expo-clipboard";
@@ -31,29 +33,10 @@ import * as FileSystem from "expo-file-system/legacy";
 import Loading from "@/components/ui/Loading";
 import { useFeedback } from "@/hooks/useFeedback";
 
-interface DocumentData {
-  id: string;
-  title: string;
-  category: string;
-  issuer: string;
-  documentNumber: string;
-  issueDate: string;
-  expiryDate: string;
-  notes?: string;
-  status: string;
-  fileUrl?: string;
-  fileType?: string;
-  processingStatus?: string;
-  riskScore?: number;
-  riskLevel?: string;
-  syncStatus?: "synced" | "pending" | "failed" | "local";
-  needsSync?: boolean;
-}
-
 export default function DocumentDetailsScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const [document, setDocument] = useState<DocumentData | null>(null);
+  const [document, setDocument] = useState<LocalDocument | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isDownloading, setIsDownloading] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
@@ -69,25 +52,8 @@ export default function DocumentDetailsScreen() {
       if (isNaN(docId)) throw new Error("Invalid document ID");
       const doc = await getDocumentById(docId);
       if (!doc) throw new Error("Document not found");
-       if (mountedRef.current) {
-         setDocument({
-           id: String(doc.id),
-           title: doc.title,
-           category: doc.category,
-           issuer: doc.issuer,
-           documentNumber: doc.documentNumber || "",
-           issueDate: doc.issueDate || "",
-           expiryDate: doc.expiryDate || "",
-           notes: doc.notes,
-           status: doc.status,
-           fileUrl: doc.fileUrl,
-           fileType: doc.fileType,
-           processingStatus: doc.processingStatus,
-           riskScore: doc.riskScore,
-           riskLevel: doc.riskLevel,
-           syncStatus: doc.syncStatus,
-           needsSync: doc.needsSync,
-         });
+if (mountedRef.current) {
+         setDocument(doc);
        }
     } catch (error: any) {
       if (mountedRef.current) {
@@ -121,16 +87,28 @@ export default function DocumentDetailsScreen() {
   }, [fetchDocumentDetails, fetchHistory]);
 
   const handleDelete = async () => {
-    if (!document) return;
+    if (!document?.id) return;
     Alert.alert("Delete Document", "Are you sure you want to delete this document from your vault?", [
       { text: "Cancel", style: "cancel" },
       {
         text: "Delete",
         style: "destructive",
         onPress: async () => {
+          const localId = document.id as number;
           try {
-          await deleteDocument(parseInt(document.id, 10));
-          router.back();
+            // Cancel pending reminders so a deleted document cannot keep alerting.
+            await cancelDocumentNotifications(localId);
+            await logDocumentAction(localId, "deleted", document);
+
+            if (document.cloudId) {
+              // Queued for deletion on the next sync; the row must survive locally
+              // until the backend confirms, otherwise the delete never propagates.
+              await softDeleteDocument(localId);
+            } else {
+              // Never uploaded, so there is nothing to reconcile with the cloud.
+              await deleteDocument(localId);
+            }
+            router.back();
           } catch (err) {
             Alert.alert("Error", "Could not delete document.");
           }
@@ -159,16 +137,18 @@ export default function DocumentDetailsScreen() {
   };
 
   const handleVerify = async () => {
-    if (!document) return;
+    if (!document?.id) return;
+    const localId = document.id;
     setIsVerifying(true);
     try {
-      await updateDocument(parseInt(document.id, 10), { status: "verified", needsSync: true });
+      await updateDocument(localId, { status: "verified", needsSync: true });
       setDocument({ ...document, status: "verified" });
       const token = await SecureStore.getItemAsync("userToken");
-      if (token) {
+      // The backend addresses documents by their own id, not the local row id.
+      if (token && document.cloudId) {
         try {
-          await api.documents.verifyDocument(parseInt(document.id, 10));
-          await logDocumentAction(parseInt(document.id, 10), "verified", { status: "verified" });
+          await api.documents.verifyDocument(document.cloudId);
+          await logDocumentAction(localId, "verified", { status: "verified" });
         } catch (syncErr) { console.warn("Could not sync verification:", syncErr); }
       }
       Alert.alert("Verified", "Document has been marked as verified.");

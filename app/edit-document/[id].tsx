@@ -21,8 +21,13 @@ import * as SecureStore from "expo-secure-store";
 import { DOCUMENTS_BY_CATEGORY } from "../../constants/documentTypes";
 import { Card, Input, Button } from "@/components/ui";
 import { COLORS } from "@/constants";
-import { getDocumentById, updateDocument } from "@/services/localDatabase";
-import { API_BASE_URL } from "@/services/api";
+import {
+  getDocumentById,
+  updateDocument,
+  markDocumentSynced,
+  updateDocumentSyncStatus,
+} from "@/services/localDatabase";
+import { api, API_BASE_URL } from "@/services/api";
 import { documentUpdateSchema, validateSchema } from "@/shared/validation";
 
 /* =========================================================
@@ -358,6 +363,8 @@ export default function EditDocumentScreen() {
   const [loadError, setLoadError] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [useLocalData, setUseLocalData] = useState(false);
+  // Backend id for this document. The local row id is NOT valid against the API.
+  const [cloudId, setCloudId] = useState<number | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<DocumentGroup>("other");
   const [typeSearch, setTypeSearch] = useState("");
   const [showAllTypes, setShowAllTypes] = useState(false);
@@ -546,6 +553,9 @@ export default function EditDocumentScreen() {
         setInitialData(loadedValues);
         setSelectedGroup(group);
         setUseLocalData(true);
+        setCloudId(
+          typeof localDocument.cloudId === "number" ? localDocument.cloudId : null,
+        );
         return;
       }
 
@@ -568,6 +578,7 @@ export default function EditDocumentScreen() {
 
       const result = await response.json();
       const data = result?.document || result?.data || result;
+      setCloudId(typeof data?.id === "number" ? data.id : null);
 
       const title = data?.title || "";
       const backendCategory = data?.category || BACKEND_CATEGORIES.OTHER;
@@ -741,27 +752,17 @@ export default function EditDocumentScreen() {
           );
         }
 
-        const response = await fetch(`${API_BASE_URL}/documents/${numericId}`, {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-            Accept: "application/json",
-          },
-          body: JSON.stringify(payload),
-        });
-
-        if (!response.ok) {
-          let serverMessage = "Cloud synchronization failed.";
-          try {
-            const errorBody = await response.json();
-            serverMessage =
-              errorBody?.error || errorBody?.message || serverMessage;
-          } catch {}
-          throw new Error(serverMessage);
+        // The API addresses documents by their backend id. Without one there is
+        // nothing to PUT; updateDocument already queued the change (needs_sync=1)
+        // for syncToCloud to push on the next pass.
+        if (cloudId) {
+          await api.documents.update(cloudId, payload);
+          // updateDocument() flagged the row needs_sync=1; the cloud write above
+          // satisfied it, so clear the flag instead of leaving it pending forever.
+          await markDocumentSynced(numericId);
+          await updateDocumentSyncStatus(numericId, "synced");
+          cloudSaveSuccessful = true;
         }
-
-        cloudSaveSuccessful = true;
       }
 
       const savedValues: EditDocumentValues = {
@@ -815,7 +816,7 @@ export default function EditDocumentScreen() {
     } finally {
       setIsSaving(false);
     }
-  }, [documentId, isSaving, router, useLocalData, validateForm, values]);
+  }, [cloudId, documentId, isSaving, router, useLocalData, validateForm, values]);
 
   const handleReset = useCallback(() => {
     if (!hasChanges) {

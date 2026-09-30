@@ -25,17 +25,19 @@ export function getSyncStatusDisplay(
   syncStatus?: string | null,
   needsSync?: boolean,
 ): string {
-  if (!needsSync && syncStatus === "synced") {
-    return "Synced";
-  }
-  if (needsSync || syncStatus === "pending") {
-    return "Waiting to sync";
-  }
+  // Failure must be checked before the pending branch: a failed sync keeps
+  // needsSync = 1, so testing "pending" first would mask the failure forever.
   if (syncStatus === "failed") {
     return "Sync failed";
   }
-  if (syncStatus === "local" || !needsSync) {
+  if (syncStatus === "synced" && !needsSync) {
+    return "Synced";
+  }
+  if (syncStatus === "local") {
     return "Stored locally";
   }
-  return "Waiting to sync";
+  if (syncStatus === "pending" || needsSync) {
+    return "Waiting to sync";
+  }
+  return "Stored locally";
 }

@@ -78,10 +78,10 @@ async function scheduleExpirationNotification(doc: LocalDocument) {
 }
 
 async function scheduleExpiringSoonNotification(doc: LocalDocument) {
-  const identifier = `expiring_${doc.id}`;
-  await Notifications.cancelScheduledNotificationAsync(identifier);
+  // Drop previously scheduled intervals first so deselected ones do not linger.
+  await cancelIntervalNotifications(doc.id!);
 
-  const intervals = doc.reminderIntervals && doc.reminderIntervals.length > 0
+  const intervals = Array.isArray(doc.reminderIntervals) && doc.reminderIntervals.length > 0
     ? doc.reminderIntervals
     : [doc.reminderIntervalDays || 30, 7, 1];
 
@@ -90,6 +90,7 @@ async function scheduleExpiringSoonNotification(doc: LocalDocument) {
     triggerDate.setDate(triggerDate.getDate() - days);
 
     const now = new Date();
+    if (Number.isNaN(triggerDate.getTime())) continue;
     if (triggerDate <= now) continue;
 
     const notifIdentifier = `expiring_${doc.id}_${days}d`;
@@ -158,12 +159,18 @@ async function scheduleReminderNotifications() {
 
 export async function cancelDocumentNotifications(docId: number) {
   await Notifications.cancelScheduledNotificationAsync(`expired_${docId}`);
-  await Notifications.cancelScheduledNotificationAsync(`expiring_${docId}`);
-  await Notifications.cancelScheduledNotificationAsync(`expiring_${docId}_ongoing`);
-  const prefixes = [`expiring_${docId}_`, `expired_${docId}_`];
-  const all = await Notifications.getAllScheduledNotificationsAsync();
-  for (const notif of all) {
-    if (prefixes.some((p) => notif.identifier?.startsWith(p))) {
+  await cancelIntervalNotifications(docId);
+}
+
+/**
+ * Cancels every interval-specific reminder for a document, including intervals
+ * the user removed since the last scheduling pass.
+ */
+async function cancelIntervalNotifications(docId: number) {
+  const prefix = `expiring_${docId}_`;
+  const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+  for (const notif of scheduled) {
+    if (notif.identifier?.startsWith(prefix)) {
       await Notifications.cancelScheduledNotificationAsync(notif.identifier);
     }
   }

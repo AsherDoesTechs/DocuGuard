@@ -149,6 +149,7 @@ const documentSyncSchema = z.object({
   processingStatus: z.enum(["pending", "uploading", "processing", "completed", "failed"]).default("completed"),
   riskScore: z.number().min(0).max(100).default(0),
   riskLevel: z.enum(["Low", "Medium", "High"]).default("Low"),
+  cloudId: z.number().int().positive().optional(),
 });
 
 const uploadUrlSchema = z.object({
