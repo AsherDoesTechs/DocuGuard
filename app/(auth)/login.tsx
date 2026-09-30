@@ -89,8 +89,8 @@ export default function LoginScreen() {
 
         const response = await api.auth.login(normalizedValues);
 
-        if (response?.data?.token) {
-          await SecureStore.setItemAsync("userToken", response.data.token);
+        if (response?.token) {
+          await SecureStore.setItemAsync("userToken", response.token);
         }
 
         if (values.rememberMe) {

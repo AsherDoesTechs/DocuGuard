@@ -9,9 +9,14 @@ import {
   getAllDocuments,
   getDocumentById,
   getUnsyncedReminders,
+  markReminderSynced,
+  updateDocumentSyncStatus,
+  logDocumentAction,
+  LocalDocument,
+  LocalReminder,
+  LocalUserProfile,
 } from "../services/localDatabase";
-import { LocalDocument, LocalReminder, LocalUserProfile } from "../types/offline";
-import { formatCategoryForBackend } from "@/DocuGuard-Server/utils/categories";
+import { formatCategoryForBackend } from "@/utils/categories";
 
 type SyncResult = {
   success: boolean;
@@ -64,9 +69,16 @@ export async function syncToCloud(): Promise<SyncResult> {
           await api.documents.syncDocument(payload);
         }
         await markDocumentSynced(doc.id!);
+        await updateDocumentSyncStatus(doc.id!, "synced");
+        await logDocumentAction(doc.id!, "synced", doc);
         documentsSynced++;
       } catch (err: any) {
-        errors.push(`Document ${doc.id}: ${err.message}`);
+        await updateDocumentSyncStatus(doc.id!, "failed");
+        if (err?.isOffline) {
+          errors.push(`Document ${doc.id}: offline`);
+        } else {
+          errors.push(`Document ${doc.id}: ${err.message}`);
+        }
       }
     }
 
@@ -74,16 +86,21 @@ export async function syncToCloud(): Promise<SyncResult> {
     const unsyncedReminders = await getUnsyncedReminders();
     for (const reminder of unsyncedReminders) {
       try {
-        await api.client.post("/reminders", {
+         await api.client.post("/reminders", {
           title: reminder.title,
           description: reminder.description,
           dueDate: reminder.dueDate,
           severity: reminder.severity,
           isRead: reminder.read,
         });
+        await markReminderSynced(reminder.id!);
         remindersSynced++;
       } catch (err: any) {
-        errors.push(`Reminder: ${err.message}`);
+        if (err?.isOffline) {
+          errors.push(`Reminder: offline`);
+        } else {
+          errors.push(`Reminder: ${err.message}`);
+        }
       }
     }
 

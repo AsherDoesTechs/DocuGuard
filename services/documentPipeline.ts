@@ -134,7 +134,7 @@ export async function extractDocumentData(
   const created = await documents.create(payload);
 
   const documentId =
-    created?.document?.id ?? created?.data?.document?.id ?? created?.id;
+    created?.document?.id ?? created?.id;
 
   if (!documentId) {
     throw new Error(

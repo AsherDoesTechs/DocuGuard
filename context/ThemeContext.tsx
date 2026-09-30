@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from "react";
-import { Appearance, AppearancePreferences, ColorSchemeName } from "react-native";
+import { Appearance, ColorSchemeName } from "react-native";
 import * as SecureStore from "expo-secure-store";
 import { LightColors, DarkColors, ColorScheme, ThemeMode } from "@/constants/colors";
 
@@ -94,7 +94,7 @@ export function useColors(): ColorScheme {
   return colors;
 }
 
-export function useThemeMode(): ThemeMode {
+export function useThemeMode(): { themeMode: ThemeMode; setThemeMode: (mode: ThemeMode) => Promise<void> } {
   const { themeMode, setThemeMode } = useTheme();
   return { themeMode, setThemeMode };
 }

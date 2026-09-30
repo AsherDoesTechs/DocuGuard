@@ -51,7 +51,7 @@ export default function VerifyEmailScreen() {
       setStatus("success");
 
       // Securely store authentication token if returned from backend
-      const authToken = response?.data?.token || response?.token;
+      const authToken = response?.token;
       if (authToken) {
         await SecureStore.setItemAsync("userToken", authToken);
       }

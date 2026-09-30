@@ -33,7 +33,7 @@ export async function compressImage(
 
   try {
     const originalInfo = await FileSystem.getInfoAsync(uri);
-    const originalSize = originalInfo.size || 0;
+    const originalSize = (originalInfo as any).size || 0;
 
     const resized = await ImageManipulator.manipulateAsync(
       uri,
@@ -48,7 +48,7 @@ export async function compressImage(
     );
 
     const compressedInfo = await FileSystem.getInfoAsync(resized.uri);
-    const compressedSize = compressedInfo.size || 0;
+    const compressedSize = (compressedInfo as any).size || 0;
 
     const savings = originalSize > 0
       ? Math.round(((originalSize - compressedSize) / originalSize) * 100)
@@ -119,7 +119,7 @@ export async function cropImage(
 ): Promise<string> {
   const result = await ImageManipulator.manipulateAsync(
     uri,
-    [{ crop }],
+    [{ crop: { originX: crop.x, originY: crop.y, width: crop.width, height: crop.height } }],
     { format: ImageManipulator.SaveFormat.JPEG, compress: 0.9 }
   );
   return result.uri;

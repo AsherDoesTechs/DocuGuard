@@ -12,7 +12,7 @@ import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { Input, Card, StatusBadge, ExpirationDashboard } from "../../components/ui";
 import { COLORS, DOCUMENT_CATEGORIES } from "../../constants";
-import { formatShortDate } from "../../utils";
+import { formatShortDate, classifyExpiration, getSyncStatusDisplay } from "../../utils";
 import { RefreshableContainer } from "@/components/ui/RefreshableContainer";
 import {
   getAllDocuments,
@@ -28,6 +28,7 @@ export default function DocumentsScreen() {
   const router = useRouter();
   const [search, setSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
+  const [selectedStatus, setSelectedStatus] = useState<string>("all");
 
   // Real data states
   const [documents, setDocuments] = useState<LocalDocument[]>([]);
@@ -70,6 +71,13 @@ export default function DocumentsScreen() {
 
   const categories = ["all", ...Object.keys(DOCUMENT_CATEGORIES)];
 
+  const statusFilters = [
+    { value: "all", label: "All" },
+    { value: "valid", label: "Valid" },
+    { value: "expiring", label: "Expiring Soon" },
+    { value: "expired", label: "Expired" },
+  ];
+
   const filtered = documents.filter((doc) => {
     const matchesSearch =
       doc.title?.toLowerCase().includes(search.toLowerCase()) ||
@@ -79,7 +87,11 @@ export default function DocumentsScreen() {
     const matchesCategory =
       selectedCategory === "all" || doc.category === selectedCategory;
 
-    return matchesSearch && matchesCategory;
+    const expiration = classifyExpiration(doc.expiryDate);
+    const matchesStatus =
+      selectedStatus === "all" || expiration === selectedStatus;
+
+    return matchesSearch && matchesCategory && matchesStatus;
   });
 
   // Mask sensitive document numbers on the list view for security
@@ -106,7 +118,7 @@ export default function DocumentsScreen() {
             </TouchableOpacity>
           </View>
           <Text style={styles.subtitle}>
-            {filtered.length} documents • Offline Mode
+            {filtered.length} documents • {documents.filter(d => d.needsSync).length} pending sync
           </Text>
         </View>
 
@@ -157,6 +169,35 @@ export default function DocumentsScreen() {
           ))}
         </ScrollView>
 
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.statusScroll}
+        >
+           {statusFilters.map((sf) => (
+             <TouchableOpacity
+               key={sf.value}
+               onPress={() => setSelectedStatus(sf.value)}
+               style={[
+                 styles.statusChip,
+                 selectedStatus === sf.value && sf.value === "all" && styles.statusChipActive,
+                 selectedStatus === sf.value && sf.value === "expired" && styles.statusChipActiveDanger,
+                 selectedStatus === sf.value && sf.value === "expiring" && styles.statusChipActiveWarning,
+                 selectedStatus === sf.value && sf.value === "valid" && styles.statusChipActiveSuccess,
+               ]}
+             >
+               <Text
+                 style={[
+                   styles.statusChipText,
+                   selectedStatus === sf.value && styles.statusChipTextActive,
+                 ]}
+               >
+                 {sf.label}
+               </Text>
+             </TouchableOpacity>
+           ))}
+        </ScrollView>
+
         {loading ? (
           <ActivityIndicator
             size="large"
@@ -204,18 +245,25 @@ export default function DocumentsScreen() {
                         <Text style={styles.docNumber}>
                           ID: {maskDocumentNumber(doc.documentNumber)}
                         </Text>
-                        {doc.syncStatus === "pending" && (
+                        {doc.needsSync && (
                           <Ionicons
                             name="cloud-upload-outline"
                             size={14}
                             color={COLORS.warning}
                           />
                         )}
-                        {doc.syncStatus === "failed" && (
+                        {!doc.needsSync && doc.syncStatus === "failed" && (
                           <Ionicons
                             name="alert-circle-outline"
                             size={14}
                             color={COLORS.danger}
+                          />
+                        )}
+                        {!doc.needsSync && doc.syncStatus !== "failed" && doc.syncStatus !== "pending" && (
+                          <Ionicons
+                            name="cloud-done-outline"
+                            size={14}
+                            color={COLORS.success}
                           />
                         )}
                         <View style={styles.docDate}>
@@ -287,6 +335,34 @@ const styles = StyleSheet.create({
   },
   categoryChipText: { fontSize: 13, fontWeight: "600", color: COLORS.text },
   categoryChipTextActive: { color: "#fff" },
+  statusScroll: { marginBottom: 20 },
+  statusChip: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    marginRight: 8,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: "#fff",
+  },
+  statusChipText: { fontSize: 13, fontWeight: "600", color: COLORS.text },
+  statusChipActive: {
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
+  },
+  statusChipTextActive: { color: "#fff" },
+  statusChipActiveWarning: {
+    backgroundColor: COLORS.warning,
+    borderColor: COLORS.warning,
+  },
+  statusChipActiveDanger: {
+    backgroundColor: COLORS.danger,
+    borderColor: COLORS.danger,
+  },
+  statusChipActiveSuccess: {
+    backgroundColor: COLORS.success,
+    borderColor: COLORS.success,
+  },
   docsList: { gap: 12 },
   docCard: { paddingHorizontal: 12, paddingVertical: 12 },
   docCardContent: {

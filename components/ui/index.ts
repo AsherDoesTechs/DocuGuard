@@ -10,7 +10,8 @@ export { default as Header } from "./Header";
 export { default as Loading } from "./Loading";
 export { default as SearchBar } from "./SearchBar";
 export { Toast } from "./Toast";
-export { AlertModal, AlertProvider, showAlert, useAlert, alertHelpers } from "./AlertService";
+export { AlertProvider, showAlert, useAlert, alertHelpers } from "./AlertService";
+export { AlertModal } from "./AlertModal";
 export { EmptyState, LoadingState } from "./EmptyState";
 export { KeyboardAwareScrollView, useKeyboardAwareScroll } from "./KeyboardAwareScrollView";
 export { TagsInput, TagFilter, DocumentTags } from "./Tags";
@@ -18,5 +19,5 @@ export { FeedbackButton, withFeedback, useFeedbackTrigger } from "./FeedbackButt
 export type { ToastType, ToastProps } from "./Toast";
 export type { AlertButton, AlertType, AlertModalProps } from "./AlertModal";
 export type { EmptyStateProps } from "./EmptyState";
-export type { TagsInputProps, TagFilterProps, DocumentTagsProps } from "./Tags";
+export type { TagsInputProps, TagFilterProps } from "./Tags";
 export type { FeedbackButtonProps } from "./FeedbackButton";

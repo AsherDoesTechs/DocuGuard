@@ -84,8 +84,8 @@ export default function LoginScreen() {
         const response = await api.auth.login(normalizedValues);
 
         // 2 & 3. Store token securely using standardized SecureStore
-        if (response?.data?.token) {
-          await SecureStore.setItemAsync("userToken", response.data.token);
+        if (response?.token) {
+          await SecureStore.setItemAsync("userToken", response.token);
         }
 
         // Handle rememberMe persistence securely

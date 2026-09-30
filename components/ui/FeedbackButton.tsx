@@ -2,7 +2,7 @@ import React from "react";
 import { TouchableOpacity, TouchableOpacityProps, View, ViewStyle } from "react-native";
 import { useFeedback } from "@/hooks/useFeedback";
 
-interface FeedbackButtonProps extends TouchableOpacityProps {
+export interface FeedbackButtonProps extends TouchableOpacityProps {
   feedbackType?: "success" | "error" | "warning" | "info" | "light" | "medium" | "heavy" | "selection";
   feedbackOptions?: { sound?: boolean; haptic?: boolean };
   children: React.ReactNode;
@@ -19,10 +19,10 @@ export function FeedbackButton({
 }: FeedbackButtonProps) {
   const { trigger } = useFeedback();
 
-  const handlePress = async (...args: any[]) => {
+   const handlePress = async (...args: any[]) => {
     await trigger(feedbackType, feedbackOptions);
     if (onPress) {
-      onPress(...args);
+      (onPress as any)(...args);
     }
   };
 

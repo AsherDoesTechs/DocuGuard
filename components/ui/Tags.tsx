@@ -11,7 +11,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { COLORS, SPACING } from "@/constants";
+import { COLORS, Spacing as SPACING } from "@/constants";
 import { 
   getAllTags, 
   addDocumentTags, 
@@ -21,7 +21,7 @@ import {
 } from "@/services/localDatabase";
 import { useFeedback } from "@/hooks/useFeedback";
 
-interface TagsInputProps {
+export interface TagsInputProps {
   documentId?: number;
   initialTags?: string[];
   onTagsChange?: (tags: string[]) => void;
@@ -145,7 +145,6 @@ export function TagsInput({
             onKeyPress={handleKeyPress}
             placeholder={tags.length === 0 ? placeholder : ""}
             placeholderTextColor={COLORS.textSecondary}
-            disabled={disabled}
             autoCapitalize="none"
             autoCorrect={false}
             maxLength={30}
@@ -162,7 +161,7 @@ export function TagsInput({
               onPress={() => addTag(suggestion)}
               activeOpacity={0.6}
             >
-              <Ionicons name="label-outline" size={16} color={COLORS.primary} style={{ marginRight: 8 }} />
+              <Ionicons name="pricetag-outline" size={16} color={COLORS.primary} style={{ marginRight: 8 }} />
               <Text style={styles.suggestionText}>{suggestion}</Text>
             </TouchableOpacity>
           ))}
@@ -176,7 +175,7 @@ export function TagsInput({
   );
 }
 
-interface TagFilterProps {
+export interface TagFilterProps {
   selectedTags: string[];
   onTagToggle: (tag: string) => void;
   allTags?: string[];
@@ -275,7 +274,7 @@ export function DocumentTags({
           }}
           activeOpacity={0.7}
         >
-          <Ionicons name="label-outline" size={12} color={COLORS.primary} style={{ marginRight: 2 }} />
+          <Ionicons name="pricetag-outline" size={12} color={COLORS.primary} style={{ marginRight: 2 }} />
           <Text style={styles.documentTagText}>{tag}</Text>
           {removable && onRemoveTag && (
             <TouchableOpacity
@@ -347,14 +346,7 @@ const styles = StyleSheet.create({
   suggestionItem: {
     flexDirection: "row",
     alignItems: "center",
-    padding: SPACING.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-  },
-  suggestionItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: SPACING.sm,
+    padding: 8,
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
   },

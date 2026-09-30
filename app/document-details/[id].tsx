@@ -14,17 +14,22 @@ import { Ionicons } from "@expo/vector-icons";
 import { Card, StatusBadge } from "@/components/ui";
 import { COLORS } from "@/constants";
 import { Toast } from "@/components/ui/Toast";
-import { formatShortDate, getDaysUntilExpiry } from "@/utils";
+import { formatShortDate, getDaysUntilExpiry, classifyExpiration, getSyncStatusDisplay } from "@/utils";
 import {
   getDocumentById,
   deleteDocument,
   updateDocument,
   getDocumentHistory,
+  logDocumentAction,
+  LocalDocument,
 } from "@/services/localDatabase";
 import * as SecureStore from "expo-secure-store";
 import { api } from "@/services/api";
 import * as Clipboard from "expo-clipboard";
+import * as Sharing from "expo-sharing";
+import * as FileSystem from "expo-file-system/legacy";
 import Loading from "@/components/ui/Loading";
+import { useFeedback } from "@/hooks/useFeedback";
 
 interface DocumentData {
   id: string;
@@ -41,6 +46,8 @@ interface DocumentData {
   processingStatus?: string;
   riskScore?: number;
   riskLevel?: string;
+  syncStatus?: "synced" | "pending" | "failed" | "local";
+  needsSync?: boolean;
 }
 
 export default function DocumentDetailsScreen() {
@@ -62,24 +69,26 @@ export default function DocumentDetailsScreen() {
       if (isNaN(docId)) throw new Error("Invalid document ID");
       const doc = await getDocumentById(docId);
       if (!doc) throw new Error("Document not found");
-      if (mountedRef.current) {
-        setDocument({
-          id: String(doc.id),
-          title: doc.title,
-          category: doc.category,
-          issuer: doc.issuer,
-          documentNumber: doc.documentNumber || "",
-          issueDate: doc.issueDate || "",
-          expiryDate: doc.expiryDate || "",
-          notes: doc.notes,
-          status: doc.status,
-          fileUrl: doc.fileUrl,
-          fileType: doc.fileType,
-          processingStatus: doc.processingStatus,
-          riskScore: doc.riskScore,
-          riskLevel: doc.riskLevel,
-        });
-      }
+       if (mountedRef.current) {
+         setDocument({
+           id: String(doc.id),
+           title: doc.title,
+           category: doc.category,
+           issuer: doc.issuer,
+           documentNumber: doc.documentNumber || "",
+           issueDate: doc.issueDate || "",
+           expiryDate: doc.expiryDate || "",
+           notes: doc.notes,
+           status: doc.status,
+           fileUrl: doc.fileUrl,
+           fileType: doc.fileType,
+           processingStatus: doc.processingStatus,
+           riskScore: doc.riskScore,
+           riskLevel: doc.riskLevel,
+           syncStatus: doc.syncStatus,
+           needsSync: doc.needsSync,
+         });
+       }
     } catch (error: any) {
       if (mountedRef.current) {
         Alert.alert("Error", error.message || "Could not retrieve document details.");
@@ -159,6 +168,7 @@ export default function DocumentDetailsScreen() {
       if (token) {
         try {
           await api.documents.verifyDocument(parseInt(document.id, 10));
+          await logDocumentAction(parseInt(document.id, 10), "verified", { status: "verified" });
         } catch (syncErr) { console.warn("Could not sync verification:", syncErr); }
       }
       Alert.alert("Verified", "Document has been marked as verified.");
@@ -166,6 +176,51 @@ export default function DocumentDetailsScreen() {
       Alert.alert("Verification Failed", "Could not verify document locally.");
     } finally {
       if (mountedRef.current) setIsVerifying(false);
+    }
+  };
+
+  const handleExport = async () => {
+    if (!document) return;
+    try {
+      const content = [
+        `${document.title}`,
+        `Issuing Agency: ${document.issuer || "N/A"}`,
+        `Document Number: ${document.documentNumber || "N/A"}`,
+        `Issue Date: ${formatShortDate(document.issueDate || "")}`,
+        `Expiry Date: ${formatShortDate(document.expiryDate || "")}`,
+        `Status: ${document.status}`,
+        document.notes ? `\nNotes: ${document.notes}` : "",
+      ].filter(Boolean).join("\n");
+
+      const fileName = `${document.title.replace(/[^a-z0-9]/gi, "_").toLowerCase()}_${document.id}.txt`;
+      const fileUri = `${FileSystem.documentDirectory}${fileName}`;
+
+      await FileSystem.writeAsStringAsync(fileUri, content);
+      await Sharing.shareAsync(fileUri, {
+        mimeType: "text/plain",
+        dialogTitle: "Export Document Details",
+      });
+    } catch (err: any) {
+      Alert.alert("Export Failed", err.message || "Could not export document.");
+    }
+  };
+
+  const handleShare = async () => {
+    if (!document) return;
+    if (!document.fileUrl) {
+      Alert.alert("No File", "This document has no attached file to share.");
+      return;
+    }
+    try {
+      const fileName = `${document.title.replace(/[^a-z0-9]/gi, "_").toLowerCase()}_${document.id}`;
+      const fileUri = `${FileSystem.cacheDirectory}${fileName}.pdf`;
+      await FileSystem.downloadAsync(document.fileUrl, fileUri);
+      await Sharing.shareAsync(fileUri, {
+        mimeType: document.fileType || "application/pdf",
+        dialogTitle: "Share Document",
+      });
+    } catch (err: any) {
+      Alert.alert("Share Failed", err.message || "Could not share document.");
     }
   };
 
@@ -284,8 +339,21 @@ export default function DocumentDetailsScreen() {
                 {daysUntilExpiry < 0 ? `Expired ${Math.abs(daysUntilExpiry)} days ago` : `${daysUntilExpiry} days`}
               </Text>
             </Card>
-          </View>
-        </Card>
+           </View>
+
+           <View style={styles.syncStatusRow}>
+             <View style={styles.syncStatusItem}>
+               <Ionicons
+                 name={document.needsSync ? "cloud-upload-outline" : document.syncStatus === "failed" ? "alert-circle-outline" : "cloud-done-outline"}
+                 size={16}
+                 color={document.needsSync ? COLORS.warning : document.syncStatus === "failed" ? COLORS.danger : COLORS.success}
+               />
+               <Text style={styles.syncStatusText}>
+                 {getSyncStatusDisplay(document.syncStatus || "local", document.needsSync)}
+               </Text>
+             </View>
+           </View>
+         </Card>
 
         {document.notes ? (
           <Card style={styles.notesCard}>
@@ -380,6 +448,16 @@ export default function DocumentDetailsScreen() {
               </>
             )}
           </TouchableOpacity>
+          <TouchableOpacity style={[styles.actionButton, styles.actionSecondary]} onPress={handleExport}>
+            <Ionicons name="document-text-outline" size={20} color={COLORS.primary} />
+            <Text style={[styles.actionButtonText, { color: COLORS.primary }]}>Export</Text>
+          </TouchableOpacity>
+          {document.fileUrl && (
+            <TouchableOpacity style={[styles.actionButton, styles.actionSecondary]} onPress={handleShare}>
+              <Ionicons name="share-outline" size={20} color={COLORS.primary} />
+              <Text style={[styles.actionButtonText, { color: COLORS.primary }]}>Share</Text>
+            </TouchableOpacity>
+          )}
           <TouchableOpacity style={[styles.actionButton, styles.actionDanger]} onPress={handleDelete} disabled={isDownloading}>
             <Ionicons name="trash" size={20} color={COLORS.danger} />
             <Text style={[styles.actionButtonText, { color: COLORS.danger }]}>Delete</Text>
@@ -405,6 +483,9 @@ const styles = StyleSheet.create({
   metaItem: { alignItems: "center", paddingVertical: 12 },
   metaLabel: { fontSize: 12, color: COLORS.textSecondary, marginTop: 8 },
   metaValue: { fontSize: 16, fontWeight: "600", color: COLORS.text, marginTop: 4 },
+  syncStatusRow: { borderTopWidth: 1, borderTopColor: COLORS.border, paddingTop: 12, marginTop: 12 },
+  syncStatusItem: { flexDirection: "row", alignItems: "center", gap: 6 },
+  syncStatusText: { fontSize: 12, color: COLORS.textSecondary },
   notesCard: { marginBottom: 20 },
   notesHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
   notesTitle: { fontSize: 16, fontWeight: "700", color: COLORS.text },

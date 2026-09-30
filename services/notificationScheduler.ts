@@ -7,6 +7,7 @@ import {
   getAllReminders,
   LocalDocument,
 } from "./localDatabase";
+import { getDaysUntilExpiry } from "@/utils";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -37,6 +38,23 @@ export async function checkAndScheduleAlerts() {
   }
 
   await scheduleReminderNotifications();
+}
+
+export async function scheduleRemindersForDocument(doc: LocalDocument) {
+  const notifSetting = await SecureStore.getItemAsync("notificationsEnabled");
+  if (notifSetting === "false") return;
+
+  if (!doc.enableAlerts) {
+    await cancelDocumentNotifications(doc.id!);
+    return;
+  }
+
+  const daysUntilExpiry = getDaysUntilExpiry(doc.expiryDate || "");
+  if (daysUntilExpiry < 0) {
+    await scheduleExpirationNotification(doc);
+  } else if (daysUntilExpiry <= 30) {
+    await scheduleExpiringSoonNotification(doc);
+  }
 }
 
 async function scheduleExpirationNotification(doc: LocalDocument) {
@@ -91,21 +109,6 @@ async function scheduleExpiringSoonNotification(doc: LocalDocument) {
       },
     });
   }
-
-  await Notifications.scheduleNotificationAsync({
-    content: {
-      title: "Document Expiring Soon",
-      body: `${doc.title} expires on ${doc.expiryDate}. Time to renew.`,
-      data: { documentId: doc.id, type: "expiring" },
-      sound: "default",
-    },
-    identifier: identifier + "_ongoing",
-    trigger: {
-      type: SchedulableTriggerInputTypes.DAILY,
-      hour: 9,
-      minute: 0,
-    },
-  });
 }
 
 async function scheduleReminderNotifications() {

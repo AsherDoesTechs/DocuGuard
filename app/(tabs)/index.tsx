@@ -22,8 +22,11 @@ import {
   getUserProfile,
   getExpiringDocuments,
   getExpiredDocuments,
+  getStatistics,
   LocalDocument,
 } from "../../services/localDatabase";
+import type { DocumentStatistics } from "../../services/localDatabase";
+import { classifyExpiration } from "@/utils";
 
 interface DashboardSummary {
   safetyScore: number;
@@ -55,6 +58,7 @@ export default function HomeScreen() {
   const [recentDocs, setRecentDocs] = useState<LocalDocument[]>([]);
   const [expiringDocs, setExpiringDocs] = useState<LocalDocument[]>([]);
   const [urgentReminders, setUrgentReminders] = useState<Reminder[]>([]);
+  const [statistics, setStatistics] = useState<DocumentStatistics | null>(null);
   const [userName, setUserName] = useState("User");
   const [toast, setToast] = useState<{
     visible: boolean;
@@ -70,12 +74,14 @@ export default function HomeScreen() {
         expiringList,
         expiredDocs,
         localReminders,
+        stats,
       ] = await Promise.all([
         getUserProfile(),
         getAllDocuments(),
         getExpiringDocuments(30),
         getExpiredDocuments(),
         getAllReminders(),
+        getStatistics(),
       ]);
 
       if (localProfile) {
@@ -94,6 +100,7 @@ export default function HomeScreen() {
 
       setRecentDocs(sortedRecent);
       setExpiringDocs(expiringList.slice(0, 3));
+      setStatistics(stats);
 
       const docCount = localDocs.length;
       const expiringCount = expiringList.length;
@@ -579,15 +586,61 @@ export default function HomeScreen() {
             )}
           </View>
 
+          {/* Statistics Section */}
+          {statistics && (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Statistics</Text>
+              <View style={styles.statsCards}>
+                <Card style={styles.statCard}>
+                  <View style={styles.statCardRow}>
+                    <Ionicons name="checkmark-circle" size={20} color={COLORS.success} />
+                    <Text style={styles.statCardLabel}>Valid</Text>
+                  </View>
+                  <Text style={styles.statCardValue}>{statistics.validDocuments}</Text>
+                </Card>
+                <Card style={styles.statCard}>
+                  <View style={styles.statCardRow}>
+                    <Ionicons name="time" size={20} color={COLORS.warning} />
+                    <Text style={styles.statCardLabel}>Expiring</Text>
+                  </View>
+                  <Text style={styles.statCardValue}>{statistics.expiringDocuments}</Text>
+                </Card>
+                <Card style={styles.statCard}>
+                  <View style={styles.statCardRow}>
+                    <Ionicons name="alert-circle" size={20} color={COLORS.danger} />
+                    <Text style={styles.statCardLabel}>Expired</Text>
+                  </View>
+                  <Text style={styles.statCardValue}>{statistics.expiredDocuments}</Text>
+                </Card>
+              </View>
+
+              {Object.keys(statistics.byCategory).length > 0 && (
+                <View style={styles.categoryStats}>
+                  <Text style={styles.categoryStatsTitle}>By Category</Text>
+                  {Object.entries(statistics.byCategory).map(([cat, count]) => (
+                    <View key={cat} style={styles.categoryStatRow}>
+                      <Text style={styles.categoryStatName}>{cat}</Text>
+                      <Text style={styles.categoryStatCount}>{count as number}</Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+            </View>
+          )}
+
           {/* Sync Status Footer Indicator */}
           <View style={styles.syncFooter}>
             <Ionicons
-              name="cloud-done-outline"
+              name={summary.expiringDocuments + summary.expiredDocuments > 0 ? "warning-outline" : "cloud-done-outline"}
               size={16}
-              color={COLORS.textSecondary}
+              color={summary.expiringDocuments + summary.expiredDocuments > 0 ? COLORS.warning : COLORS.success}
             />
             <Text style={styles.syncFooterText}>
-              Vault synced with local storage
+              {summary.expiredDocuments > 0
+                ? `${summary.expiredDocuments} document${summary.expiredDocuments !== 1 ? "s" : ""} expired`
+                : summary.expiringDocuments > 0
+                  ? `${summary.expiringDocuments} document${summary.expiringDocuments !== 1 ? "s" : ""} expiring soon`
+                  : "All documents up to date"}
             </Text>
           </View>
         </ScrollView>
@@ -667,6 +720,16 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   section: { marginBottom: 24 },
+  statsCards: { flexDirection: "row", gap: 12 },
+  statCard: { flex: 1, alignItems: "center", padding: 12 },
+  statCardRow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 4 },
+  statCardLabel: { fontSize: 12, color: COLORS.textSecondary },
+  statCardValue: { fontSize: 22, fontWeight: "700", color: COLORS.text },
+  categoryStats: { marginTop: 12, gap: 6 },
+  categoryStatsTitle: { fontSize: 13, fontWeight: "600", color: COLORS.textSecondary, marginBottom: 4 },
+  categoryStatRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 4 },
+  categoryStatName: { fontSize: 13, color: COLORS.textSecondary },
+  categoryStatCount: { fontSize: 13, fontWeight: "600", color: COLORS.text },
   sectionHeaderRow: {
     flexDirection: "row",
     justifyContent: "space-between",

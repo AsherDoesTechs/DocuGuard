@@ -19,7 +19,7 @@ export interface LocalDocument {
   riskLevel?: string;
   userId?: string;
   needsSync: boolean;
-  syncStatus?: "synced" | "pending" | "failed";
+  syncStatus?: "synced" | "pending" | "failed" | "local";
   createdAt?: string;
   updatedAt?: string;
   authenticity?: "real" | "replica" | "fake";

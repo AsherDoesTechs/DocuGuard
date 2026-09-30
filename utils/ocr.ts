@@ -1,4 +1,5 @@
-import { supabase } from "../DocuGuard-Server/config/supabase";
+import * as SecureStore from "expo-secure-store";
+import { documents } from "../services/api";
 
 export interface ExtractedDocumentData {
   title: string;
@@ -11,12 +12,15 @@ export interface ExtractedDocumentData {
   authenticity: "real" | "replica" | "fake";
   authenticityScore: number;
   authenticityReason: string;
+  fileUrl?: string;
+  s3Key?: string;
+  storagePath?: string;
+  documentId?: string | number;
 }
 
 function getFileName(uri: string): string {
   const cleanUri = uri.split("?")[0];
   const filename = cleanUri.split("/").pop();
-
   return filename || `document_${Date.now()}.jpg`;
 }
 
@@ -59,38 +63,9 @@ function normalizeExtractedData(data: any): ExtractedDocumentData {
   };
 }
 
-async function uploadToSignedUrl(
-  uri: string,
-  uploadUrl: string,
-  mimeType: string,
-): Promise<void> {
-  const response = await fetch(uri);
-
-  if (!response.ok) {
-    throw new Error(`Could not read scanned image (${response.status})`);
-  }
-
-  const blob = await response.blob();
-
-  const uploadResponse = await fetch(uploadUrl, {
-    method: "PUT",
-    headers: {
-      "Content-Type": mimeType,
-    },
-    body: blob,
-  });
-
-  if (!uploadResponse.ok) {
-    const errorText = await uploadResponse.text();
-
-    throw new Error(
-      `Supabase upload failed: ${uploadResponse.status} ${errorText}`,
-    );
-  }
-}
-
 /**
- * Real OCR pipeline: Automatically fetches session token and API base URL.
+ * Real OCR pipeline using the backend API service.
+ * Uploads to Supabase Storage via signed URL, creates a record, triggers Azure OCR.
  */
 export async function extractDocumentData(
   imageUri: string,
@@ -99,135 +74,65 @@ export async function extractDocumentData(
     throw new Error("No document image was provided.");
   }
 
-  // Automatically get session token from Supabase client
-  const { data: sessionData } = await supabase.auth.getSession();
-  const accessToken = sessionData?.session?.access_token;
-
-  if (!accessToken) {
-    throw new Error(
-      "Authentication token is required for document scanning. Please log in again.",
-    );
-  }
-
-  // Get API base URL from environment variables (e.g., Expo Constants or process.env)
-  const apiBaseUrl =
-    process.env.EXPO_PUBLIC_API_URL ||
-    process.env.API_BASE_URL ||
-    "https://your-backend-api-url.com"; // Fallback URL if needed
-
   const fileName = getFileName(imageUri);
   const fileType = getMimeType(imageUri);
 
-  /*
-   * STEP 1
-   * Ask backend for a Supabase signed upload URL.
-   */
-  const uploadUrlResponse = await fetch(
-    `${apiBaseUrl}/documents/upload-url?` +
-      `fileName=${encodeURIComponent(fileName)}` +
-      `&fileType=${encodeURIComponent(fileType)}`,
-    {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
-    },
-  );
+  try {
+    const uploadData = await documents.getUploadUrl(fileName, fileType);
 
-  if (!uploadUrlResponse.ok) {
-    const text = await uploadUrlResponse.text();
+    if (!uploadData?.uploadUrl) {
+      throw new Error("The server did not return a valid upload URL.");
+    }
 
-    throw new Error(
-      `Could not get upload URL: ${uploadUrlResponse.status} ${text}`,
-    );
-  }
+    await documents.uploadToS3(uploadData.uploadUrl, imageUri, fileType);
 
-  const uploadData = await uploadUrlResponse.json();
-  const uploadUrl = uploadData?.uploadUrl;
-  const fileUrl = uploadData?.fileUrl;
+    const resolvedS3Key = uploadData.storagePath || uploadData.s3Key || "";
 
-  if (!uploadUrl || !fileUrl) {
-    throw new Error("Backend did not return valid upload information.");
-  }
-
-  /*
-   * STEP 2
-   * Upload image to Supabase Storage.
-   */
-  await uploadToSignedUrl(imageUri, uploadUrl, fileType);
-
-  /*
-   * STEP 3
-   * Create the document database record.
-   */
-  const createResponse = await fetch(`${apiBaseUrl}/documents`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
+    const created = await documents.create({
       title: "Scanned Document",
       category: "other",
       issuer: null,
       documentNumber: null,
       issueDate: null,
       expiryDate: null,
-      notes: "Document uploaded for Azure OCR processing.",
+      notes: "Scanned document awaiting Azure OCR processing.",
       enableAlerts: true,
       status: "active",
-      s3Key: uploadData.storagePath || uploadData.s3Key,
-      fileUrl,
+      s3Key: String(resolvedS3Key),
+      fileUrl: uploadData.fileUrl,
       fileType,
-    }),
-  });
+    });
 
-  if (!createResponse.ok) {
-    const text = await createResponse.text();
+    const documentId =
+      created?.document?.id ?? created?.id;
 
-    throw new Error(
-      `Could not create document: ${createResponse.status} ${text}`,
-    );
-  }
+    if (!documentId) {
+      throw new Error(
+        "The document was uploaded, but the server did not return a document ID.",
+      );
+    }
 
-  const created = await createResponse.json();
-  const documentId =
-    created?.document?.id || created?.data?.document?.id || created?.id;
+    const processed = await documents.processDocument(Number(documentId));
 
-  if (!documentId) {
-    throw new Error("Document was created but no document ID was returned.");
-  }
+    if (!processed?.extractedData) {
+      throw new Error(
+        "Azure processing completed without returning extracted data.",
+      );
+    }
 
-  /*
-   * STEP 4
-   * Tell backend to send the uploaded document to Azure.
-   */
-  const processResponse = await fetch(`${apiBaseUrl}/documents/process`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
+    return {
+      ...normalizeExtractedData(processed.extractedData),
+      fileUrl: uploadData.fileUrl,
+      s3Key: resolvedS3Key,
+      storagePath: uploadData.storagePath || resolvedS3Key,
       documentId,
-    }),
-  });
-
-  const processJson = await processResponse.json();
-
-  if (!processResponse.ok) {
-    throw new Error(
-      processJson?.error ||
-        processJson?.message ||
-        "Azure document processing failed.",
-    );
+    };
+  } catch (error: any) {
+    if (error?.isOffline) {
+      throw new Error(
+        "Network unavailable. Scan requires an internet connection.",
+      );
+    }
+    throw error;
   }
-
-  if (!processJson?.extractedData) {
-    throw new Error(
-      "Azure processing completed but returned no extracted data.",
-    );
-  }
-
-  return normalizeExtractedData(processJson.extractedData);
 }

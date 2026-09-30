@@ -77,3 +77,9 @@ export function formatShortDate(dateString: string): string {
     return dateString;
   }
 }
+
+export {
+  classifyExpiration,
+  getSyncStatusDisplay,
+} from "./dateUtils";
+export type { ExpirationStatus, SyncStatusDisplay } from "./dateUtils";

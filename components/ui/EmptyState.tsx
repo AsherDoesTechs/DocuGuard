@@ -16,6 +16,84 @@ export interface EmptyStateProps {
   style?: any;
 }
 
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    padding: 32,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  illustrationWrapper: {
+    marginBottom: 24,
+  },
+  illustrationContainer: {
+    width: 120,
+    height: 120,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  title: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: COLORS.text,
+    textAlign: "center",
+    marginBottom: 8,
+  },
+  message: {
+    fontSize: 15,
+    color: COLORS.textSecondary,
+    textAlign: "center",
+    lineHeight: 22,
+    marginBottom: 28,
+    maxWidth: 280,
+  },
+  actions: {
+    flexDirection: "row",
+    gap: 12,
+    width: "100%",
+    maxWidth: 320,
+    justifyContent: "center",
+  },
+  primaryButton: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: COLORS.primary,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  primaryButtonText: {
+    color: "#fff",
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  secondaryButton: {
+    flex: 1,
+    backgroundColor: "transparent",
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    alignItems: "center",
+  },
+  secondaryButtonText: {
+    color: COLORS.primary,
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  spinning: {
+    transform: [{ rotate: "0deg" }],
+  },
+});
+
 const illustrations: Record<string, React.ReactNode> = {
   documents: (
     <View style={styles.illustrationContainer}>
@@ -45,7 +123,7 @@ const illustrations: Record<string, React.ReactNode> = {
   ),
   notifications: (
     <View style={styles.illustrationContainer}>
-      <Ionicons name="bell-outline" size={80} color={COLORS.primary} opacity={0.3} />
+      <Ionicons name="notifications-outline" size={80} color={COLORS.primary} opacity={0.3} />
       <View style={{ position: "absolute", top: 10, right: 5, width: 18, height: 18, borderRadius: 9, backgroundColor: COLORS.danger }} />
     </View>
   ),
@@ -136,81 +214,6 @@ export function EmptyState({
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    padding: 32,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  illustrationWrapper: {
-    marginBottom: 24,
-  },
-  illustrationContainer: {
-    width: 120,
-    height: 120,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  title: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: COLORS.text,
-    textAlign: "center",
-    marginBottom: 8,
-  },
-  message: {
-    fontSize: 15,
-    color: COLORS.textSecondary,
-    textAlign: "center",
-    lineHeight: 22,
-    marginBottom: 28,
-    maxWidth: 280,
-  },
-  actions: {
-    flexDirection: "row",
-    gap: 12,
-    width: "100%",
-    maxWidth: 320,
-    justifyContent: "center",
-  },
-  primaryButton: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: COLORS.primary,
-    paddingVertical: 14,
-    paddingHorizontal: 20,
-    borderRadius: 12,
-    shadowColor: COLORS.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  primaryButtonText: {
-    color: "#fff",
-    fontSize: 15,
-    fontWeight: "600",
-  },
-  secondaryButton: {
-    flex: 1,
-    backgroundColor: "transparent",
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    paddingVertical: 14,
-    paddingHorizontal: 20,
-    borderRadius: 12,
-    alignItems: "center",
-  },
-  secondaryButtonText: {
-    color: COLORS.primary,
-    fontSize: 15,
-    fontWeight: "600",
-  },
-});
 
 export function LoadingState({ message = "Loading..." }: { message?: string }) {
   return (

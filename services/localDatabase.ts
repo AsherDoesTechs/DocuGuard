@@ -291,7 +291,7 @@ export async function getAllDocuments(): Promise<LocalDocument[]> {
              issue_date AS "issueDate", expiry_date AS "expiryDate", notes, status,
              enable_alerts AS "enableAlerts", reminder_interval_days AS "reminderIntervalDays",
              reminder_intervals AS "reminderIntervals", file_url AS "fileUrl", 
-             file_type AS "fileType", processing_status AS "processingStatus",
+             file_type AS "fileType", s3_key AS "s3Key", processing_status AS "processingStatus",
              risk_score AS "riskScore", risk_level AS "riskLevel",
              needs_sync AS "needsSync", sync_status AS "syncStatus",
              created_at AS "createdAt", updated_at AS "updatedAt"
@@ -823,13 +823,57 @@ export async function getUnsyncedDocuments(): Promise<LocalDocument[]> {
     SELECT id, title, category, issuer, document_number AS "documentNumber",
            issue_date AS "issueDate", expiry_date AS "expiryDate", notes, status,
            enable_alerts AS "enableAlerts", reminder_interval_days AS "reminderIntervalDays",
-           file_url AS "fileUrl", 
-           file_type AS "fileType", processing_status AS "processingStatus",
+           reminder_intervals AS "reminderIntervals", file_url AS "fileUrl", 
+           file_type AS "fileType", s3_key AS "s3Key", processing_status AS "processingStatus",
            risk_score AS "riskScore", risk_level AS "riskLevel",
-           sync_status AS "syncStatus"
+           sync_status AS "syncStatus", created_at AS "createdAt", updated_at AS "updatedAt"
     FROM documents WHERE needs_sync = 1
   `);
   return rows;
+}
+
+export async function addToSyncQueue(
+  tableName: string,
+  recordId: number,
+  operation: string,
+): Promise<void> {
+  await run(
+    `INSERT INTO sync_queue (table_name, record_id, operation, status) VALUES (?, ?, ?, 'pending')`,
+    [tableName, recordId, operation],
+  );
+}
+
+export async function getSyncQueue(): Promise<
+  { id: number; table_name: string; record_id: number; operation: string; status: string }[]
+> {
+  return queryAll<{
+    id: number;
+    table_name: string;
+    record_id: number;
+    operation: string;
+    status: string;
+  }>(`SELECT id, table_name, record_id, operation, status FROM sync_queue WHERE status = 'pending' ORDER BY created_at ASC`);
+}
+
+export async function updateSyncQueueStatus(
+  id: number,
+  status: "pending" | "processing" | "completed" | "failed",
+): Promise<void> {
+  await run(`UPDATE sync_queue SET status = ? WHERE id = ?`, [status, id]);
+}
+
+export async function getUnsyncedDocumentCount(): Promise<number> {
+  const result = await querySingle<{ count: number }>(
+    `SELECT COUNT(*) as count FROM documents WHERE needs_sync = 1`,
+  );
+  return result?.count || 0;
+}
+
+export async function getUnsyncedReminderCount(): Promise<number> {
+  const result = await queryAll<{ count: number }>(
+    `SELECT COUNT(*) as count FROM reminders WHERE needs_sync = 1`,
+  );
+  return result?.[0]?.count || 0;
 }
 
 export async function markReminderSynced(id: number) {
@@ -921,9 +965,9 @@ export async function getExpiringDocuments(
            issue_date AS "issueDate", expiry_date AS "expiryDate", notes, status,
            enable_alerts AS "enableAlerts", reminder_interval_days AS "reminderIntervalDays",
            reminder_intervals AS "reminderIntervals", file_url AS "fileUrl", 
-           file_type AS "fileType", processing_status AS "processingStatus",
+           file_type AS "fileType", s3_key AS "s3Key", processing_status AS "processingStatus",
            risk_score AS "riskScore", risk_level AS "riskLevel",
-           sync_status AS "syncStatus",
+           sync_status AS "syncStatus", needs_sync AS "needsSync",
            created_at AS "createdAt", updated_at AS "updatedAt"
     FROM documents 
     WHERE status != 'expired'
@@ -940,10 +984,10 @@ export async function getExpiredDocuments(): Promise<LocalDocument[]> {
     SELECT id, title, category, issuer, document_number AS "documentNumber",
            issue_date AS "issueDate", expiry_date AS "expiryDate", notes, status,
            enable_alerts AS "enableAlerts", reminder_interval_days AS "reminderIntervalDays",
-           file_url AS "fileUrl", 
-           file_type AS "fileType", processing_status AS "processingStatus",
+           reminder_intervals AS "reminderIntervals", file_url AS "fileUrl", 
+           file_type AS "fileType", s3_key AS "s3Key", processing_status AS "processingStatus",
            risk_score AS "riskScore", risk_level AS "riskLevel",
-           sync_status AS "syncStatus",
+           sync_status AS "syncStatus", needs_sync AS "needsSync",
            created_at AS "createdAt", updated_at AS "updatedAt"
     FROM documents 
     WHERE date(expiry_date) < date('now') AND status != 'expired'
@@ -1014,6 +1058,94 @@ export async function getDashboardSummary(): Promise<DocumentDashboardSummary> {
     expiring: expiringRow?.count || 0,
     expired: expiredRow?.count || 0,
     nextExpiring,
+  };
+}
+
+export interface DocumentStatistics {
+  totalDocuments: number;
+  validDocuments: number;
+  expiringDocuments: number;
+  expiredDocuments: number;
+  byCategory: Record<string, number>;
+  expiringSoonList: { id: number; title: string; daysRemaining: number; expiryDate: string }[];
+  expiredList: { id: number; title: string; documentNumber: string; expiryDate: string }[];
+}
+
+export async function getStatistics(): Promise<DocumentStatistics> {
+  const database = await getDb();
+
+  const totalRow = await database.getFirstAsync<{ count: number }>(
+    `SELECT COUNT(*) as count FROM documents`,
+  );
+
+  const validRow = await database.getFirstAsync<{ count: number }>(
+    `SELECT COUNT(*) as count FROM documents WHERE date(expiry_date) > date('now', '+30 days')`,
+  );
+
+  const expiringRow = await database.getFirstAsync<{ count: number }>(
+    `SELECT COUNT(*) as count FROM documents WHERE date(expiry_date) BETWEEN date('now') AND date('now', '+30 days')`,
+  );
+
+  const expiredRow = await database.getFirstAsync<{ count: number }>(
+    `SELECT COUNT(*) as count FROM documents WHERE date(expiry_date) < date('now')`,
+  );
+
+  const categoryRows = await database.getAllAsync<{ category: string; count: number }>(
+    `SELECT category, COUNT(*) as count FROM documents GROUP BY category`,
+  );
+
+  const byCategory: Record<string, number> = {};
+  for (const row of categoryRows) {
+    byCategory[row.category] = row.count;
+  }
+
+  const expiringSoonRows = await database.getAllAsync<{
+    id: number;
+    title: string;
+    expiry_date: string;
+  }>(
+    `SELECT id, title, expiry_date FROM documents WHERE date(expiry_date) BETWEEN date('now') AND date('now', '+30 days') ORDER BY date(expiry_date) ASC`,
+  );
+
+  const expiringSoonList = expiringSoonRows.map((row) => {
+    const expiry = new Date(row.expiry_date);
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    const daysRemaining = Math.ceil(
+      (expiry.getTime() - now.getTime()) / (1000 * 60 * 60 * 24),
+    );
+    return {
+      id: row.id,
+      title: row.title,
+      daysRemaining,
+      expiryDate: row.expiry_date,
+    };
+  });
+
+  const expiredRows = await database.getAllAsync<{
+    id: number;
+    title: string;
+    document_number: string;
+    expiry_date: string;
+  }>(
+    `SELECT id, title, document_number, expiry_date FROM documents WHERE date(expiry_date) < date('now') ORDER BY date(expiry_date) ASC`,
+  );
+
+  const expiredList = expiredRows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    documentNumber: row.document_number,
+    expiryDate: row.expiry_date,
+  }));
+
+  return {
+    totalDocuments: totalRow?.count || 0,
+    validDocuments: validRow?.count || 0,
+    expiringDocuments: expiringRow?.count || 0,
+    expiredDocuments: expiredRow?.count || 0,
+    byCategory,
+    expiringSoonList,
+    expiredList,
   };
 }
 
