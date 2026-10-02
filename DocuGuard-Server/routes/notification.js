@@ -4,7 +4,10 @@ const db = require("../config/db");
 const authMiddleware = require("../middleware/auth");
 const { asyncHandler } = require("../utils/asyncHandler");
 const { z } = require("zod");
-const { validateSchema, ErrorCodes } = require("../utils/errors");
+// validateSchema lives in the shared validation module, not utils/errors.js.
+// Importing it from utils/errors yielded undefined and made every call throw.
+const { validateSchema } = require("../../shared/validation/schemas");
+const { ErrorCodes } = require("../utils/errorCodes");
 
 const pushTokenSchema = z.object({
   expoPushToken: z.string().optional(),
@@ -19,7 +22,7 @@ router.post("/push-token", authMiddleware, asyncHandler(async (req, res) => {
   if (!validation.success) {
     return res.status(400).json({
       status: "fail",
-      errorCode: "PUSH_TOKEN_MISSING",
+      code: ErrorCodes.NOTIF_TOKEN_MISSING,
       error: Object.values(validation.errors).join(", "),
       details: validation.errors,
     });
@@ -51,7 +54,7 @@ router.post("/push-token", authMiddleware, asyncHandler(async (req, res) => {
   if (result.rows.length === 0) {
     return res.status(404).json({
       status: "fail",
-      errorCode: "USER_NOT_FOUND",
+      code: ErrorCodes.AUTH_USER_NOT_FOUND,
       error: "User not found.",
     });
   }

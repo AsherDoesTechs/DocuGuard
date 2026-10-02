@@ -7,7 +7,7 @@ const { asyncHandler } = require("../utils/asyncHandler");
 const { ErrorCodes } = require("../utils/errorCodes");
 
 router.post(
-  "/subscription",
+  "/",
   authenticateToken,
   asyncHandler(async (req, res) => {
     const userId = req.user.userId;

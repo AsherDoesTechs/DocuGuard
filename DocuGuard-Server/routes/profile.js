@@ -9,6 +9,8 @@ router.use(authMiddleware);
 router.get("/", asyncHandler(profileController.getProfile));
 router.patch("/", asyncHandler(profileController.updateProfile));
 router.patch("/security", asyncHandler(profileController.updateSecurity));
+router.post("/security/2fa/setup", asyncHandler(profileController.setup2FA));
+router.post("/security/2fa/verify", asyncHandler(profileController.verify2FA));
 router.patch("/preferences", asyncHandler(profileController.updatePreferences));
 router.post("/support", asyncHandler(profileController.submitSupportTicket));
 router.post("/subscription", asyncHandler(profileController.handleCheckoutSubscription));
