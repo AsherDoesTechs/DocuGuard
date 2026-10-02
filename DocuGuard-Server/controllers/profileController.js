@@ -4,6 +4,7 @@ const { ErrorCodes } = require("../utils/errorCodes");
 const { validateSchema, profileSchema } = require("../../shared/validation/schemas");
 const { z } = require("zod");
 const { Readable } = require("stream");
+const totp = require("../utils/totp");
 
 // Get user profile data and live stats
 exports.getProfile = async (req, res) => {
@@ -66,21 +67,25 @@ exports.updateSecurity = async (req, res) => {
   try {
     if (newPassword) {
       const userRes = await db.query(
-        "SELECT password FROM users WHERE id = $1",
+        "SELECT password_hash FROM users WHERE id = $1",
         [userId],
       );
+      const storedHash = userRes.rows[0]?.password_hash;
+      if (!storedHash) {
+        return res.status(404).json({ error: "User not found" });
+      }
       const validPassword = await bcrypt.compare(
         currentPassword,
-        userRes.rows[0].password,
+        storedHash,
       );
       if (!validPassword) {
         return res.status(400).json({ error: "Incorrect current password" });
       }
-      const salt = await bcrypt.genSalt(10);
+      const salt = await bcrypt.genSalt(12);
       const hashedPassword = await bcrypt.hash(newPassword, salt);
 
       await db.query(
-        "UPDATE users SET password = $1, two_factor = $2 WHERE id = $3",
+        "UPDATE users SET password_hash = $1, two_factor = $2 WHERE id = $3",
         [hashedPassword, twoFactor, userId],
       );
     } else {
@@ -94,6 +99,86 @@ exports.updateSecurity = async (req, res) => {
   } catch (err) {
     console.error("Error updating security:", err);
     res.status(500).json({ error: "Server error updating security" });
+  }
+};
+
+// Start 2FA enrollment: generate a secret and hold it as "pending" until the
+// user proves they can produce a valid code. The secret is never trusted from
+// the client.
+exports.setup2FA = async (req, res) => {
+  const userId = req.user.userId;
+
+  try {
+    const secret = totp.generateSecret();
+
+    const userRes = await db.query(
+      "SELECT email FROM users WHERE id = $1",
+      [userId],
+    );
+    const account = userRes.rows[0]?.email || `user-${userId}`;
+
+    // Staged only: two_factor stays FALSE until /verify succeeds, so a user
+    // cannot lock themselves out by abandoning enrollment.
+    await db.query(
+      "UPDATE users SET two_factor_secret = $1, two_factor_enabled_at = NULL WHERE id = $2",
+      [secret, userId],
+    );
+
+    res.json({
+      secret,
+      otpauthUri: totp.buildOtpAuthUri(secret, account),
+      digits: 6,
+      period: 30,
+    });
+  } catch (err) {
+    console.error("Error starting 2FA setup:", err);
+    res.status(500).json({ error: "Server error starting 2FA setup" });
+  }
+};
+
+// Confirm enrollment with a code from the user's authenticator app.
+exports.verify2FA = async (req, res) => {
+  const userId = req.user.userId;
+
+  const verifySchema = z.object({
+    code: z.string().regex(/^\d{6}$/, "Code must be 6 digits"),
+  });
+
+  const validation = validateSchema(verifySchema, req.body);
+  if (!validation.success) {
+    return res.status(400).json({
+      error: Object.values(validation.errors).join(", "),
+      code: ErrorCodes.PROFILE_UPDATE_FAILED,
+      details: validation.errors,
+    });
+  }
+
+  try {
+    const userRes = await db.query(
+      "SELECT two_factor_secret FROM users WHERE id = $1",
+      [userId],
+    );
+    const secret = userRes.rows[0]?.two_factor_secret;
+
+    if (!secret) {
+      return res.status(400).json({
+        error: "Start 2FA setup before verifying a code.",
+      });
+    }
+
+    if (!totp.verifyTOTP(secret, validation.data.code)) {
+      return res.status(400).json({ error: "Invalid verification code." });
+    }
+
+    await db.query(
+      "UPDATE users SET two_factor = TRUE, two_factor_enabled_at = NOW() WHERE id = $1",
+      [userId],
+    );
+
+    res.json({ message: "Two-factor authentication enabled", twoFactor: true });
+  } catch (err) {
+    console.error("Error verifying 2FA:", err);
+    res.status(500).json({ error: "Server error verifying 2FA" });
   }
 };
 
@@ -135,6 +220,7 @@ exports.submitSupportTicket = async (req, res) => {
   const userId = req.user.userId;
 
   const supportSchema = z.object({
+    subject: z.string().min(1).max(255).optional(),
     message: z.string().min(1, "Message cannot be empty").max(5000, "Message too long"),
   });
 
@@ -147,12 +233,14 @@ exports.submitSupportTicket = async (req, res) => {
     });
   }
 
-  const { message } = validation.data;
+  const { subject, message } = validation.data;
 
   try {
+    // subject is NOT NULL in the schema; default it rather than requiring the
+    // client to send one, so existing single-field callers keep working.
     await db.query(
-      `INSERT INTO support_tickets (user_id, message) VALUES ($1, $2)`,
-      [userId, message],
+      `INSERT INTO support_tickets (user_id, subject, message) VALUES ($1, $2, $3)`,
+      [userId, subject || "Support request", message],
     );
     res.json({ message: "Support ticket submitted successfully" });
   } catch (err) {
@@ -627,14 +715,19 @@ exports.deleteAccount = async (req, res) => {
   const userId = req.user.userId;
 
   try {
-    // Delete in order to respect foreign keys
-    await db.query(`DELETE FROM reminders WHERE user_id = $1`, [userId]);
-    await db.query(`DELETE FROM documents WHERE user_id = $1`, [userId]);
-    await db.query(`DELETE FROM user_settings WHERE user_id = $1`, [userId]);
-    await db.query(`DELETE FROM login_sessions WHERE user_id = $1`, [userId]);
-    await db.query(`DELETE FROM support_tickets WHERE user_id = $1`, [userId]);
-    await db.query(`DELETE FROM transactions WHERE user_id = $1`, [userId]);
-    await db.query(`DELETE FROM users WHERE id = $1`, [userId]);
+    // All-or-nothing: a mid-sequence failure previously left a half-deleted
+    // account that could no longer be deleted, and orphaned children.
+    await db.withTransaction(async (client) => {
+      // Delete in order to respect foreign keys
+      await client.query(`DELETE FROM reminders WHERE user_id = $1`, [userId]);
+      await client.query(`DELETE FROM documents WHERE user_id = $1`, [userId]);
+      await client.query(`DELETE FROM user_settings WHERE user_id = $1`, [userId]);
+      await client.query(`DELETE FROM login_sessions WHERE user_id = $1`, [userId]);
+      await client.query(`DELETE FROM support_tickets WHERE user_id = $1`, [userId]);
+      await client.query(`DELETE FROM transactions WHERE user_id = $1`, [userId]);
+      await client.query(`DELETE FROM exports WHERE user_id = $1`, [userId]);
+      await client.query(`DELETE FROM users WHERE id = $1`, [userId]);
+    });
 
     res.json({ message: "Account deleted successfully" });
   } catch (err) {

@@ -3,6 +3,7 @@ const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const db = require("../config/db");
 const { AppError, ErrorCodes } = require("../utils/errors");
+const { verifyTOTP } = require("../utils/totp");
 const { debug, info, warn, error: logError } = require("../utils/debugLogger");
 const {
   sendVerificationEmail,
@@ -165,6 +166,30 @@ exports.login = async (req, res, next) => {
         error: "Please verify your email address before logging in.",
         code: "AUTH_EMAIL_NOT_VERIFIED",
       });
+    }
+
+    // 2FA gate. Enrolling TOTP without enforcing it at login meant the second
+    // factor existed in the database and the UI but was never actually checked,
+    // so the account looked protected while a stolen password was sufficient.
+    if (user.two_factor_secret && user.two_factor_enabled_at) {
+      const code = typeof req.body.totpCode === "string" ? req.body.totpCode.trim() : "";
+
+      if (!code) {
+        // No token is issued, only the fact that a second factor is required.
+        return res.status(200).json({
+          requiresTwoFactor: true,
+          user: { id: user.id, email: user.email, name: user.name },
+        });
+      }
+
+      const isValidCode = verifyTOTP(user.two_factor_secret, code);
+      if (!isValidCode) {
+        warn("Auth", "Login failed - invalid 2FA code", { userId: user.id });
+        return res.status(401).json({
+          error: "Invalid verification code.",
+          code: ErrorCodes.AUTH_LOGIN_FAILED,
+        });
+      }
     }
 
     const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, {
@@ -335,7 +360,11 @@ exports.verifyEmailWeb = async (req, res) => {
       [user.id],
     );
 
-    const deepLink = `${APP_DEEPLINK_SCHEME}://verify-email?token=${token}&verified=true`;
+    // Built by config/email rather than string-concatenated here. This line
+    // previously interpolated APP_DEEPLINK_SCHEME, which was never exported
+    // from config/email, so every web verification redirected to the literal
+    // string "undefined://verify-email?...".
+    const deepLink = buildVerificationLink(token);
 
     return res.send(`
       <html>
@@ -517,46 +546,49 @@ exports.resetPassword = async (req, res) => {
 
   const { token, newPassword } = validation.data;
 
-  const client = (await db.getClient) ? await db.getClient() : null;
-
   try {
-    const result = await db.query(
-      "SELECT * FROM password_resets WHERE token = $1 AND expires_at > NOW() AND used = FALSE",
-      [token],
-    );
+    // The password change and the token consumption MUST commit together.
+    // Running them as separate autocommit statements let a consumed-but-still-
+    // valid token overwrite the password a second time.
+    const result = await db.withTransaction(async (client) => {
+      // Re-check and lock the row inside the transaction so two concurrent
+      // resets using the same token cannot both win.
+      const resetRes = await client.query(
+        `SELECT id, email FROM password_resets
+          WHERE token = $1 AND expires_at > NOW() AND used = FALSE
+          FOR UPDATE`,
+        [token],
+      );
 
-    if (result.rows.length === 0) {
+      if (resetRes.rows.length === 0) {
+        return null;
+      }
+
+      const resetRecord = resetRes.rows[0];
+      const salt = await bcrypt.genSalt(12);
+      const passwordHash = await bcrypt.hash(newPassword, salt);
+
+      await client.query("UPDATE users SET password_hash = $1 WHERE email = $2", [
+        passwordHash,
+        resetRecord.email,
+      ]);
+      await client.query("UPDATE password_resets SET used = TRUE WHERE id = $1", [
+        resetRecord.id,
+      ]);
+
+      return resetRecord;
+    });
+
+    if (!result) {
       return res
         .status(400)
         .json({ error: "Invalid or expired password reset link." });
     }
 
-    const resetRecord = result.rows[0];
-    const salt = await bcrypt.genSalt(10);
-    const passwordHash = await bcrypt.hash(newPassword, salt);
-
-    if (client) await client.query("BEGIN");
-
-    const queryDb = client || db;
-
-    await queryDb.query(
-      "UPDATE users SET password_hash = $1 WHERE email = $2",
-      [passwordHash, resetRecord.email],
-    );
-    await queryDb.query(
-      "UPDATE password_resets SET used = TRUE WHERE id = $1",
-      [resetRecord.id],
-    );
-
-    if (client) await client.query("COMMIT");
-
     return res.json({ message: "Password updated successfully!" });
   } catch (err) {
-    if (client) await client.query("ROLLBACK");
     console.error("Reset password error:", err);
     return res.status(500).json({ error: "Failed to reset password." });
-  } finally {
-    if (client) client.release();
   }
 };
 
