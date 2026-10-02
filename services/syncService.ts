@@ -11,7 +11,8 @@ import {
   getUnsyncedReminders,
   markReminderSynced,
   updateDocumentSyncStatus,
-  setDocumentCloudId,
+  markDocumentSyncedWithCloud,
+  setReminderCloudId,
   deleteDocument,
   logDocumentAction,
   LocalDocument,
@@ -52,7 +53,14 @@ export async function syncToCloud(): Promise<SyncResult> {
           // Local ids are unrelated to backend ids. Without a stored cloud id the
           // row was never uploaded, so drop it locally and do not call the API.
           if (doc.cloudId) {
-            await api.documents.delete(doc.cloudId);
+            try {
+              await api.documents.delete(doc.cloudId);
+            } catch (err: any) {
+              // A row that is already gone on the server is a successful delete.
+              // Treating 404 as a failure left the tombstone queued forever and
+              // the document reappeared on the next pull.
+              if (err?.response?.status !== 404) throw err;
+            }
           }
           await deleteDocument(doc.id!);
           documentsSynced++;
@@ -76,26 +84,35 @@ export async function syncToCloud(): Promise<SyncResult> {
           riskScore: doc.riskScore,
           riskLevel: doc.riskLevel,
           cloudId: doc.cloudId ?? undefined,
+          // Only claim a revision once this device has one, so the first sync of
+          // a document still creates it rather than failing the guard.
+          baseUpdatedAt: doc.serverUpdatedAt ?? undefined,
         };
 
         const result = await api.documents.syncDocument(payload);
 
         if (result?.conflict) {
-          // Backend matched a different row: keep local data, do not overwrite.
+          // Another device changed the server row since our last sync. Keep the
+          // local copy and mark it clearly rather than overwriting either side.
           await updateDocumentSyncStatus(doc.id!, "failed");
           errors.push(
-            `Document ${doc.id} ("${doc.title}"): sync conflict, local copy kept`,
+            `Document "${doc.title}": changed on another device, local copy kept. ` +
+              `Review it, then sync again to overwrite.`,
           );
           continue;
         }
 
         const cloudId = result?.document?.id;
-        if (typeof cloudId === "number" && cloudId !== doc.cloudId) {
-          await setDocumentCloudId(doc.id!, cloudId);
-        }
+        const serverUpdatedAt =
+          typeof result?.document?.updatedAt === "string"
+            ? result.document.updatedAt
+            : null;
 
-        await markDocumentSynced(doc.id!);
-        await updateDocumentSyncStatus(doc.id!, "synced");
+        await markDocumentSyncedWithCloud(
+          doc.id!,
+          typeof cloudId === "number" ? cloudId : doc.cloudId ?? null,
+          serverUpdatedAt,
+        );
         await logDocumentAction(doc.id!, "synced", doc);
         documentsSynced++;
       } catch (err: any) {
@@ -117,34 +134,84 @@ export async function syncToCloud(): Promise<SyncResult> {
     const unsyncedReminders = await getUnsyncedReminders();
     for (const reminder of unsyncedReminders) {
       try {
-         await api.client.post("/reminders", {
-          title: reminder.title,
-          description: reminder.description,
-          dueDate: reminder.dueDate,
-          severity: reminder.severity,
-          isRead: reminder.read,
-        });
+        // An already-uploaded reminder is updated in place. Without cloud_id the
+        // only choice was create-or-create, so any retried or failed sync
+        // appended another server copy of the same reminder.
+        const response = reminder.cloudId
+          ? await api.client.patch(`/reminders/${reminder.cloudId}`, {
+              title: reminder.title,
+              description: reminder.description,
+              dueDate: reminder.dueDate,
+              severity: reminder.severity,
+              isRead: reminder.read,
+            })
+          : await api.client.post("/reminders", {
+              title: reminder.title,
+              description: reminder.description,
+              dueDate: reminder.dueDate,
+              severity: reminder.severity,
+              isRead: reminder.read,
+            });
+
+        const cloudId =
+          response?.data?.id ?? response?.data?.reminder?.id ?? null;
+        if (typeof cloudId === "number") {
+          await setReminderCloudId(reminder.id!, cloudId);
+        }
+
         await markReminderSynced(reminder.id!);
         remindersSynced++;
       } catch (err: any) {
         if (err?.isOffline) {
-          errors.push(`Reminder: offline`);
+          errors.push(`Reminder "${reminder.title}": offline`);
+        } else if (err?.response?.status === 404 && reminder.cloudId) {
+          // The server copy was removed elsewhere; fall back to creating it.
+          try {
+            const created = await api.client.post("/reminders", {
+              title: reminder.title,
+              description: reminder.description,
+              dueDate: reminder.dueDate,
+              severity: reminder.severity,
+              isRead: reminder.read,
+            });
+            const cloudId = created?.data?.id ?? created?.data?.reminder?.id;
+            if (typeof cloudId === "number") {
+              await setReminderCloudId(reminder.id!, cloudId);
+            }
+            await markReminderSynced(reminder.id!);
+            remindersSynced++;
+          } catch (retryErr: any) {
+            errors.push(`Reminder "${reminder.title}": ${retryErr.message}`);
+          }
         } else {
-          errors.push(`Reminder: ${err.message}`);
+          errors.push(`Reminder "${reminder.title}": ${err.message}`);
         }
       }
     }
 
     // 3. Sync profile
+    // PATCH /profile only accepts {name, email}; the notification flags were
+    // being silently stripped by the server schema while it replied 200. Send
+    // them to the endpoints that actually persist them.
     const profile = await getUserProfile();
     if (profile) {
-      await api.client.patch("/profile", {
-        name: profile.name,
-        notificationsEnabled: profile.notificationsEnabled,
-        notifyEmail: profile.notifyEmail,
-        notifyExpiry: profile.notifyExpiry,
-        twoFactor: profile.twoFactor,
-      });
+      try {
+        if (profile.name) {
+          await api.client.patch("/profile", { name: profile.name });
+        }
+
+        await api.client.patch("/profile/preferences", {
+          notifyPush: profile.notificationsEnabled,
+          notifyEmail: profile.notifyEmail,
+          notifyExpiry: profile.notifyExpiry,
+        });
+      } catch (err: any) {
+        if (err?.isOffline) {
+          errors.push("Profile: offline");
+        } else {
+          errors.push(`Profile: ${err.message}`);
+        }
+      }
     }
 
     // 4. Trigger cloud export

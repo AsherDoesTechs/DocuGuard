@@ -86,8 +86,11 @@ export interface ProcessDocumentResponse {
 }
 
 export interface LoginResponse {
-  token: string;
+  /** Absent when the account requires a second factor. */
+  token?: string;
   user: { id: number; email: string; name: string };
+  /** Set when the password was accepted but a TOTP code is still required. */
+  requiresTwoFactor?: boolean;
 }
 
 export interface RegisterResponse {
@@ -108,6 +111,8 @@ export const auth = {
     email: string;
     password: string;
     rememberMe?: boolean;
+    /** Second factor, required only when the account has TOTP enrolled. */
+    totpCode?: string;
   }): Promise<LoginResponse> => {
     const response = await apiClient.post("/auth/login", data);
     return response.data;
@@ -162,6 +167,16 @@ export const auth = {
   },
 
   logout: async (): Promise<void> => {
+    // Purges the local vault and the local user id, not just the token.
+    // Deleting only "userToken" left every document on disk, readable by the
+    // next account to sign in on this device.
+    try {
+      const { clearLocalSession } = await import("./localDatabase");
+      await clearLocalSession();
+    } catch (error) {
+      // A purge failure must not strand the user in a signed-in state.
+      console.warn("Failed to clear local session data:", error);
+    }
     await SecureStore.deleteItemAsync("userToken");
     authToken = null;
   },

@@ -7,10 +7,8 @@ export interface ExtractedDocumentData {
   issueDate: string;
   expiryDate: string;
   category: string;
+  /** Completeness of the OCR pass. Not a risk or authenticity measure. */
   confidence: number;
-  authenticity: "real" | "replica" | "fake";
-  authenticityScore: number;
-  authenticityReason: string;
 }
 
 interface DocumentCreatePayload {
@@ -176,11 +174,8 @@ export async function extractDocumentData(
         ? Math.max(0, Math.min(100, Math.round(data.confidence)))
         : 0,
     /*
-     * OCR extraction does NOT prove authenticity.
+     * No authenticity verdict. OCR cannot distinguish a genuine passport from
+     * a good forgery, so the pipeline reports only what it measured.
      */
-    authenticity: "replica",
-    authenticityScore: 0,
-    authenticityReason:
-      "Document text was extracted successfully. Authenticity has not been independently verified.",
   };
 }

@@ -1,5 +1,4 @@
 import * as Notifications from "expo-notifications";
-import * as SecureStore from "expo-secure-store";
 import { SchedulableTriggerInputTypes } from "expo-notifications";
 import {
   getExpiringDocuments,
@@ -7,7 +6,8 @@ import {
   getAllReminders,
   LocalDocument,
 } from "./localDatabase";
-import { getDaysUntilExpiry } from "@/utils";
+import { isNotificationsEnabled } from "./notificationPreferences";
+import { getDaysUntilExpiry, parseLocalDate } from "@/utils";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -19,12 +19,20 @@ Notifications.setNotificationHandler({
 });
 
 export async function checkAndScheduleAlerts() {
-  const notifSetting = await SecureStore.getItemAsync("notificationsEnabled");
-  if (notifSetting === "false") return;
+  if (!(await isNotificationsEnabled())) {
+    // Alerts are off, so anything already scheduled must be withdrawn too.
+    // Returning early left previously scheduled expiry alerts firing after the
+    // user had turned notifications off.
+    await cancelAllNotifications();
+    return;
+  }
 
   const expiringDocs = await getExpiringDocuments(30);
   const expiredDocs = await getExpiredDocuments();
 
+  // Expiry is derived from expiry_date only, and expired is checked first: a
+  // document that is both expired and within the 30-day window was scheduled
+  // twice with two different messages.
   for (const doc of expiredDocs) {
     if (doc.enableAlerts) {
       await scheduleExpirationNotification(doc);
@@ -41,13 +49,23 @@ export async function checkAndScheduleAlerts() {
 }
 
 export async function scheduleRemindersForDocument(doc: LocalDocument) {
-  const notifSetting = await SecureStore.getItemAsync("notificationsEnabled");
-  if (notifSetting === "false") return;
+  if (!(await isNotificationsEnabled())) {
+    if (doc.id != null) {
+      await cancelDocumentNotifications(doc.id);
+    }
+    return;
+  }
 
   if (!doc.enableAlerts) {
     await cancelDocumentNotifications(doc.id!);
     return;
   }
+
+  // Reschedules from scratch so an edited expiry date replaces the old
+  // reminder. Scheduling again without cancelling left both the previous and
+  // the updated alert pending, so the user got two notifications for one
+  // document.
+  await cancelDocumentNotifications(doc.id!);
 
   const daysUntilExpiry = getDaysUntilExpiry(doc.expiryDate || "");
   if (daysUntilExpiry < 0) {
@@ -86,7 +104,12 @@ async function scheduleExpiringSoonNotification(doc: LocalDocument) {
     : [doc.reminderIntervalDays || 30, 7, 1];
 
   for (const days of intervals) {
-    const triggerDate = new Date(doc.expiryDate);
+    // Parsed as local midnight so the reminder fires on the intended local
+    // date rather than one day early in negative-UTC-offset timezones.
+    const expiry = parseLocalDate(doc.expiryDate || "");
+    if (!expiry) continue;
+
+    const triggerDate = new Date(expiry);
     triggerDate.setDate(triggerDate.getDate() - days);
 
     const now = new Date();
@@ -120,8 +143,15 @@ async function scheduleReminderNotifications() {
       const identifier = `reminder_${reminder.id}`;
       await Notifications.cancelScheduledNotificationAsync(identifier);
 
-      const dueDate = new Date(reminder.dueDate);
+      const dueDate = parseLocalDate(reminder.dueDate || "");
       const now = new Date();
+
+      if (dueDate === null) {
+        // No parseable due date: skip rather than schedule a bogus trigger.
+        // `new Date(null)` is epoch, which made every undated reminder look
+        // decades overdue and fire daily at 9am forever.
+        continue;
+      }
 
       if (dueDate > now) {
         await Notifications.scheduleNotificationAsync({
