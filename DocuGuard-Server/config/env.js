@@ -1,4 +1,4 @@
-const { ErrorCodes } = require("./errorCodes");
+const { ErrorCodes } = require("../utils/errorCodes");
 
 /**
  * Fail fast on missing configuration.

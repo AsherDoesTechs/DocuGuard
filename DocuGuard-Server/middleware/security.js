@@ -1,4 +1,4 @@
-const rateLimit = require("express-rate-limit");
+const { rateLimit, ipKeyGenerator } = require("express-rate-limit");
 const helmet = require("helmet");
 const jwt = require("jsonwebtoken");
 const { ErrorCodes } = require("../utils/errorCodes");
@@ -37,7 +37,7 @@ function keyGenerator(req) {
     }
   }
 
-  return `ip:${req.ip}`;
+  return ipKeyGenerator(req);
 }
 
 // 1. General API Rate Limiter
@@ -60,7 +60,7 @@ const authLimiter = rateLimit({
   max: 10, // Limit each IP to 10 login/register attempts per hour
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => `ip:${req.ip}`,
+  keyGenerator: ipKeyGenerator,
   message: {
     status: "fail",
     code: ErrorCodes.AUTH_RATE_LIMIT_EXCEEDED,
