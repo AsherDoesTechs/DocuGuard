@@ -402,12 +402,30 @@ export default function AddDocumentScreen() {
     const imageArray = Array.isArray(data.images) ? data.images : [data.images];
     const firstImage = imageArray[0];
 
+    if (!firstImage) {
+      return;
+    }
+
     setSelectedFile({
-      name: "Scanned Document",
+      name:
+        imageArray.length > 1
+          ? `Scanned Document (${imageArray.length} pages)`
+          : "Scanned Document",
       uri: firstImage.uri,
       size: 0,
       mimeType: "image/jpeg",
     });
+
+    // The OCR pipeline and the document model are single-page today, so only the
+    // first page is extracted. Tell the user rather than silently dropping the
+    // rest of the capture.
+    if (imageArray.length > 1) {
+      showToast(
+        `Only the first of ${imageArray.length} scanned pages was processed. Multi-page storage is not supported yet.`,
+        "warning",
+      );
+    }
+
     await processScan(firstImage.uri);
   }
 
@@ -983,7 +1001,7 @@ export default function AddDocumentScreen() {
           visible={scannerVisible}
           onScanSuccess={(data) => {
             if (data.images && data.images.length > 0) {
-              handleScanSuccess({ images: [{ uri: data.images[0].uri }] });
+              handleScanSuccess(data);
             }
           }}
           onClose={() => setScannerVisible(false)}
