@@ -26,5 +26,34 @@ pool.on("error", (err) => {
 
 module.exports = {
   query: (text, params) => pool.query(text, params),
+  /**
+   * Check out a dedicated client so callers can run BEGIN/COMMIT/ROLLBACK.
+   * Without this, multi-statement writes were running as independent autocommit
+   * statements even when the code looked transactional.
+   * The caller is responsible for releasing the client.
+   */
+  getClient: () => pool.connect(),
+  /**
+   * Run `fn` inside a transaction, rolling back on any throw and always
+   * releasing the client.
+   */
+  withTransaction: async (fn) => {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const result = await fn(client);
+      await client.query("COMMIT");
+      return result;
+    } catch (err) {
+      try {
+        await client.query("ROLLBACK");
+      } catch (rollbackErr) {
+        console.error("Transaction rollback failed:", rollbackErr);
+      }
+      throw err;
+    } finally {
+      client.release();
+    }
+  },
   pool,
 };

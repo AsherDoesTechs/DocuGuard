@@ -4,7 +4,9 @@
   "description": "",
   "main": "app.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node --test \"tests/*.test.js\"",
+    "check:syntax": "node scripts/checkSyntax.js",
+    "check": "npm run check:syntax && npm test",
     "start": "node app.js",
     "dev": "nodemon app.js",
     "postinstall": "npm install --prefix ../shared --no-audit --no-fund"
