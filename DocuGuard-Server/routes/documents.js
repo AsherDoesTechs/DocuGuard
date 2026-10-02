@@ -14,6 +14,7 @@ router.post("/sync", asyncHandler(documentController.syncDocument));
 
 // Parameterized routes LAST
 router.get("/", asyncHandler(documentController.getAllDocuments));
+router.get("/:id/file-url", asyncHandler(documentController.getDocumentFileUrl));
 router.get("/:id", asyncHandler(documentController.getDocumentById));
 router.post("/", asyncHandler(documentController.createDocument));
 router.put("/:id", asyncHandler(documentController.updateDocument));

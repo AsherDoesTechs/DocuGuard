@@ -1,5 +1,9 @@
 const db = require("../config/db");
-const { generatePresignedUploadUrl } = require("../services/storageService");
+const {
+  generatePresignedUploadUrl,
+  getSignedDownloadUrl,
+  rehydrateFileUrls,
+} = require("../services/storageService");
 const { extractDocumentData } = require("../services/logicEngine");
 const {
   sendProcessingCompleteNotification,
@@ -27,7 +31,7 @@ exports.getAllDocuments = async (req, res) => {
               issue_date AS "issueDate", expiry_date AS "expiryDate", notes, status, enable_alerts AS "enableAlerts",
               file_url AS "fileUrl", file_type AS "fileType", s3_key AS "s3Key",
               processing_status AS "processingStatus", risk_score AS "riskScore", risk_level AS "riskLevel"
-       FROM documents WHERE user_id = $1 ORDER BY expiry_date ASC`,
+       FROM documents WHERE user_id = $1 ORDER BY expiry_date ASC NULLS LAST`,
       [userId],
     );
 
@@ -35,7 +39,9 @@ exports.getAllDocuments = async (req, res) => {
       userId,
       count: result.rows.length,
     });
-    res.json(result.rows);
+
+    // Fresh signed URLs per read, since the persisted ones have expired.
+    res.json(await rehydrateFileUrls(result.rows));
   } catch (err) {
     logError(
       "Documents",
@@ -156,17 +162,35 @@ exports.processDocument = async (req, res) => {
     }
 
     /*
-     * file_url is preferred because Azure can analyze
-     * the document directly from a URL.
+     * Mint a fresh signed URL from s3_key for the analyzer.
+     *
+     * Previously this read the stored file_url, which was a permanent public
+     * object URL. It is also now stale by design: signed URLs expire, so
+     * re-processing a document months later would fail against a dead link.
+     * Rows predating s3_key still fall back to the stored URL.
      */
-    const azureUrl = fileUrl;
+    let azureUrl = null;
+    if (storagePath) {
+      try {
+        azureUrl = await getSignedDownloadUrl(storagePath);
+      } catch (signError) {
+        warn("Documents", "Failed to sign document URL for OCR", {
+          error: signError.message,
+          documentId,
+        });
+      }
+    }
+
+    if (!azureUrl) {
+      azureUrl = fileUrl;
+    }
 
     if (!azureUrl) {
       return res.status(400).json({
         status: "error",
         code: ErrorCodes.OCR_PROCESS_FAILED,
         errorCode: "DOCUMENT_URL_MISSING",
-        error: "A public document URL is required for Azure processing.",
+        error: "Document file could not be resolved for processing.",
       });
     }
 
@@ -182,21 +206,32 @@ exports.processDocument = async (req, res) => {
 
     const extractedData = await extractDocumentData(azureUrl, fileType);
 
+    /*
+     * OCR output is a suggestion, never an authoritative value.
+     *
+     * The previous update applied every extracted field over the stored row, so
+     * a misread character silently replaced a document number the user had
+     * already checked - and then the "verified" record was wrong with no way to
+     * tell. Now only fields the user has not filled in are populated.
+     */
     const updateResult = await db.query(
       `
       UPDATE documents
       SET
-        title = COALESCE($1, title),
-        category = COALESCE($2, category),
-        issuer = COALESCE($3, issuer),
-        document_number = COALESCE($4, document_number),
-        issue_date = COALESCE($5, issue_date),
-        expiry_date = COALESCE($6, expiry_date),
-        risk_score = $7,
-        risk_level = $8,
+        title = COALESCE(NULLIF(trim(title), ''), $1, title),
+        category = CASE WHEN category IS NULL OR category = '' OR category = 'other'
+          THEN COALESCE($2, category) ELSE category END,
+        issuer = COALESCE(NULLIF(trim(issuer), ''), $3, issuer),
+        document_number = COALESCE(NULLIF(trim(document_number), ''), $4, document_number),
+        issue_date = COALESCE(issue_date, $5, issue_date),
+        expiry_date = COALESCE(expiry_date, $6, expiry_date),
+        risk_score = COALESCE(risk_score, $7),
+        risk_level = CASE WHEN risk_level IS NULL OR risk_level = ''
+          THEN COALESCE($8, risk_level) ELSE risk_level END,
+        ocr_data = $9,
         processing_status = 'completed'
-      WHERE id = $9
-        AND user_id = $10
+      WHERE id = $10
+        AND user_id = $11
       RETURNING *
       `,
       [
@@ -208,6 +243,9 @@ exports.processDocument = async (req, res) => {
         extractedData.expiryDate,
         extractedData.riskScore,
         extractedData.riskLevel,
+        // The raw analyzer payload is kept so a bad extraction can be
+        // investigated or re-run instead of being discarded.
+        JSON.stringify(extractedData.raw ?? null),
         documentId,
         userId,
       ],
@@ -224,14 +262,29 @@ exports.processDocument = async (req, res) => {
      * failure make successful OCR look like a failed OCR.
      */
     try {
-      if (req.user.expoPushToken && extractedData.title) {
-        await sendProcessingCompleteNotification(
-          req.user.expoPushToken,
-          extractedData.title,
+      if (extractedData.title) {
+        // The JWT only carries { userId }, so the push token has to be read
+        // from the users table rather than from req.user.
+        const tokenRes = await db.query(
+          `SELECT fcm_token, expo_push_token FROM users WHERE id = $1`,
+          [userId],
         );
+
+        const pushToken =
+          tokenRes.rows[0]?.expo_push_token || tokenRes.rows[0]?.fcm_token;
+
+        if (pushToken) {
+          await sendProcessingCompleteNotification(
+            pushToken,
+            extractedData.title,
+            extractedData.riskLevel,
+          );
+        }
       }
     } catch (notificationError) {
-      warn("OCR succeeded but notification failed:", notificationError.message);
+      warn("Documents", "OCR succeeded but notification failed", {
+        error: notificationError.message,
+      });
     }
 
     return res.status(200).json({
@@ -315,11 +368,13 @@ exports.verifyDocument = async (req, res) => {
         [userId],
       );
 
-      // Use FCM token only (Expo tokens not supported by Firebase Admin SDK)
-      const fcmToken = userResult.rows[0]?.fcm_token;
-      if (fcmToken && !fcmToken.startsWith("ExponentPushToken")) {
+      // Prefer the Expo token: expo-notifications registers that on both
+      // platforms, and it is delivered by the Expo push service.
+      const pushToken =
+        userResult.rows[0]?.expo_push_token || userResult.rows[0]?.fcm_token;
+      if (pushToken) {
         try {
-          await sendVerificationNotification(fcmToken, docResult.rows[0].title);
+          await sendVerificationNotification(pushToken, docResult.rows[0].title);
           debug("Documents", "Verification notification sent", {
             userId,
             documentId,
@@ -392,7 +447,11 @@ exports.getDocumentById = async (req, res) => {
     }
 
     debug("Documents", "Document fetched", { userId, docId });
-    res.json(doc.rows[0]);
+
+    // Signed URLs are short-lived, so each read hands back a fresh one rather
+    // than the possibly-expired value persisted at upload time.
+    const [document] = await rehydrateFileUrls([doc.rows[0]]);
+    res.json(document);
   } catch (err) {
     logError(
       "Documents",
@@ -407,6 +466,50 @@ exports.getDocumentById = async (req, res) => {
     );
     res.status(500).json({
       error: "Server error fetching document details",
+      code: ErrorCodes.DB_QUERY_FAILED,
+    });
+  }
+};
+
+// Issue a fresh signed URL for a document's file.
+// Signed URLs expire, so the client refetches this instead of relying on a URL
+// it cached at upload time. Ownership is enforced before any URL is minted.
+exports.getDocumentFileUrl = async (req, res) => {
+  const userId = req.user.userId;
+  const docId = req.params.id;
+
+  try {
+    const doc = await db.query(
+      `SELECT s3_key, file_url FROM documents WHERE id = $1 AND user_id = $2`,
+      [docId, userId],
+    );
+
+    if (doc.rows.length === 0) {
+      return res.status(404).json({
+        error: "Document not found",
+        code: ErrorCodes.DOC_NOT_FOUND,
+      });
+    }
+
+    const { s3_key: storagePath, file_url: storedUrl } = doc.rows[0];
+
+    if (!storagePath) {
+      // Pre-signed-URL era row: no durable key to sign. Return whatever is
+      // stored so those documents keep working until re-uploaded.
+      return res.json({ fileUrl: storedUrl ?? null, expiresIn: null });
+    }
+
+    const signedUrl = await getSignedDownloadUrl(storagePath);
+    return res.json({ fileUrl: signedUrl, expiresIn: 15 * 60 });
+  } catch (err) {
+    logError(
+      "Documents",
+      "Error signing document URL",
+      { error: err.message, userId, docId },
+      ErrorCodes.DOC_NOT_FOUND,
+    );
+    return res.status(500).json({
+      error: "Server error generating file URL",
       code: ErrorCodes.DB_QUERY_FAILED,
     });
   }
@@ -608,6 +711,7 @@ exports.syncDocument = async (req, res) => {
     riskScore,
     riskLevel,
     cloudId,
+    baseUpdatedAt,
   } = validation.data;
 
   debug("Documents", "Sync document request", { userId, title });
@@ -653,19 +757,25 @@ exports.syncDocument = async (req, res) => {
     }
 
     if (existing.rows.length > 0) {
+      // Conditional update. When the client tells us which server revision it
+      // last saw, require the row to still be at that revision. Without this
+      // any push was an unconditional overwrite, so a change made on the web
+      // app was silently destroyed by the next mobile sync.
       const updated = await db.query(
-        `UPDATE documents 
-         SET title = $1, category = $2, issuer = $3, document_number = $4, 
-             issue_date = $5, expiry_date = $6, notes = $7, enable_alerts = $8, 
+        `UPDATE documents
+         SET title = $1, category = $2, issuer = $3, document_number = $4,
+             issue_date = $5, expiry_date = $6, notes = $7, enable_alerts = $8,
              status = $9, s3_key = $10, file_url = $11, file_type = $12,
              processing_status = $13, risk_score = $14, risk_level = $15,
              updated_at = CURRENT_TIMESTAMP
-         WHERE id = $16 AND user_id = $17 
-         RETURNING id, title, category, issuer, document_number AS "documentNumber", 
+         WHERE id = $16 AND user_id = $17
+           AND ($18::timestamptz IS NULL OR updated_at = $18::timestamptz)
+         RETURNING id, title, category, issuer, document_number AS "documentNumber",
                    issue_date AS "issueDate", expiry_date AS "expiryDate", notes, status,
                    enable_alerts AS "enableAlerts", file_url AS "fileUrl", file_type AS "fileType",
                    s3_key AS "s3Key", processing_status AS "processingStatus",
-                   risk_score AS "riskScore", risk_level AS "riskLevel"`,
+                   risk_score AS "riskScore", risk_level AS "riskLevel",
+                   updated_at AS "updatedAt"`,
         [
           title,
           category || "other",
@@ -684,8 +794,26 @@ exports.syncDocument = async (req, res) => {
           riskLevel,
           existing.rows[0].id,
           userId,
+          baseUpdatedAt || null,
         ],
       );
+
+      // The revision guard matched no row: the server copy moved on.
+      if (updated.rows.length === 0) {
+        const current = await db.query(
+          `SELECT updated_at AS "updatedAt"
+           FROM documents WHERE id = $1 AND user_id = $2`,
+          [existing.rows[0].id, userId],
+        );
+
+        return res.status(409).json({
+          error:
+            "This document was changed on another device since your last sync",
+          code: ErrorCodes.SYNC_CONFLICT,
+          conflict: true,
+          serverUpdatedAt: current.rows?.[0]?.updatedAt ?? null,
+        });
+      }
 
       info("Documents", "Document synced (updated)", {
         userId,
@@ -725,8 +853,10 @@ exports.syncDocument = async (req, res) => {
           fileUrl,
           fileType,
           processingStatus || "completed",
-          riskScore || 0,
-          riskLevel || "Low",
+          // Null when the client sent nothing: no detector has assessed this
+          // document. Writing 0/"Low" would read as "assessed and safe".
+          riskScore ?? null,
+          riskLevel ?? null,
         ],
       );
 

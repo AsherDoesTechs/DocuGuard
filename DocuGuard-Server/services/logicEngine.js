@@ -6,6 +6,15 @@ const {
 const endpoint = process.env.AZURE_ENDPOINT;
 const apiKey = process.env.AZURE_KEY;
 
+/**
+ * Minimum analyzer confidence for extracted fields to be treated as usable.
+ *
+ * Form Recognizer reports per-field and overall confidence. Anything below this
+ * is a guess from a blurry photo, and on an identity document a wrong
+ * document number is worse than an empty field waiting for the user.
+ */
+const MIN_CONFIDENCE = 0.6;
+
 if (!endpoint || !apiKey) {
   console.warn(
     "AZURE_ENDPOINT or AZURE_KEY not configured. Azure OCR will be unavailable.",
@@ -359,7 +368,10 @@ function parseAzureOutput(azureResult) {
 
     result.rawText = content || null;
 
-    // Estimate extraction confidence from actual extracted fields.
+    /*
+     * Extraction completeness: how many of the five expected fields were found.
+     * This measures the OCR, NOT the document.
+     */
     const fieldsFound = [
       result.title,
       result.issuer,
@@ -370,22 +382,24 @@ function parseAzureOutput(azureResult) {
 
     result.confidence = Math.round((fieldsFound / 5) * 100);
 
-    // IMPORTANT:
-    // This is extraction completeness, NOT proof of authenticity.
-    result.riskScore = 100 - result.confidence;
-
-    if (result.confidence >= 80) {
-      result.riskLevel = "Low";
-    } else if (result.confidence >= 50) {
-      result.riskLevel = "Medium";
-    } else {
-      result.riskLevel = "High";
-    }
+    /*
+     * Risk is deliberately left unassessed.
+     *
+     * This previously computed riskScore = 100 - completeness and derived
+     * riskLevel from it, so a blurry photo with no readable fields was shown
+     * to the user as "AI Risk Assessment: 100/100, HIGH" on an identity
+     * document. That is a fabricated verdict about a passport. OCR says
+     * nothing about whether a document is genuine, so no risk value is
+     * produced unless a real detector supplies one.
+     */
+    result.riskScore = null;
+    result.riskLevel = null;
 
     result.notes =
       `Extracted using Azure Document Intelligence. ` +
       `Model: ${docType || "prebuilt-document"}. ` +
-      `Extraction completeness: ${result.confidence}%.`;
+      `Extraction completeness: ${result.confidence}%. ` +
+      `Authenticity not assessed.`;
 
     return result;
   } catch (error) {
@@ -483,7 +497,18 @@ exports.extractDocumentData = async (
       confidence: parsed.confidence,
     });
 
-    return parsed;
+    // Below this confidence the fields are guesses, not extractions. They are
+    // still returned (so the user can review them) but flagged so the caller
+    // does not treat them as usable data.
+    if (parsed.confidence < MIN_CONFIDENCE) {
+      console.warn("Logic engine: low-confidence extraction", {
+        confidence: parsed.confidence,
+        threshold: MIN_CONFIDENCE,
+      });
+    }
+
+    // The unparsed analyzer payload is retained for auditing and re-runs.
+    return { ...parsed, raw: azureResult };
   } catch (error) {
     console.error("Logic engine extraction error:", error);
 
