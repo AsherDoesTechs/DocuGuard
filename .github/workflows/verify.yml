@@ -1,0 +1,49 @@
+name: Verify
+
+# Runs on every push and pull request. The APK workflow is manual, so without
+# this nothing checked the code at all before a change reached a device.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout DocuGuard
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install mobile dependencies
+        run: npm ci
+
+      - name: Install shared package (used by backend validation)
+        run: npm install --prefix shared --no-audit --no-fund
+
+      - name: Install backend dependencies
+        run: npm ci --prefix DocuGuard-Server
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Parse all backend sources
+        run: npm --prefix DocuGuard-Server run check:syntax
+
+      - name: Backend tests
+        run: npm --prefix DocuGuard-Server test
+
+      - name: Confirm no secrets are tracked
+        run: |
+          if git ls-files | grep -E '(^|/)\.env$|serviceAccountKey\.json$|\.pem$|\.key$'; then
+            echo "::error::A secret-bearing file is tracked in git."
+            exit 1
+          fi
+          echo "No secret-bearing files are tracked."

@@ -1,0 +1,67 @@
+Learn more about ignoring files:
+https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
+Dependencies
+
+node_modules/
+
+Expo
+
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+Native
+
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Android debug keystore. It is a well-known public key that ships in every
+# React Native project and is already committed, so it MUST stay in the upload
+# or EAS cannot sign the debug build. Release keystores are covered above.
+*.keystore
+!debug.keystore
+
+Metro
+
+.metro-health-check/*
+
+Debug
+
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+macOS
+
+.DS_Store
+*.pem
+
+Local environment files
+
+.env
+.env.local
+.env.*.local
+
+Backend secrets
+
+DocuGuard-Server/.env
+DocuGuard-Server/config/serviceAccountKey.json
+
+TypeScript
+
+*.tsbuildinfo
+
+Generated native folders
+
+# ios/ is not tracked in this repository, so excluding it costs nothing.
+#
+# android/ is deliberately NOT excluded: it is a bare project with 48 tracked
+# files including gradlew, and the release APK workflow builds it directly.
+# Removing it from the upload would leave EAS with no native project to build.
+/ios
