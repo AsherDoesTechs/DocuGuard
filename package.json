@@ -54,7 +54,10 @@
   "scripts": {
     "start": "expo start",
     "android": "expo run:android",
-    "ios": "expo run:ios"
+    "ios": "expo run:ios",
+    "typecheck": "tsc --noEmit",
+    "check:server": "npm --prefix DocuGuard-Server run check",
+    "check": "npm run typecheck && npm run check:server"
   },
   "private": true
 }

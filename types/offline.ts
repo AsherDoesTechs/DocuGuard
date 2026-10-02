@@ -15,17 +15,17 @@ export interface LocalDocument {
   fileType?: string;
   s3Key?: string;
   processingStatus: string;
-  riskScore?: number;
-  riskLevel?: string;
+  /** Null until a real detector assesses the document. Never derived from OCR. */
+  riskScore?: number | null;
+  riskLevel?: string | null;
   userId?: string;
   needsSync: boolean;
   syncStatus?: "synced" | "pending" | "failed" | "local";
   cloudId?: number | null;
+  /** Server revision this device last synced against, for conflict detection. */
+  serverUpdatedAt?: string | null;
   createdAt?: string;
   updatedAt?: string;
-  authenticity?: "real" | "replica" | "fake";
-  authenticityScore?: number;
-  authenticityReason?: string;
   tags?: string[];
 }
 
@@ -51,6 +51,8 @@ export interface LocalReminder {
   read: boolean;
   userId?: string;
   needsSync: boolean;
+  /** Backend reminder id once uploaded, so re-sync updates instead of duplicating. */
+  cloudId?: number | null;
   createdAt?: string;
 }
 

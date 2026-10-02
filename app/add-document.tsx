@@ -56,10 +56,8 @@ interface ExtractedData {
   issueDate: string;
   expiryDate: string;
   category: string;
+  /** OCR field completeness. Not a risk or authenticity verdict. */
   confidence: number;
-  authenticity: "real" | "replica" | "fake";
-  authenticityScore: number;
-  authenticityReason: string;
 }
 
 interface SelectedFileItem {
@@ -111,25 +109,6 @@ function normalizeExtractedData(extracted: any): ExtractedData {
     ? Math.max(0, Math.min(100, Math.round(extracted.confidence)))
     : 0;
 
-  const authenticityScore = Number.isFinite(extracted?.authenticityScore)
-    ? Math.max(0, Math.min(100, Math.round(extracted.authenticityScore)))
-    : 0;
-
-  let authenticity: "real" | "replica" | "fake" = extracted?.authenticity;
-
-  if (
-    authenticity !== "real" &&
-    authenticity !== "replica" &&
-    authenticity !== "fake"
-  ) {
-    authenticity =
-      authenticityScore >= 80
-        ? "real"
-        : authenticityScore >= 50
-          ? "replica"
-          : "fake";
-  }
-
   return {
     title: sanitizeText(extracted?.title || "", MAX_TITLE_LENGTH),
     issuer: sanitizeText(extracted?.issuer || "", MAX_ISSUER_LENGTH),
@@ -138,9 +117,6 @@ function normalizeExtractedData(extracted: any): ExtractedData {
     expiryDate: extracted?.expiryDate || "",
     category: extracted?.category || "other",
     confidence,
-    authenticity,
-    authenticityScore,
-    authenticityReason: extracted?.authenticityReason || "",
   };
 }
 

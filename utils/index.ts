@@ -1,16 +1,39 @@
 /**
+ * Parses a `YYYY-MM-DD` date as local midnight.
+ *
+ * `new Date("2026-03-01")` is interpreted as UTC midnight. Anywhere west of
+ * UTC that is the previous local day, so a document expiring "today" was
+ * reported as already expired and its reminder fired a day early.
+ */
+export function parseLocalDate(dateString: string): Date | null {
+  if (!dateString) return null;
+
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateString.trim());
+  if (match) {
+    const [, year, month, day] = match;
+    const parsed = new Date(Number(year), Number(month) - 1, Number(day));
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  const parsed = new Date(dateString);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+/**
  * Calculates how many days are left until a document expires.
  */
 export function getDaysUntilExpiry(dateString: string): number {
   if (!dateString) return 9999; // Assume no expiry means infinite validity
+
+  const expiryDate = parseLocalDate(dateString);
+  if (!expiryDate) return 9999;
+  expiryDate.setHours(0, 0, 0, 0);
+
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  const expiryDate = new Date(dateString);
-  expiryDate.setHours(0, 0, 0, 0);
-
   const differenceInTime = expiryDate.getTime() - today.getTime();
-  return Math.ceil(differenceInTime / (1000 * 60 * 60 * 24));
+  return Math.round(differenceInTime / (1000 * 60 * 60 * 24));
 }
 
 /**

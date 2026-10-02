@@ -18,6 +18,7 @@ interface ButtonProps {
   loading?: boolean;
   style?: StyleProp<ViewStyle>;
   feedbackType?: "success" | "error" | "warning" | "info" | "light" | "medium" | "heavy" | "selection";
+  disabled?: boolean;
 }
 
 export default function Button({
@@ -27,6 +28,7 @@ export default function Button({
   loading,
   style,
   feedbackType = "selection",
+  disabled = false,
 }: ButtonProps) {
   const colors = useColors();
   const { custom: triggerFeedback } = useFeedbackTrigger();
@@ -36,7 +38,7 @@ export default function Button({
   const isWarning = variant === "warning";
 
   const handlePress = () => {
-    if (!loading && onPress) {
+    if (!loading && !disabled && onPress) {
       triggerFeedback(feedbackType, { sound: false, haptic: true });
       onPress();
     }
@@ -76,6 +78,9 @@ export default function Button({
         secondaryText: {
           color: colors.text,
         },
+        disabledButton: {
+          opacity: 0.5,
+        },
       }),
     [colors],
   );
@@ -88,10 +93,11 @@ export default function Button({
         isDanger && styles.dangerButton,
         isSuccess && styles.successButton,
         isWarning && styles.warningButton,
+        (loading || disabled) && styles.disabledButton,
         style,
       ]}
       onPress={handlePress}
-      disabled={loading}
+      disabled={loading || disabled}
     >
       {loading ? (
         <ActivityIndicator color={isSecondary ? colors.primary : "#fff"} />

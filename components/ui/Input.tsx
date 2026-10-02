@@ -24,6 +24,9 @@ interface InputProps {
   style?: StyleProp<TextStyle>;
   autoComplete?: string;
   textContentType?: string;
+  maxLength?: number;
+  autoFocus?: boolean;
+  editable?: boolean;
 }
 
 export default function Input({
@@ -38,6 +41,9 @@ export default function Input({
   style,
   autoComplete,
   textContentType,
+  maxLength,
+  autoFocus,
+  editable,
 }: InputProps) {
   const colors = useColors();
   const { light } = useFeedbackTrigger();
@@ -105,6 +111,9 @@ export default function Input({
         autoCapitalize="none"
         autoComplete={autoComplete as any}
         textContentType={textContentType as any}
+        maxLength={maxLength}
+        autoFocus={autoFocus}
+        editable={editable}
       />
       {error && <Text style={[styles.errorText, { color: colors.error }]}>{error}</Text>}
     </View>

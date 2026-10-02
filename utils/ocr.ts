@@ -8,10 +8,13 @@ export interface ExtractedDocumentData {
   issueDate: string;
   expiryDate: string;
   category: string;
+  /**
+   * Percentage of the expected fields the OCR pass recovered.
+   * This measures the OCR result only. It says nothing about whether the
+   * document is genuine, and must never be presented as a risk or
+   * authenticity score.
+   */
   confidence: number;
-  authenticity: "real" | "replica" | "fake";
-  authenticityScore: number;
-  authenticityReason: string;
   fileUrl?: string;
   s3Key?: string;
   storagePath?: string;
@@ -55,11 +58,6 @@ function normalizeExtractedData(data: any): ExtractedDocumentData {
       typeof data?.confidence === "number"
         ? Math.max(0, Math.min(100, Math.round(data.confidence)))
         : 0,
-
-    authenticity: "replica",
-    authenticityScore: 0,
-    authenticityReason:
-      "OCR extraction succeeded. Authenticity has not been independently verified.",
   };
 }
 

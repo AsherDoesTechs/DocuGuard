@@ -70,6 +70,62 @@ export const categorySchema = z
 
 export const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
+/**
+ * Storage URL allow-list.
+ *
+ * `z.string().url()` accepts http(s) against any host, which let a client
+ * store `http://169.254.169.254/latest/meta-data/` as its document URL. The
+ * OCR pipeline then fetched that URL server-side, so the link-local metadata
+ * service was reachable from the API. Only https to a public host is accepted.
+ */
+export function isAllowedFileUrl(value: unknown): boolean {
+  if (value === null || value === undefined) return true;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(String(value));
+  } catch {
+    return false;
+  }
+
+  if (parsed.protocol !== "https:") return false;
+
+  const host = parsed.hostname.toLowerCase();
+
+  if (host === "localhost" || host.endsWith(".localhost")) return false;
+
+  const blockedHosts = [
+    "127.0.0.1",
+    "0.0.0.0",
+    "::1",
+    "169.254.169.254",
+    "metadata.google.internal",
+  ];
+  if (blockedHosts.includes(host)) return false;
+
+  const ipv4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (ipv4) {
+    const a = Number(ipv4[1]);
+    const b = Number(ipv4[2]);
+    if (a === 10 || a === 127 || a === 0) return false;
+    if (a === 169 && b === 254) return false;
+    if (a === 172 && b >= 16 && b <= 31) return false;
+    if (a === 192 && b === 168) return false;
+  }
+
+  return true;
+}
+
+export const fileUrlSchema = z
+  .string()
+  .url()
+  .refine(isAllowedFileUrl, {
+    message:
+      "File URL must be an https URL on a public host (private and metadata addresses are not allowed)",
+  })
+  .optional()
+  .nullable();
+
 const dateStringSchema = z
   .string()
   .optional()
@@ -105,9 +161,11 @@ const documentShape = {
   enableAlerts: z.boolean().default(true),
   status: z.enum(["active", "verified", "expired"]).default("active"),
   processingStatus: z.enum(["pending", "uploading", "processing", "completed", "failed"]).default("completed"),
-  riskScore: z.number().min(0).max(100).default(0),
-  riskLevel: z.enum(["Low", "Medium", "High"]).default("Low"),
-  fileUrl: z.string().url().optional().nullable(),
+  // No defaults: a client that omits risk means "not assessed", not "safe".
+  // Defaulting these wrote 0/"Low" and made unassessed look verified.
+  riskScore: z.number().min(0).max(100).optional(),
+  riskLevel: z.enum(["Low", "Medium", "High"]).optional(),
+  fileUrl: fileUrlSchema,
   fileType: z.string().optional().nullable(),
   s3Key: z.string().optional().nullable(),
 };
@@ -137,7 +195,8 @@ export const documentUpdateSchema = z
     id: z.number().int().positive(),
   });
 
-export const documentSyncSchema = z.object({
+export const documentSyncSchema = z
+  .object({
   title: z.string().min(1).max(100).trim(),
   category: categorySchema,
   issuer: z.string().min(1).max(150).trim(),
@@ -148,13 +207,26 @@ export const documentSyncSchema = z.object({
   enableAlerts: z.boolean().default(true),
   status: z.enum(["active", "verified", "expired"]).default("active"),
   s3Key: z.string().optional().nullable(),
-  fileUrl: z.string().url().optional().nullable(),
+  fileUrl: fileUrlSchema,
   fileType: z.string().optional().nullable(),
   processingStatus: z.enum(["pending", "uploading", "processing", "completed", "failed"]).default("completed"),
-  riskScore: z.number().min(0).max(100).default(0),
-  riskLevel: z.enum(["Low", "Medium", "High"]).default("Low"),
+  // Unset means unassessed. See the note on documentShape.
+  riskScore: z.number().min(0).max(100).optional(),
+  riskLevel: z.enum(["Low", "Medium", "High"]).optional(),
   cloudId: z.number().int().positive().optional(),
-});
+  baseUpdatedAt: z.string().min(1).max(64).optional(),
+})
+  .refine(
+    (data) => {
+      if (!data.issueDate || !data.expiryDate) return true;
+      if (data.issueDate === "" || data.expiryDate === "") return true;
+      return data.issueDate <= data.expiryDate;
+    },
+    {
+      message: "Expiry date must be on or after the issue date",
+      path: ["expiryDate"],
+    },
+  );
 
 export const uploadUrlSchema = z.object({
   fileName: z.string().min(1, "File name is required"),

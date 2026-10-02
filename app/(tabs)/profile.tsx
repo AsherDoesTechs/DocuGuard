@@ -23,7 +23,11 @@ import { COLORS } from "@/constants";
 import { RefreshableContainer } from "@/components/ui/RefreshableContainer";
 import * as SecureStore from "expo-secure-store";
 import { api } from "../../services/api";
-import { getUserProfile, getAllDocuments } from "../../services/localDatabase";
+import {
+  getUserProfile,
+  getAllDocuments,
+  clearLocalSession,
+} from "../../services/localDatabase";
 import * as LocalAuthentication from "expo-local-authentication";
 
 type SettingsTab =
@@ -524,7 +528,7 @@ export default function ProfileScreen() {
       const token = await SecureStore.getItemAsync("userToken");
       if (!token) return;
       setLoadingSessions(true);
-      const res = await api.client.get("/auth/sessions", {
+      const res = await api.client.get("/profile/sessions", {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.data?.sessions) {
@@ -540,7 +544,7 @@ export default function ProfileScreen() {
   const revokeSession = async (sessionId: string) => {
     try {
       const token = await SecureStore.getItemAsync("userToken");
-      await api.client.delete(`/auth/sessions/${sessionId}`, {
+      await api.client.delete(`/profile/sessions/${sessionId}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       showToast("Session revoked", "success");
@@ -561,6 +565,10 @@ export default function ProfileScreen() {
           style: "destructive",
           onPress: async () => {
             try {
+              // Purge the local vault, not just the token. Previously the
+              // document database was left intact, so the next person to sign
+              // in on this device saw the previous account's documents.
+              await clearLocalSession();
               await SecureStore.deleteItemAsync("userToken");
               await SecureStore.deleteItemAsync("biometricEnabled");
               await SecureStore.deleteItemAsync("docuguard.appLock.enabled");

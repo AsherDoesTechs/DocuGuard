@@ -28,6 +28,10 @@ import {
 } from "../../services/localDatabase";
 
 import { checkAndScheduleAlerts } from "../../services/notificationScheduler";
+import {
+  isNotificationsEnabled,
+  setNotificationsEnabled as persistNotificationsEnabled,
+} from "../../services/notificationPreferences";
 
 type FilterType = "all" | "unread" | "expired" | "expiring";
 
@@ -63,13 +67,13 @@ export default function RemindersScreen() {
   const mountedRef = useRef(true);
 
   /*
-   * Load saved notification preference from AsyncStorage.
+   * Load saved notification preference from the shared preference store.
    */
   const loadNotificationPreference = useCallback(async () => {
     try {
-      const stored = await AsyncStorage.getItem("notificationsEnabled");
-      if (stored !== null && mountedRef.current) {
-        setNotificationsEnabled(stored === "true");
+      const enabled = await isNotificationsEnabled();
+      if (mountedRef.current) {
+        setNotificationsEnabled(enabled);
       }
     } catch (err) {
       console.error("Failed to load notification preference:", err);
@@ -100,8 +104,7 @@ export default function RemindersScreen() {
    */
   const scheduleAlertsIfEnabled = useCallback(async () => {
     try {
-      const stored = await AsyncStorage.getItem("notificationsEnabled");
-      if (stored !== "true") return;
+      if (!(await isNotificationsEnabled())) return;
 
       const permissions = await Notifications.getPermissionsAsync();
       const granted =
@@ -248,7 +251,10 @@ export default function RemindersScreen() {
       }
 
       setNotificationsEnabled(value);
-      await AsyncStorage.setItem("notificationsEnabled", String(value));
+      // Persisted through the shared store so the scheduler reads the same
+      // value. Writing AsyncStorage directly here left the scheduler checking
+      // SecureStore, so the opt-out never took effect.
+      await persistNotificationsEnabled(value);
 
       if (value) {
         try {

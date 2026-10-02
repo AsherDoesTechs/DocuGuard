@@ -66,6 +66,64 @@ const categorySchema = z
 
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
+/**
+ * Storage URL allow-list.
+ *
+ * `z.string().url()` accepts http(s) against any host, which let a client
+ * store `http://169.254.169.254/latest/meta-data/` as its document URL. The
+ * OCR pipeline then fetched that URL server-side, so the link-local metadata
+ * service was reachable from the API. Only https to a public host is accepted.
+ */
+function isAllowedFileUrl(value) {
+  if (value === null || value === undefined) return true;
+
+  let parsed;
+  try {
+    parsed = new URL(String(value));
+  } catch {
+    return false;
+  }
+
+  if (parsed.protocol !== "https:") return false;
+
+  const host = parsed.hostname.toLowerCase();
+
+  if (host === "localhost" || host.endsWith(".localhost")) return false;
+
+  // Literal private, loopback, link-local and cloud metadata addresses.
+  const blockedHosts = [
+    "127.0.0.1",
+    "0.0.0.0",
+    "::1",
+    "169.254.169.254",
+    "metadata.google.internal",
+  ];
+  if (blockedHosts.includes(host)) return false;
+
+  const ipv4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (ipv4) {
+    const [a, b] = ipv4.slice(1).map(Number);
+    if (a === 10) return false;
+    if (a === 127) return false;
+    if (a === 0) return false;
+    if (a === 169 && b === 254) return false;
+    if (a === 172 && b >= 16 && b <= 31) return false;
+    if (a === 192 && b === 168) return false;
+  }
+
+  return true;
+}
+
+const fileUrlSchema = z
+  .string()
+  .url()
+  .refine(isAllowedFileUrl, {
+    message:
+      "File URL must be an https URL on a public host (private and metadata addresses are not allowed)",
+  })
+  .optional()
+  .nullable();
+
 const dateStringSchema = z
   .string()
   .optional()
@@ -101,9 +159,11 @@ const documentShape = {
   enableAlerts: z.boolean().default(true),
   status: z.enum(["active", "verified", "expired"]).default("active"),
   processingStatus: z.enum(["pending", "uploading", "processing", "completed", "failed"]).default("completed"),
-  riskScore: z.number().min(0).max(100).default(0),
-  riskLevel: z.enum(["Low", "Medium", "High"]).default("Low"),
-  fileUrl: z.string().url().optional().nullable(),
+  // No defaults: a client that omits risk means "not assessed", not "safe".
+  // Defaulting these wrote 0/"Low" and made unassessed look verified.
+  riskScore: z.number().min(0).max(100).optional(),
+  riskLevel: z.enum(["Low", "Medium", "High"]).optional(),
+  fileUrl: fileUrlSchema,
   fileType: z.string().optional().nullable(),
   s3Key: z.string().optional().nullable(),
 };
@@ -133,7 +193,8 @@ const documentUpdateSchema = z
     id: z.number().int().positive(),
   });
 
-const documentSyncSchema = z.object({
+const documentSyncSchema = z
+  .object({
   title: z.string().min(1).max(100).trim(),
   category: categorySchema,
   issuer: z.string().min(1).max(150).trim(),
@@ -144,13 +205,31 @@ const documentSyncSchema = z.object({
   enableAlerts: z.boolean().default(true),
   status: z.enum(["active", "verified", "expired"]).default("active"),
   s3Key: z.string().optional().nullable(),
-  fileUrl: z.string().url().optional().nullable(),
+  fileUrl: fileUrlSchema,
   fileType: z.string().optional().nullable(),
   processingStatus: z.enum(["pending", "uploading", "processing", "completed", "failed"]).default("completed"),
-  riskScore: z.number().min(0).max(100).default(0),
-  riskLevel: z.enum(["Low", "Medium", "High"]).default("Low"),
+  // Unset means unassessed. See the note on documentShape.
+  riskScore: z.number().min(0).max(100).optional(),
+  riskLevel: z.enum(["Low", "Medium", "High"]).optional(),
   cloudId: z.number().int().positive().optional(),
-});
+  // Server revision the client last observed. When present the sync update is
+  // conditional on the row still being at that revision, so a concurrent edit
+  // from another device surfaces as a 409 instead of being overwritten.
+  baseUpdatedAt: z.string().min(1).max(64).optional(),
+})
+  // Without this, a client could push an expiry date that precedes the issue
+  // date: documentSchema had the rule but documentSyncSchema did not.
+  .refine(
+    (data) => {
+      if (!data.issueDate || !data.expiryDate) return true;
+      if (data.issueDate === "" || data.expiryDate === "") return true;
+      return data.issueDate <= data.expiryDate;
+    },
+    {
+      message: "Expiry date must be on or after the issue date",
+      path: ["expiryDate"],
+    },
+  );
 
 const uploadUrlSchema = z.object({
   fileName: z.string().min(1, "File name is required"),

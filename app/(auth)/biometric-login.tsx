@@ -17,6 +17,7 @@ import { Input, Button, Card } from "../../components/ui";
 import { useForm } from "../../hooks/useForm";
 import { COLORS } from "../../constants";
 import { api } from "../../services/api";
+import { switchLocalUser } from "../../services/localDatabase";
 import {
   loginSchema,
   type LoginInput,
@@ -86,6 +87,12 @@ export default function LoginScreen() {
         // 2 & 3. Store token securely using standardized SecureStore
         if (response?.token) {
           await SecureStore.setItemAsync("userToken", response.token);
+        }
+
+        // Establishes local-vault ownership, purging the previous account's
+        // documents when a different account signs in.
+        if (response?.user?.id != null) {
+          await switchLocalUser(response.user.id);
         }
 
         // Handle rememberMe persistence securely

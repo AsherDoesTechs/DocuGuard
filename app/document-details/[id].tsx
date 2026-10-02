@@ -361,15 +361,24 @@ if (mountedRef.current) {
           </Card>
         )}
 
-         {document.riskScore !== undefined && document.riskLevel && (
-           <Card style={styles.riskCard}>
-             <Text style={styles.riskLabel}>AI Risk Assessment</Text>
-             <View style={styles.riskRow}>
-               <Text style={styles.riskScore}>Score: {document.riskScore}/100</Text>
-               <StatusBadge status={document.riskLevel === "Low" ? "success" : document.riskLevel === "Medium" ? "warning" : "danger"} text={document.riskLevel} />
-             </View>
-           </Card>
-         )}
+{document.riskLevel != null && document.riskScore != null && (
+            <Card style={styles.riskCard}>
+              <Text style={styles.riskLabel}>AI Risk Assessment</Text>
+              <View style={styles.riskRow}>
+                <Text style={styles.riskScore}>Score: {document.riskScore}/100</Text>
+                <StatusBadge
+                  status={
+                    document.riskLevel === "Low"
+                      ? "success"
+                      : document.riskLevel === "Medium"
+                        ? "warning"
+                        : "danger"
+                  }
+                  text={document.riskLevel}
+                />
+              </View>
+            </Card>
+          )}
 
          <Card style={styles.historyCard}>
            <View style={styles.historyHeader}>

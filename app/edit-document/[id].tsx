@@ -67,8 +67,10 @@ type EditDocumentValues = {
 
   status: string;
   processingStatus: string;
-  riskScore: number;
-  riskLevel: string;
+  // Null means no detector has assessed this document. It must not be
+  // defaulted to 0/"Low", which would read as "assessed and safe".
+  riskScore: number | null;
+  riskLevel: string | null;
 
   fileUrl: string | null;
   fileType: string | null;
@@ -391,8 +393,9 @@ export default function EditDocumentScreen() {
       enableAlerts: true,
       status: "active",
       processingStatus: "completed",
-      riskScore: 0,
-      riskLevel: "Low",
+      // Unassessed, not "Low".
+      riskScore: null,
+      riskLevel: null,
       fileUrl: null,
       fileType: null,
       s3Key: null,
@@ -542,8 +545,8 @@ export default function EditDocumentScreen() {
           enableAlerts: localDocument.enableAlerts !== false,
           status: localDocument.status || "active",
           processingStatus: localDocument.processingStatus || "completed",
-          riskScore: localDocument.riskScore || 0,
-          riskLevel: localDocument.riskLevel || "Low",
+          riskScore: localDocument.riskScore ?? null,
+          riskLevel: localDocument.riskLevel ?? null,
           fileUrl: localDocument.fileUrl || null,
           fileType: localDocument.fileType || null,
           s3Key: localDocument.s3Key || null,
@@ -599,8 +602,8 @@ export default function EditDocumentScreen() {
         enableAlerts: data?.enableAlerts !== false,
         status: data?.status || "active",
         processingStatus: data?.processingStatus || "completed",
-        riskScore: Number(data?.riskScore || 0),
-        riskLevel: data?.riskLevel || "Low",
+        riskScore: data?.riskScore != null ? Number(data.riskScore) : null,
+        riskLevel: data?.riskLevel ?? null,
         fileUrl: data?.fileUrl || null,
         fileType: data?.fileType || null,
         s3Key: data?.s3Key || null,
@@ -1443,7 +1446,9 @@ export default function EditDocumentScreen() {
               </View>
               <View style={styles.statusItem}>
                 <Text style={styles.statusLabel}>RISK</Text>
-                <Text style={styles.statusValue}>{values.riskLevel}</Text>
+                <Text style={styles.statusValue}>
+                  {values.riskLevel ?? "Not assessed"}
+                </Text>
               </View>
             </View>
           </Card>

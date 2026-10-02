@@ -7,7 +7,8 @@
     "icon": "./app/assets/icon.png",
 
     "orientation": "portrait",
-    "userInterfaceStyle": "light",
+
+    "userInterfaceStyle": "automatic",
 
     "ios": {
       "supportsTablet": true,
@@ -43,8 +44,12 @@
         "expo-splash-screen",
         {
           "image": "./app/assets/icon.png",
+          "imageWidth": 200,
           "resizeMode": "contain",
-          "backgroundColor": "#ffffff"
+          "backgroundColor": "#ffffff",
+          "dark": {
+            "backgroundColor": "#0F172A"
+          }
         }
       ],
       "expo-sharing",

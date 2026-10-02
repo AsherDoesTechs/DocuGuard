@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   View,
   Text,
@@ -18,6 +18,7 @@ import { Input, Button, Card } from "../../components/ui";
 import { useForm } from "../../hooks/useForm";
 import { COLORS } from "../../constants";
 import { api } from "../../services/api";
+import { switchLocalUser } from "../../services/localDatabase";
 import {
   loginSchema,
   type LoginInput,
@@ -29,7 +30,90 @@ export default function LoginScreen() {
   const [isBiometricSupported, setIsBiometricSupported] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
+  // Set when the server accepts the password but requires a TOTP code. The
+  // password is held only in component state for the follow-up request.
+  const [pendingTwoFactor, setPendingTwoFactor] = useState<{
+    email: string;
+    password: string;
+    rememberMe: boolean;
+  } | null>(null);
+  const [twoFactorCode, setTwoFactorCode] = useState("");
+  const [twoFactorError, setTwoFactorError] = useState<string | null>(null);
+  const [twoFactorSubmitting, setTwoFactorSubmitting] = useState(false);
+
   const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  /** Completes login once a valid TOTP code has been supplied. */
+  const completeLogin = useCallback(
+    async (response: {
+      token?: string;
+      user?: { id: number };
+    }, rememberMe: boolean, email: string) => {
+      if (response?.token) {
+        await SecureStore.setItemAsync("userToken", response.token);
+      }
+
+      if (response?.user?.id != null) {
+        await switchLocalUser(response.user.id);
+      }
+
+      if (rememberMe) {
+        await SecureStore.setItemAsync("rememberedEmail", email);
+      } else {
+        await SecureStore.deleteItemAsync("rememberedEmail");
+      }
+
+      router.replace("/(tabs)/documents" as any);
+    },
+    [router],
+  );
+
+  /** Submits the second factor and retries the login request with it. */
+  const handleTwoFactorSubmit = async () => {
+    if (!pendingTwoFactor) return;
+
+    const code = twoFactorCode.trim();
+    if (!/^\d{6}$/.test(code)) {
+      setTwoFactorError("Enter the 6-digit code from your authenticator app.");
+      return;
+    }
+
+    setTwoFactorSubmitting(true);
+    setTwoFactorError(null);
+
+    try {
+      const response = await api.auth.login({
+        email: pendingTwoFactor.email,
+        password: pendingTwoFactor.password,
+        totpCode: code,
+      });
+
+      if (response?.requiresTwoFactor) {
+        setTwoFactorError("That code was not accepted. Try the next one.");
+        setTwoFactorCode("");
+        return;
+      }
+
+      await completeLogin(response, pendingTwoFactor.rememberMe, pendingTwoFactor.email);
+      setPendingTwoFactor(null);
+    } catch (err: any) {
+      const status = err?.response?.status;
+      if (status === 401) {
+        setTwoFactorError("That code was not accepted. Try the next one.");
+        setTwoFactorCode("");
+      } else if (status === 429) {
+        setTwoFactorError("Too many attempts. Please wait and try again.");
+      } else if (!err?.response) {
+        setTwoFactorError("Network error. Check your connection and try again.");
+      } else {
+        setTwoFactorError(
+          err?.response?.data?.error ?? "Something went wrong. Try again.",
+        );
+      }
+    } finally {
+      setTwoFactorSubmitting(false);
+    }
+  };
 
   // Stop pulse animation on unmount
   useEffect(() => {
@@ -89,20 +173,24 @@ export default function LoginScreen() {
 
         const response = await api.auth.login(normalizedValues);
 
-        if (response?.token) {
-          await SecureStore.setItemAsync("userToken", response.token);
+        // The server returns no token when the account has TOTP enrolled; it
+        // asks for a code instead. Without this branch the user was silently
+        // signed out with no token and no explanation.
+        if (response?.requiresTwoFactor) {
+          setPendingTwoFactor({
+            email: normalizedValues.email,
+            password: values.password,
+            rememberMe: values.rememberMe ?? false,
+          });
+          return;
         }
 
-        if (values.rememberMe) {
-          await SecureStore.setItemAsync(
-            "rememberedEmail",
-            normalizedValues.email,
-          );
-        } else {
-          await SecureStore.deleteItemAsync("rememberedEmail");
-        }
-
-        router.replace("/(tabs)/documents" as any);
+        await completeLogin(
+          response,
+          values.rememberMe ?? false,
+          normalizedValues.email,
+        );
+        setPendingTwoFactor(null);
       } catch (err: any) {
         const status = err?.response?.status;
         let errorMessage = "Please check your credentials and try again.";
@@ -136,12 +224,59 @@ export default function LoginScreen() {
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.header}>
-          <Text style={styles.title}>Welcome Back</Text>
+          <Text style={styles.title}>
+            {pendingTwoFactor ? "Two-Factor Authentication" : "Welcome Back"}
+          </Text>
           <Text style={styles.subtitle}>
-            Sign in to access your secure documents
+            {pendingTwoFactor
+              ? "Enter the 6-digit code from your authenticator app"
+              : "Sign in to access your secure documents"}
           </Text>
         </View>
 
+        {pendingTwoFactor ? (
+          <Card>
+            <Input
+              label="Verification Code"
+              placeholder="000000"
+              value={twoFactorCode}
+              onChangeText={(text) => {
+                // Digits only, capped at 6, so the field cannot hold a value
+                // the server will always reject.
+                setTwoFactorCode(text.replace(/\D/g, "").slice(0, 6));
+                setTwoFactorError(null);
+              }}
+              error={twoFactorError ?? undefined}
+              keyboardType="number-pad"
+              autoComplete="one-time-code"
+              textContentType="oneTimeCode"
+              maxLength={6}
+              autoFocus
+            />
+
+            <View style={{ marginTop: 12 }}>
+              <Button
+                title="Verify"
+                onPress={handleTwoFactorSubmit}
+                loading={twoFactorSubmitting}
+                disabled={twoFactorCode.length !== 6}
+                feedbackType="success"
+              />
+            </View>
+
+            <TouchableOpacity
+              style={{ marginTop: 12, alignItems: "center" }}
+              onPress={() => {
+                setPendingTwoFactor(null);
+                setTwoFactorCode("");
+                setTwoFactorError(null);
+              }}
+              accessibilityRole="button"
+            >
+              <Text style={styles.forgotPasswordText}>Use a different account</Text>
+            </TouchableOpacity>
+          </Card>
+        ) : (
         <Card>
           <Input
             label="Email"
@@ -220,8 +355,9 @@ export default function LoginScreen() {
             />
           </View>
         </Card>
+        )}
 
-        {isBiometricSupported && (
+        {isBiometricSupported && !pendingTwoFactor && (
           <View style={styles.biometricSection}>
             <Text style={styles.orText}>OR USE BIOMETRICS</Text>
             <TouchableOpacity
@@ -248,6 +384,7 @@ export default function LoginScreen() {
           </View>
         )}
 
+        {!pendingTwoFactor && (
         <View style={styles.footer}>
           <Text style={styles.footerText}>Don't have an account? </Text>
           <Link href="/(auth)/register" asChild>
@@ -256,6 +393,7 @@ export default function LoginScreen() {
             </TouchableOpacity>
           </Link>
         </View>
+      )}
       </ScrollView>
     </SafeAreaView>
   );

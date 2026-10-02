@@ -20,13 +20,32 @@ export default function RootLayout() {
   } = useAppLock();
 
   useEffect(() => {
-    initDatabase().catch((err) => {
-      console.warn("Failed to initialize local database:", err);
-    });
+    // Sequential, not parallel. The scheduler reads documents straight after
+    // init, so running them concurrently let the scheduler query tables that
+    // CREATE TABLE had not yet committed: the first launch after a fresh
+    // install scheduled nothing, or threw "no such table".
+    let cancelled = false;
 
-    checkAndScheduleAlerts().catch((err) => {
-      console.warn("Failed to schedule alerts:", err);
-    });
+    (async () => {
+      try {
+        await initDatabase();
+      } catch (err) {
+        console.warn("Failed to initialize local database:", err);
+        return;
+      }
+
+      if (cancelled) return;
+
+      try {
+        await checkAndScheduleAlerts();
+      } catch (err) {
+        console.warn("Failed to schedule alerts:", err);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   return (

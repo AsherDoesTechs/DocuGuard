@@ -14,6 +14,8 @@ CREATE TABLE IF NOT EXISTS users (
   email_alerts BOOLEAN DEFAULT TRUE,
   expiry_alerts BOOLEAN DEFAULT TRUE,
   two_factor BOOLEAN DEFAULT FALSE,
+  two_factor_secret TEXT,
+  two_factor_enabled_at TIMESTAMPTZ,
   fcm_token TEXT,
   expo_push_token TEXT,
   is_verified BOOLEAN DEFAULT FALSE,
@@ -34,28 +36,41 @@ CREATE TABLE IF NOT EXISTS password_resets (
 );
 
 -- 3. Documents Table
+-- Column set is the union of everything the Express controllers, the mobile
+-- sync payload and the reminder scheduler actually read or write. It previously
+-- lacked `processing_status` entirely, so OCR state was never persisted and
+-- every document read back as if it had finished processing.
 CREATE TABLE IF NOT EXISTS documents (
   id BIGSERIAL PRIMARY KEY,
-  user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   title TEXT NOT NULL,
   issuer TEXT,
-  document_type TEXT,
-  doc_type TEXT,
   category TEXT DEFAULT 'other',
   document_number TEXT,
   issue_date DATE,
-  expiry_date DATE NOT NULL,
+  -- Nullable: the mobile app supports documents with no expiry date (passports,
+  -- some membership cards). Expiry is derived from this column alone, so it
+  -- must stay nullable rather than forcing a sentinel date.
+  expiry_date DATE,
   file_url TEXT,
   file_type TEXT,
+  -- Durable storage identifier. file_url is a short-lived signed URL derived
+  -- from this on demand and must not be treated as the source of truth.
   s3_key TEXT,
-  status TEXT DEFAULT 'valid',
+  -- Lifecycle of the record itself. 'deleted' is a tombstone awaiting sync.
+  status TEXT NOT NULL DEFAULT 'active'
+    CHECK (status IN ('active', 'verified', 'expired', 'deleted')),
   notes TEXT,
   enable_alerts BOOLEAN DEFAULT TRUE,
-  extracted_data JSONB,
+  processing_status TEXT NOT NULL DEFAULT 'completed'
+    CHECK (processing_status IN ('pending', 'uploading', 'processing', 'completed', 'failed')),
+  -- Unparsed analyzer output, retained so a bad extraction can be audited.
   ocr_data JSONB,
-  risk_score NUMERIC(5,2) DEFAULT 0.00,
-  risk_level TEXT DEFAULT 'Low',
-  renewal_suggested_date DATE,
+  -- Risk is NULL when no forgery detector has assessed the document.
+  -- The previous default of 0.00/'Low' made "never assessed" indistinguishable
+  -- from "assessed and clean".
+  risk_score NUMERIC(5,2) CHECK (risk_score IS NULL OR (risk_score >= 0 AND risk_score <= 100)),
+  risk_level TEXT CHECK (risk_level IS NULL OR risk_level IN ('Low', 'Medium', 'High')),
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -63,12 +78,14 @@ CREATE TABLE IF NOT EXISTS documents (
 -- 4. Reminders Table
 CREATE TABLE IF NOT EXISTS reminders (
   id BIGSERIAL PRIMARY KEY,
-  user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   document_id BIGINT REFERENCES documents(id) ON DELETE CASCADE,
   title TEXT NOT NULL,
   description TEXT,
-  due_date DATE NOT NULL,
-  severity TEXT DEFAULT 'info',
+  -- Nullable so a reminder without a firm date can still exist.
+  due_date DATE,
+  severity TEXT NOT NULL DEFAULT 'Valid'
+    CHECK (severity IN ('Valid', 'Expiring', 'Expired', 'info')),
   is_read BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -129,7 +146,7 @@ CREATE TABLE IF NOT EXISTS transactions (
 CREATE TABLE IF NOT EXISTS support_tickets (
   id BIGSERIAL PRIMARY KEY,
   user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
-  subject TEXT NOT NULL,
+  subject TEXT NOT NULL DEFAULT 'Support request',
   message TEXT NOT NULL,
   status TEXT DEFAULT 'OPEN',
   created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -144,6 +161,53 @@ CREATE TABLE IF NOT EXISTS exports (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 12. User Settings Table
+-- Queried by profileController but never defined in this schema, so
+-- GET /profile/settings always failed with "relation does not exist".
+CREATE TABLE IF NOT EXISTS user_settings (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  default_category TEXT DEFAULT 'other',
+  auto_backup BOOLEAN DEFAULT TRUE,
+  reminder_before_days INTEGER DEFAULT 7,
+  reminder_30days BOOLEAN DEFAULT TRUE,
+  reminder_7days BOOLEAN DEFAULT TRUE,
+  reminder_1day BOOLEAN DEFAULT TRUE,
+  reminder_on_day BOOLEAN DEFAULT TRUE,
+  theme_mode TEXT DEFAULT 'system',
+  font_size TEXT DEFAULT 'medium',
+  biometric_lock BOOLEAN DEFAULT FALSE,
+  data_exported_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 13. Login Sessions Table
+-- Also queried by profileController without existing in any schema.
+CREATE TABLE IF NOT EXISTS login_sessions (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  device_name TEXT,
+  platform TEXT,
+  ip_address TEXT,
+  location TEXT,
+  is_current BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  last_active TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 14. Email Verification Tokens Table
+-- Referenced by authController; previously only an inline column existed on
+-- users, so re-verification and expiry sweeps had no table to work with.
+CREATE TABLE IF NOT EXISTS email_verifications (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token TEXT NOT NULL UNIQUE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  used BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- =========================================================================
 -- Indexes
 -- =========================================================================
@@ -152,12 +216,86 @@ CREATE INDEX IF NOT EXISTS idx_users_verification_token ON users(verification_to
 CREATE INDEX IF NOT EXISTS idx_password_resets_token ON password_resets(token);
 CREATE INDEX IF NOT EXISTS idx_documents_user_id ON documents(user_id);
 CREATE INDEX IF NOT EXISTS idx_documents_expiry_date ON documents(expiry_date);
+-- The reminder scheduler and every list screen filter on status; without this
+-- the query full-scans a user's whole vault.
+CREATE INDEX IF NOT EXISTS idx_documents_user_status ON documents(user_id, status);
+-- Storage objects are addressed by s3_key. The unique constraint stops the
+-- same object being attached to two documents.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_s3_key ON documents(s3_key) WHERE s3_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_reminders_user_id ON reminders(user_id);
 CREATE INDEX IF NOT EXISTS idx_reminders_document_id ON reminders(document_id);
 CREATE INDEX IF NOT EXISTS idx_device_tokens_user_id ON device_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_activity_logs_user_id ON activity_logs(user_id);
 CREATE INDEX IF NOT EXISTS idx_support_tickets_user_id ON support_tickets(user_id);
 CREATE INDEX IF NOT EXISTS idx_exports_user_id ON exports(user_id);
+
+-- =========================================================================
+-- Migrations for databases created from an earlier version of this file
+--
+-- CREATE TABLE IF NOT EXISTS is a no-op when the table already exists, so on
+-- an existing database these sections are what actually apply the changes.
+-- Every statement is idempotent and safe to re-run.
+-- =========================================================================
+
+-- documents.processing_status: OCR progress was never stored at all.
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS processing_status TEXT NOT NULL DEFAULT 'completed';
+
+-- documents.s3_key / file_type existed only in some deployments.
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS s3_key TEXT;
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_type TEXT;
+
+-- documents.ocr_data retained the raw analyzer payload.
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS ocr_data JSONB;
+
+-- Risk: clear the fabricated defaults so existing rows read as unassessed
+-- rather than as a passing forgery check.
+UPDATE documents SET risk_score = NULL, risk_level = NULL
+WHERE risk_score = 0.00 AND risk_level = 'Low';
+
+ALTER TABLE documents ALTER COLUMN risk_score DROP DEFAULT;
+ALTER TABLE documents ALTER COLUMN risk_level DROP DEFAULT;
+ALTER TABLE documents ALTER COLUMN risk_level DROP NOT NULL;
+
+-- users: second factor and push channels.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_secret TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_enabled_at TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS fcm_token TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS expo_push_token TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS notifications_enabled BOOLEAN DEFAULT TRUE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_alerts BOOLEAN DEFAULT TRUE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS expiry_alerts BOOLEAN DEFAULT TRUE;
+
+-- support_tickets.subject had no default, so inserts that omitted it failed.
+ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS subject TEXT NOT NULL DEFAULT 'Support request';
+
+-- Align legacy status values with the CHECK constraint added above.
+-- 'valid' was the old default; the application only ever writes
+-- 'active' / 'verified' / 'expired' / 'deleted'.
+UPDATE documents SET status = 'active' WHERE status = 'valid';
+UPDATE reminders SET severity = 'Valid' WHERE severity = 'info';
+
+-- users.two_factor is the legacy boolean. The login gate reads
+-- two_factor_secret + two_factor_enabled_at, so backfill from it.
+UPDATE users
+SET two_factor_secret = NULL, two_factor_enabled_at = NULL
+WHERE two_factor = FALSE AND two_factor_secret IS NOT NULL;
+
+-- =========================================================================
+-- Storage bucket
+-- =========================================================================
+-- The `documents` bucket MUST be private.
+--
+-- It was created public, which is why file_url was a permanent public object
+-- URL: anyone who obtained or cached that URL kept access to an identity
+-- document forever. The API now mints short-lived signed GET URLs from s3_key.
+--
+-- Fix an existing bucket with:
+--   UPDATE storage.buckets SET public = FALSE WHERE name = 'documents';
+--   DELETE FROM storage.objects WHERE bucket_id =
+--     (SELECT id FROM storage.buckets WHERE name = 'documents');
+--
+-- =========================================================================
 
 -- =========================================================================
 -- Triggers for Automatic updated_at Timestamps
@@ -194,6 +332,12 @@ CREATE TRIGGER update_device_tokens_modtime
   FOR EACH ROW
   EXECUTE FUNCTION update_modified_column();
 
+DROP TRIGGER IF EXISTS update_user_settings_modtime ON user_settings;
+CREATE TRIGGER update_user_settings_modtime
+  BEFORE UPDATE ON user_settings
+  FOR EACH ROW
+  EXECUTE FUNCTION update_modified_column();
+
 -- =========================================================================
 -- Note on Row Level Security (RLS)
 -- =========================================================================
@@ -211,3 +355,6 @@ ALTER TABLE subscription_payments DISABLE ROW LEVEL SECURITY;
 ALTER TABLE transactions DISABLE ROW LEVEL SECURITY;
 ALTER TABLE support_tickets DISABLE ROW LEVEL SECURITY;
 ALTER TABLE exports DISABLE ROW LEVEL SECURITY;
+ALTER TABLE user_settings DISABLE ROW LEVEL SECURITY;
+ALTER TABLE login_sessions DISABLE ROW LEVEL SECURITY;
+ALTER TABLE email_verifications DISABLE ROW LEVEL SECURITY;
