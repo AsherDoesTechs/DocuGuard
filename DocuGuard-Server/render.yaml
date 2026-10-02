@@ -39,6 +39,16 @@ services:
         sync: false
       - key: SUPABASE_JWKS_URL
         sync: false
+      # Comma-separated allowlist read by middleware/security.js. Required in
+      # production: with it unset, corsOptions() rejects every browser origin.
+      # Native builds send no Origin header, so this only affects web clients.
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+      # config/firebase.js runs .replace() on this at require time, and
+      # controllers/documentController.js pulls in notificationService at boot.
+      # Leaving it unset crashes startup rather than disabling push.
+      - key: FIREBASE_PRIVATE_KEY
+        sync: false
       - key: RESEND_API_KEY
         sync: false
       - key: EMAIL_FROM
@@ -54,8 +64,6 @@ services:
       - key: FIREBASE_PROJECT_ID
         sync: false
       - key: FIREBASE_CLIENT_EMAIL
-        sync: false
-      - key: FIREBASE_PRIVATE_KEY
         sync: false
       - key: DEBUG_LOG_FILE
         value: "/tmp/docuguard_debug.log"
