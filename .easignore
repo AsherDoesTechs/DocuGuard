@@ -5,7 +5,7 @@
 .github
 .gitignore
 
-# Dependencies
+# Dependencies — EAS installs its own
 # node_modules
 
 # Expo build artifacts
