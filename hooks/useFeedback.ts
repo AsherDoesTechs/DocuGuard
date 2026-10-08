@@ -1,4 +1,6 @@
-import { Audio, AVPlaybackStatus } from "expo-av";
+import { createAudioPlayer, setAudioModeAsync } from "expo-audio";
+import type { AudioPlayer, AudioStatus } from "expo-audio";
+import type { EventSubscription } from "expo-modules-core";
 import * as Haptics from "expo-haptics";
 import { useEffect, useRef, useState } from "react";
 
@@ -28,6 +30,12 @@ const SOUND_SOURCES: Record<FeedbackType, number> = {
   selection: require("../assets/sounds/selection.mp3"),
 };
 
+/**
+ * expo-av was removed from the SDK and its native module no longer
+ * exists, so importing it threw at module-evaluation time and took
+ * down the entire route graph. expo-audio is the supported
+ * replacement and ships the ExpoAudio native module in SDK 57.
+ */
 class FeedbackManager {
   private soundEnabled = true;
   private hapticEnabled = true;
@@ -35,7 +43,7 @@ class FeedbackManager {
   private loadPromise: Promise<void> | null = null;
 
   /**
-   * Initialize Expo Audio.
+   * Initialize expo-audio.
    * Safe to call multiple times.
    */
   async loadSounds(): Promise<void> {
@@ -46,10 +54,10 @@ class FeedbackManager {
       return this.loadPromise;
     }
 
-    this.loadPromise = Audio.setAudioModeAsync({
-      playsInSilentModeIOS: true,
-      staysActiveInBackground: false,
-      shouldDuckAndroid: true,
+    this.loadPromise = setAudioModeAsync({
+      playsInSilentMode: true,
+      shouldPlayInBackground: false,
+      interruptionMode: "duckOthers",
     })
       .then(() => {
         this.initialized = true;
@@ -69,40 +77,45 @@ class FeedbackManager {
       return;
     }
 
-    let sound: Audio.Sound | null = null;
+    let player: AudioPlayer | null = null;
+    let subscription: EventSubscription | null = null;
 
     try {
       // Make sure the audio system is initialized.
       await this.loadSounds();
       const source = SOUND_SOURCES[type];
 
-      // Fix: Destructure 'sound' from the createAsync result object
-      const result = await Audio.Sound.createAsync(source, {
-        shouldPlay: false,
-        volume: 1.0,
-      });
-      sound = result.sound;
+      player = createAudioPlayer(source, { updateInterval: 100 });
+      player.volume = 1.0;
 
-      // Clean up when playback finishes.
-      sound.setOnPlaybackStatusUpdate((status: AVPlaybackStatus) => {
-        if (status.isLoaded && status.didJustFinish) {
-          void sound?.unloadAsync();
-        }
-      });
+      // Clean up when playback finishes so short feedback clips
+      // do not accumulate players in memory.
+      subscription = player.addListener(
+        "playbackStatusUpdate",
+        (status: AudioStatus) => {
+          if (status.didJustFinish) {
+            subscription?.remove();
+            subscription = null;
+            player?.remove();
+            player = null;
+          }
+        },
+      );
 
-      // Start playback after the callback has been registered.
-      await sound.playAsync();
+      player.play();
     } catch (error) {
       console.warn(`[Feedback] Sound playback failed for ${type}:`, error);
 
       // Clean up if something failed.
-      if (sound) {
+      subscription?.remove();
+      subscription = null;
+      if (player) {
         try {
-          sound.setOnPlaybackStatusUpdate(null);
-          await sound.unloadAsync();
+          player.remove();
         } catch (cleanupError) {
           console.warn("[Feedback] Failed to clean up sound:", cleanupError);
         }
+        player = null;
       }
     }
   }

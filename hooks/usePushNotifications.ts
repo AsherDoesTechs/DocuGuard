@@ -3,17 +3,29 @@ import { Platform } from "react-native";
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import Constants from "expo-constants";
+import { isRunningInExpoGo } from "expo";
 import { api } from "../services/api";
 
-// Configure how notifications behave when the app is running in the foreground
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-  }),
-});
+/**
+ * Remote push was removed from Expo Go in SDK 53. The push-token
+ * APIs throw there, and the throw is surfaced as an unhandled
+ * rejection that crashes the module graph. A push token can only
+ * be obtained from a development build anyway, so registration is
+ * skipped entirely in Expo Go rather than attempted and caught.
+ */
+const isExpoGo = isRunningInExpoGo();
+
+// Configure how notifications behave when the app is running in the foreground.
+if (!isExpoGo) {
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowBanner: true,
+      shouldShowList: true,
+      shouldPlaySound: true,
+      shouldSetBadge: true,
+    }),
+  });
+}
 
 export function usePushNotifications() {
   const [expoPushToken, setExpoPushToken] = useState<string | null>(null);
@@ -25,6 +37,10 @@ export function usePushNotifications() {
   const responseListener = useRef<Notifications.EventSubscription | null>(null);
 
   useEffect(() => {
+    if (isExpoGo) {
+      return;
+    }
+
     registerForPushNotificationsAsync().then((token) => {
       if (token) {
         setExpoPushToken(token.expoToken || null);
@@ -62,6 +78,13 @@ export function usePushNotifications() {
 
 // Helper: Register device and get token
 export async function registerForPushNotificationsAsync() {
+  // Remote push requires a development build. Expo Go removed it
+  // in SDK 53 and its token APIs throw, so bail out before any
+  // of them are reached.
+  if (isExpoGo) {
+    return null;
+  }
+
   let expoToken;
   let deviceToken;
 
