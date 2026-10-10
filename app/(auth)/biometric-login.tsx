@@ -24,7 +24,7 @@ import {
   validateSchema,
 } from "@/shared/validation";
 
-export default function LoginScreen() {
+export default function BiometricLoginScreen() {
   const router = useRouter();
   const [isBiometricSupported, setIsBiometricSupported] = useState(false);
   const [showPassword, setShowPassword] = useState(false);

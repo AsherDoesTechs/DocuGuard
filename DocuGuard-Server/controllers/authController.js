@@ -9,6 +9,9 @@ const {
   sendVerificationEmail,
   sendPasswordResetEmail,
   APP_DEEPLINK_SCHEME,
+  buildVerificationLink,
+  buildPasswordResetLink,
+  escapeHtml,
 } = require("../config/email");
 const {
   registerSchema,
@@ -192,7 +195,7 @@ exports.login = async (req, res, next) => {
       }
     }
 
-    const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, {
+    const token = jwt.sign({ userId: user.id, role: user.role || "user" }, process.env.JWT_SECRET, {
       expiresIn: "7d",
     });
 
@@ -291,7 +294,7 @@ exports.verifyEmail = async (req, res, next) => {
       [user.id],
     );
 
-    const authToken = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, {
+    const authToken = jwt.sign({ userId: user.id, role: user.role || "user" }, process.env.JWT_SECRET, {
       expiresIn: "7d",
     });
 
@@ -328,9 +331,16 @@ exports.verifyEmailWeb = async (req, res) => {
   if (!token) {
     return res.status(400).send(`
       <html>
-        <body style="font-family: Arial; text-align: center; padding: 50px;">
-          <h2 style="color: #dc2626;">Invalid Verification Link</h2>
-          <p>This verification link is missing the required token.</p>
+        <head>
+          <title>Invalid Link - DocuGuard</title>
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        </head>
+        <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; text-align: center; padding: 50px 20px; background-color: #f3f4f6;">
+          <div style="max-width: 400px; margin: 0 auto; background: #ffffff; border-radius: 16px; padding: 40px; box-shadow: 0 8px 32px rgba(0,0,0,0.08);">
+            <div style="width: 80px; height: 80px; background: #FEE2E2; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px; font-size: 32px; font-weight: 700; color: #DC2626;">!</div>
+            <h1 style="margin: 0 0 12px; color: #111827; font-size: 24px; font-weight: 700;">Invalid Verification Link</h1>
+            <p style="margin: 0; color: #6B7280; font-size: 16px;">This verification link is missing the required token.</p>
+          </div>
         </body>
       </html>
     `);
@@ -338,16 +348,23 @@ exports.verifyEmailWeb = async (req, res) => {
 
   try {
     const result = await db.query(
-      "SELECT id, email, name FROM users WHERE verification_token = $1 AND verification_expires_at > NOW()",
+      "SELECT id, email, name, is_verified FROM users WHERE verification_token = $1",
       [token],
     );
 
     if (result.rows.length === 0) {
       return res.status(400).send(`
         <html>
-          <body style="font-family: Arial; text-align: center; padding: 50px;">
-            <h2 style="color: #dc2626;">Invalid or Expired Link</h2>
-            <p>This link is invalid or has expired.</p>
+          <head>
+            <title>Invalid Link - DocuGuard</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          </head>
+          <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; text-align: center; padding: 50px 20px; background-color: #f3f4f6;">
+            <div style="max-width: 400px; margin: 0 auto; background: #ffffff; border-radius: 16px; padding: 40px; box-shadow: 0 8px 32px rgba(0,0,0,0.08);">
+              <div style="width: 80px; height: 80px; background: #FEE2E2; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px; font-size: 32px; font-weight: 700; color: #DC2626;">!</div>
+              <h1 style="margin: 0 0 12px; color: #111827; font-size: 24px; font-weight: 700;">Invalid or Expired Link</h1>
+              <p style="margin: 0; color: #6B7280; font-size: 16px;">This link is invalid or has expired.</p>
+            </div>
           </body>
         </html>
       `);
@@ -355,57 +372,103 @@ exports.verifyEmailWeb = async (req, res) => {
 
     const user = result.rows[0];
 
+    // If already verified, show success page without updating
+    if (user.is_verified) {
+      const deepLink = buildVerificationLink(token);
+      const displayName = escapeHtml(user.name || "there");
+
+      return res.send(`
+        <html>
+          <head>
+            <title>Email Already Verified - DocuGuard</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          </head>
+          <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; text-align: center; padding: 50px 20px; background-color: #f3f4f6;">
+            <div style="max-width: 400px; margin: 0 auto; background: #ffffff; border-radius: 16px; padding: 40px; box-shadow: 0 8px 32px rgba(0,0,0,0.08);">
+              <div style="width: 80px; height: 80px; background: #DCFCE7; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px; font-size: 32px; font-weight: 700; color: #16A34A;">&#10003;</div>
+              <h1 style="margin: 0 0 12px; color: #111827; font-size: 24px; font-weight: 700;">Email Already Verified</h1>
+              <p style="margin: 0 0 24px; color: #6B7280; font-size: 16px;">Welcome back, <strong style="color: #111827;">${displayName}</strong>! Your email was already verified.</p>
+              <a href="${deepLink}" style="display: inline-block; padding: 14px 28px; background: linear-gradient(135deg, #2563EB 0%, #1d4ED8 100%); color: #ffffff; text-decoration: none; border-radius: 10px; font-size: 15px; font-weight: 600;">Continue to DocuGuard</a>
+            </div>
+          </body>
+        </html>
+      `);
+    }
+
+    // Check if token is expired
+    const expiresResult = await db.query(
+      "SELECT verification_expires_at FROM users WHERE id = $1",
+      [user.id],
+    );
+
+    if (expiresResult.rows.length > 0 && new Date(expiresResult.rows[0].verification_expires_at) <= new Date()) {
+      return res.status(400).send(`
+        <html>
+          <head>
+            <title>Link Expired - DocuGuard</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          </head>
+          <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; text-align: center; padding: 50px 20px; background-color: #f3f4f6;">
+            <div style="max-width: 400px; margin: 0 auto; background: #ffffff; border-radius: 16px; padding: 40px; box-shadow: 0 8px 32px rgba(0,0,0,0.08);">
+              <div style="width: 80px; height: 80px; background: #FEF3C7; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px; font-size: 32px; font-weight: 700; color: #F59E0B;">&#9888;</div>
+              <h1 style="margin: 0 0 12px; color: #111827; font-size: 24px; font-weight: 700;">Link Expired</h1>
+              <p style="margin: 0 0 24px; color: #6B7280; font-size: 16px;">This verification link has expired. Please request a new one.</p>
+              <a href="${APP_DEEPLINK_SCHEME}://login" style="display: inline-block; padding: 14px 28px; background: linear-gradient(135deg, #2563EB 0%, #1d4ED8 100%); color: #ffffff; text-decoration: none; border-radius: 10px; font-size: 15px; font-weight: 600;">Open DocuGuard App</a>
+            </div>
+          </body>
+        </html>
+      `);
+    }
+
+    // Verify the email
     await db.query(
       "UPDATE users SET is_verified = TRUE, verification_token = NULL, verification_expires_at = NULL WHERE id = $1",
       [user.id],
     );
 
-    // Built by config/email rather than string-concatenated here. This line
-    // previously interpolated APP_DEEPLINK_SCHEME, which was never exported
-    // from config/email, so every web verification redirected to the literal
-    // string "undefined://verify-email?...".
     const deepLink = buildVerificationLink(token);
+    const displayName = escapeHtml(user.name || "there");
 
     return res.send(`
       <html>
         <head>
           <title>Email Verified - DocuGuard</title>
-          <meta http-equiv="refresh" content="0; url=${deepLink}">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
         </head>
-        <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; text-align: center; padding: 0; margin: 0; background-color: #f3f4f6;">
-          <table style="max-width: 520px; margin: 48px auto; background: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 8px 32px rgba(0,0,0,0.08);">
-            <tr>
-              <td style="padding: 48px 32px; text-align: center;">
-                <div style="width: 80px; height: 80px; background: #DCFCE7; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px;">
-                  <svg width="36" height="36" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22Z" stroke="#16A34A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                    <path d="M9 12L11 14L15 10" stroke="#16A34A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                  </svg>
-                </div>
-                <h1 style="margin: 0 0 12px; color: #111827; font-size: 24px; font-weight: 700;">Email Verified!</h1>
-                <p style="margin: 0 0 24px; color: #6B7280; font-size: 16px;">Welcome, <strong style="color: #111827;">${user.name}</strong>! Your email has been verified successfully.</p>
-                <p style="margin: 0; color: #9CA3AF; font-size: 14px;">You'll be redirected to the app automatically.</p>
-              </td>
-            </tr>
-            <tr>
-              <td style="padding: 0 32px 32px; text-align: center;">
-                <a href="${deepLink}" style="display: inline-block; padding: 14px 28px; background: linear-gradient(135deg, #2563EB 0%, #1d4ED8 100%); color: #ffffff; text-decoration: none; border-radius: 10px; font-size: 15px; font-weight: 600;">Continue to DocuGuard</a>
-              </td>
-            </tr>
-          </table>
+        <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; text-align: center; padding: 50px 20px; background-color: #f3f4f6;">
+          <div style="max-width: 400px; margin: 0 auto; background: #ffffff; border-radius: 16px; padding: 40px; box-shadow: 0 8px 32px rgba(0,0,0,0.08);">
+            <div style="width: 80px; height: 80px; background: #DCFCE7; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px; font-size: 32px; font-weight: 700; color: #16A34A;">&#10003;</div>
+            <h1 style="margin: 0 0 12px; color: #111827; font-size: 24px; font-weight: 700;">Email Verified!</h1>
+            <p style="margin: 0 0 24px; color: #6B7280; font-size: 16px;">Welcome, <strong style="color: #111827;">${displayName}</strong>! Your email has been verified successfully.</p>
+            <a href="${deepLink}" style="display: inline-block; padding: 14px 28px; background: linear-gradient(135deg, #2563EB 0%, #1d4ED8 100%); color: #ffffff; text-decoration: none; border-radius: 10px; font-size: 15px; font-weight: 600;">Continue to DocuGuard</a>
+          </div>
         </body>
       </html>
     `);
-    } catch (err) {
-      logError(
-        "Auth",
-        "Web email verification error",
-        { error: err.message, stack: err.stack },
-        ErrorCodes.UNKNOWN_ERROR,
-      );
-      return res.status(500).send("Verification Error");
-    }
-  };
+  } catch (err) {
+    logError(
+      "Auth",
+      "Web email verification error",
+      { error: err.message, stack: err.stack },
+      ErrorCodes.UNKNOWN_ERROR,
+    );
+    return res.status(500).send(`
+      <html>
+        <head>
+          <title>Error - DocuGuard</title>
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        </head>
+        <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; text-align: center; padding: 50px 20px; background-color: #f3f4f6;">
+          <div style="max-width: 400px; margin: 0 auto; background: #ffffff; border-radius: 16px; padding: 40px; box-shadow: 0 8px 32px rgba(0,0,0,0.08);">
+            <div style="width: 80px; height: 80px; background: #FEE2E2; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px; font-size: 32px; font-weight: 700; color: #DC2626;">!</div>
+            <h1 style="margin: 0 0 12px; color: #111827; font-size: 24px; font-weight: 700;">Verification Error</h1>
+            <p style="margin: 0; color: #6B7280; font-size: 16px;">An error occurred. Please try again later.</p>
+          </div>
+        </body>
+      </html>
+    `);
+  }
+};
 exports.resendVerification = async (req, res) => {
   const validation = validateSchema(resendVerificationSchema, req.body);
   if (!validation.success) {
@@ -533,7 +596,7 @@ exports.forgotPassword = async (req, res) => {
   }
 };
 
-// 7. Reset Password
+// 7. Reset Password (API / Deep Link)
 exports.resetPassword = async (req, res) => {
   const validation = validateSchema(resetPasswordSchema, req.body);
   if (!validation.success) {
@@ -589,6 +652,99 @@ exports.resetPassword = async (req, res) => {
   } catch (err) {
     console.error("Reset password error:", err);
     return res.status(500).json({ error: "Failed to reset password." });
+  }
+};
+
+// 7b. Reset Password via Web Link
+exports.resetPasswordWeb = async (req, res) => {
+  const { token } = req.query;
+
+  if (!token) {
+    return res.status(400).send(`
+      <html>
+        <head>
+          <title>Invalid Link - DocuGuard</title>
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        </head>
+        <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; text-align: center; padding: 50px 20px; background-color: #f3f4f6;">
+          <div style="max-width: 400px; margin: 0 auto; background: #ffffff; border-radius: 16px; padding: 40px; box-shadow: 0 8px 32px rgba(0,0,0,0.08);">
+            <div style="width: 80px; height: 80px; background: #FEE2E2; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px; font-size: 32px; font-weight: 700; color: #DC2626;">!</div>
+            <h1 style="margin: 0 0 12px; color: #111827; font-size: 24px; font-weight: 700;">Invalid Reset Link</h1>
+            <p style="margin: 0; color: #6B7280; font-size: 16px;">This password reset link is missing the required token.</p>
+          </div>
+        </body>
+      </html>
+    `);
+  }
+
+  try {
+    const result = await db.query(
+      "SELECT id, email FROM password_resets WHERE token = $1 AND expires_at > NOW() AND used = FALSE",
+      [token],
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(400).send(`
+        <html>
+          <head>
+            <title>Invalid Link - DocuGuard</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          </head>
+          <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; text-align: center; padding: 50px 20px; background-color: #f3f4f6;">
+            <div style="max-width: 400px; margin: 0 auto; background: #ffffff; border-radius: 16px; padding: 40px; box-shadow: 0 8px 32px rgba(0,0,0,0.08);">
+              <div style="width: 80px; height: 80px; background: #FEE2E2; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px; font-size: 32px; font-weight: 700; color: #DC2626;">!</div>
+              <h1 style="margin: 0 0 12px; color: #111827; font-size: 24px; font-weight: 700;">Invalid or Expired Link</h1>
+              <p style="margin: 0; color: #6B7280; font-size: 16px;">This password reset link is invalid or has expired.</p>
+            </div>
+          </body>
+        </html>
+      `);
+    }
+
+    const resetRecord = result.rows[0];
+
+    // Show a simple page that redirects to the app deep link
+    const deepLink = buildPasswordResetLink(token);
+
+    return res.send(`
+      <html>
+        <head>
+          <title>Reset Your Password - DocuGuard</title>
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        </head>
+        <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; text-align: center; padding: 50px 20px; background-color: #f3f4f6;">
+          <div style="max-width: 400px; margin: 0 auto; background: #ffffff; border-radius: 16px; padding: 40px; box-shadow: 0 8px 32px rgba(0,0,0,0.08);">
+            <div style="width: 80px; height: 80px; background: #FEF3C7; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px; font-size: 32px; font-weight: 700; color: #F59E0B;">&#9889;</div>
+            <h1 style="margin: 0 0 12px; color: #111827; font-size: 24px; font-weight: 700;">Reset Your Password</h1>
+            <p style="margin: 0 0 24px; color: #6B7280; font-size: 16px;">Click the button below to open the DocuGuard app and create a new password.</p>
+            <a href="${deepLink}" style="display: inline-block; padding: 14px 28px; background: linear-gradient(135deg, #DC2626 0%, #B91C1C 100%); color: #ffffff; text-decoration: none; border-radius: 10px; font-size: 15px; font-weight: 600;">Open in DocuGuard App</a>
+            <p style="margin: 20px 0 0; color: #9CA3AF; font-size: 13px;">If the app doesn't open, copy this link into your browser:<br><code style="word-break: break-all; font-size: 12px; color: #DC2626;">${deepLink}</code></p>
+          </div>
+        </body>
+      </html>
+    `);
+  } catch (err) {
+    logError(
+      "Auth",
+      "Web password reset error",
+      { error: err.message, stack: err.stack },
+      ErrorCodes.UNKNOWN_ERROR,
+    );
+    return res.status(500).send(`
+      <html>
+        <head>
+          <title>Error - DocuGuard</title>
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        </head>
+        <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; text-align: center; padding: 50px 20px; background-color: #f3f4f6;">
+          <div style="max-width: 400px; margin: 0 auto; background: #ffffff; border-radius: 16px; padding: 40px; box-shadow: 0 8px 32px rgba(0,0,0,0.08);">
+            <div style="width: 80px; height: 80px; background: #FEE2E2; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px; font-size: 32px; font-weight: 700; color: #DC2626;">!</div>
+            <h1 style="margin: 0 0 12px; color: #111827; font-size: 24px; font-weight: 700;">Reset Error</h1>
+            <p style="margin: 0; color: #6B7280; font-size: 16px;">An error occurred. Please try again later.</p>
+          </div>
+        </body>
+      </html>
+    `);
   }
 };
 
