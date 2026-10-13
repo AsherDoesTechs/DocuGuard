@@ -27,7 +27,7 @@ export default function Button({
   variant = "primary",
   loading,
   style,
-  feedbackType = "selection",
+  feedbackType,
   disabled = false,
 }: ButtonProps) {
   const colors = useColors();
@@ -39,7 +39,9 @@ export default function Button({
 
   const handlePress = () => {
     if (!loading && !disabled && onPress) {
-      triggerFeedback(feedbackType, { sound: false, haptic: true });
+      if (feedbackType) {
+        triggerFeedback(feedbackType, { sound: false, haptic: true });
+      }
       onPress();
     }
   };

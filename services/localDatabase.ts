@@ -811,6 +811,114 @@ export async function createDocument(
             [docId, tag],
           );
         }
+
+        async function reconcileRealtimeDocument(
+          event: "INSERT" | "UPDATE" | "DELETE",
+          remote: Record<string, any>,
+        ): Promise<void> {
+          const userId = await getLocalUserId();
+          if (userId === null || Number(remote.user_id ?? remote.userId) !== userId) return;
+
+          const cloudId = Number(remote.id);
+          const local = await querySingle<{ id: number }>(
+            `SELECT id FROM documents WHERE cloud_id = ? AND user_id = ?`,
+            [cloudId, userId],
+          );
+          if (event === "DELETE") {
+            if (local) {
+              await run(`DELETE FROM document_tags WHERE document_id = ?`, [local.id]);
+              await run(`DELETE FROM documents WHERE id = ? AND user_id = ?`, [local.id, userId]);
+            }
+            return;
+          }
+
+          const values = {
+            title: remote.title,
+            category: remote.category,
+            issuer: remote.issuer,
+            documentNumber: remote.document_number ?? remote.documentNumber,
+            issueDate: remote.issue_date ?? remote.issueDate,
+            expiryDate: remote.expiry_date ?? remote.expiryDate,
+            notes: remote.notes,
+            status: remote.status,
+            enableAlerts: remote.enable_alerts ?? remote.enableAlerts,
+            fileUrl: remote.file_url ?? remote.fileUrl,
+            fileType: remote.file_type ?? remote.fileType,
+            s3Key: remote.s3_key ?? remote.s3Key,
+            processingStatus: remote.processing_status ?? remote.processingStatus,
+            riskScore: remote.risk_score ?? remote.riskScore,
+            riskLevel: remote.risk_level ?? remote.riskLevel,
+            needsSync: false,
+            syncStatus: "synced" as const,
+            cloudId,
+            serverUpdatedAt: remote.updated_at ?? remote.updatedAt,
+          };
+          if (local) {
+            const database = await getDb();
+            await database.runAsync(
+              `UPDATE documents SET title = ?, category = ?, issuer = ?, document_number = ?,
+               issue_date = ?, expiry_date = ?, notes = ?, status = ?, enable_alerts = ?,
+               file_url = ?, file_type = ?, s3_key = ?, processing_status = ?, risk_score = ?,
+               risk_level = ?, needs_sync = 0, sync_status = 'synced', server_updated_at = ?,
+               updated_at = ? WHERE id = ? AND user_id = ?`,
+              values.title, values.category, values.issuer, values.documentNumber,
+              values.issueDate, values.expiryDate, values.notes, values.status,
+              values.enableAlerts ? 1 : 0, values.fileUrl, values.fileType, values.s3Key,
+              values.processingStatus, values.riskScore, values.riskLevel,
+              values.serverUpdatedAt, new Date().toISOString(), local.id, userId,
+            );
+          } else {
+            await createDocument(values);
+            const created = await querySingle<{ id: number }>(
+              `SELECT id FROM documents WHERE cloud_id = ? AND user_id = ? ORDER BY id DESC LIMIT 1`,
+              [cloudId, userId],
+            );
+            if (created) {
+              await run(
+                `UPDATE documents SET needs_sync = 0, sync_status = 'synced' WHERE id = ?`,
+                [created.id],
+              );
+            }
+          }
+        }
+
+        async function reconcileRealtimeReminder(
+          event: "INSERT" | "UPDATE" | "DELETE",
+          remote: Record<string, any>,
+        ): Promise<void> {
+          const userId = await getLocalUserId();
+          if (userId === null || Number(remote.user_id ?? remote.userId) !== userId) return;
+          const cloudId = Number(remote.id);
+          const local = await querySingle<{ id: number }>(
+            `SELECT id FROM reminders WHERE cloud_id = ? AND user_id = ?`,
+            [cloudId, userId],
+          );
+          if (event === "DELETE") {
+            if (local) await run(`DELETE FROM reminders WHERE id = ? AND user_id = ?`, [local.id, userId]);
+            return;
+          }
+          const values = [
+            remote.title,
+            remote.description,
+            remote.due_date ?? remote.dueDate,
+            remote.severity,
+            (remote.is_read ?? remote.read) ? 1 : 0,
+            cloudId,
+          ];
+          if (local) {
+            await run(
+              `UPDATE reminders SET title = ?, description = ?, due_date = ?, severity = ?,
+               is_read = ?, needs_sync = 0 WHERE id = ? AND user_id = ?`,
+              [...values.slice(0, 5), local.id, userId],
+            );
+          } else {
+            await run(
+              `INSERT INTO reminders (user_id, title, description, due_date, severity, is_read, needs_sync, cloud_id)
+               VALUES (?, ?, ?, ?, ?, ?, 0, ?)`,
+              [userId, ...values],
+            );
+          }
+        }
       }
     });
 
@@ -824,6 +932,100 @@ export async function createDocument(
       ErrorCodes.LOCAL_WRITE_FAILED,
     );
     throw err;
+  }
+}
+
+export async function reconcileRealtimeDocument(
+  event: "INSERT" | "UPDATE" | "DELETE",
+  remote: Record<string, any>,
+): Promise<void> {
+  const userId = await getLocalUserId();
+  if (userId === null || Number(remote.user_id ?? remote.userId) !== userId) return;
+  const cloudId = Number(remote.id);
+  const local = await querySingle<{ id: number }>(
+    `SELECT id FROM documents WHERE cloud_id = ? AND user_id = ?`,
+    [cloudId, userId],
+  );
+  if (event === "DELETE") {
+    if (local) await run(`DELETE FROM documents WHERE id = ? AND user_id = ?`, [local.id, userId]);
+    return;
+  }
+  const values: Partial<LocalDocument> = {
+    title: remote.title ?? "",
+    category: remote.category ?? "other",
+    issuer: remote.issuer ?? "",
+    documentNumber: remote.document_number ?? remote.documentNumber ?? "",
+    issueDate: remote.issue_date ?? remote.issueDate ?? "",
+    expiryDate: remote.expiry_date ?? remote.expiryDate ?? "",
+    notes: remote.notes ?? "",
+    status: remote.status ?? "active",
+    enableAlerts: Boolean(remote.enable_alerts ?? remote.enableAlerts),
+    fileUrl: remote.file_url ?? remote.fileUrl,
+    fileType: remote.file_type ?? remote.fileType,
+    s3Key: remote.s3_key ?? remote.s3Key,
+    processingStatus: remote.processing_status ?? remote.processingStatus ?? "completed",
+    riskScore: remote.risk_score ?? remote.riskScore ?? null,
+    riskLevel: remote.risk_level ?? remote.riskLevel ?? null,
+    needsSync: false,
+    syncStatus: "synced",
+    cloudId,
+    serverUpdatedAt: remote.updated_at ?? remote.updatedAt ?? null,
+  };
+  if (local) {
+    await run(
+      `UPDATE documents SET title=?, category=?, issuer=?, document_number=?, issue_date=?,
+       expiry_date=?, notes=?, status=?, enable_alerts=?, file_url=?, file_type=?, s3_key=?,
+       processing_status=?, risk_score=?, risk_level=?, needs_sync=0, sync_status='synced',
+       server_updated_at=?, updated_at=? WHERE id=? AND user_id=?`,
+      [values.title, values.category, values.issuer, values.documentNumber, values.issueDate,
+       values.expiryDate, values.notes, values.status, values.enableAlerts ? 1 : 0,
+       values.fileUrl, values.fileType, values.s3Key, values.processingStatus, values.riskScore,
+       values.riskLevel, values.serverUpdatedAt, new Date().toISOString(), local.id, userId],
+    );
+  } else {
+    await createDocument(values);
+    const created = await querySingle<{ id: number }>(
+      `SELECT id FROM documents WHERE cloud_id=? AND user_id=? ORDER BY id DESC LIMIT 1`,
+      [cloudId, userId],
+    );
+    if (created) await run(`UPDATE documents SET needs_sync=0, sync_status='synced' WHERE id=?`, [created.id]);
+  }
+}
+
+export async function reconcileRealtimeReminder(
+  event: "INSERT" | "UPDATE" | "DELETE",
+  remote: Record<string, any>,
+): Promise<void> {
+  const userId = await getLocalUserId();
+  if (userId === null || Number(remote.user_id ?? remote.userId) !== userId) return;
+  const cloudId = Number(remote.id);
+  const local = await querySingle<{ id: number }>(
+    `SELECT id FROM reminders WHERE cloud_id=? AND user_id=?`,
+    [cloudId, userId],
+  );
+  if (event === "DELETE") {
+    if (local) await run(`DELETE FROM reminders WHERE id=? AND user_id=?`, [local.id, userId]);
+    return;
+  }
+  const row = [
+    remote.title ?? "",
+    remote.description ?? "",
+    remote.due_date ?? remote.dueDate ?? null,
+    remote.severity ?? "Valid",
+    (remote.is_read ?? remote.read) ? 1 : 0,
+  ];
+  if (local) {
+    await run(
+      `UPDATE reminders SET title=?, description=?, due_date=?, severity=?, is_read=?, needs_sync=0
+       WHERE id=? AND user_id=?`,
+      [...row, local.id, userId],
+    );
+  } else {
+    await run(
+      `INSERT INTO reminders (user_id,title,description,due_date,severity,is_read,needs_sync,cloud_id)
+       VALUES (?,?,?,?,?,?,0,?)`,
+      [userId, ...row, cloudId],
+    );
   }
 }
 

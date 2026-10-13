@@ -20,8 +20,8 @@ export class AppError extends Error {
     this.details = options?.details;
     this.context = options?.context;
 
-    if (Error.captureStackTrace) {
-      Error.captureStackTrace(this, AppError);
+    if (typeof (Error as any).captureStackTrace === "function") {
+      (Error as any).captureStackTrace(this, AppError);
     }
   }
 

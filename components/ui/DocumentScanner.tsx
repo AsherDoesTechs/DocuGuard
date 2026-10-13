@@ -15,7 +15,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { Camera } from "expo-camera";
 import { COLORS } from "@/constants";
-import { useAlert } from "./AlertService";
+import { feedbackService } from "../../services/feedbackService";
 
 let ScannerPlugin: any = null;
 
@@ -192,8 +192,6 @@ export const DocumentScannerComponent = ({
     async () => {}
   );
 
-  const { alert } = useAlert();
-
   /* ------------------------------------------------------------------------ */
   /*                              TIMER CLEANUP                               */
   /* ------------------------------------------------------------------------ */
@@ -264,16 +262,28 @@ export const DocumentScannerComponent = ({
       }
 
       setPhase("processing");
+      feedbackService.showScanProgress({
+        stage: "processing",
+        message: "Processing scan...",
+        progress: 25,
+      });
 
       const processedImages: ScannedImageItem[] = [];
 
-      for (const imageUri of imageUris) {
+      for (let i = 0; i < imageUris.length; i++) {
+        const imageUri = imageUris[i];
         if (
           closedRef.current ||
           !mountedRef.current
         ) {
           return;
         }
+
+        feedbackService.showScanProgress({
+          stage: "processing",
+          message: `Processing image ${i + 1} of ${imageUris.length}...`,
+          progress: 25 + Math.round((i / imageUris.length) * 50),
+        });
 
         await new Promise<void>((resolve) => {
           Image.getSize(
@@ -310,25 +320,11 @@ export const DocumentScannerComponent = ({
         setScanning(false);
         setPhase("error");
 
-        alert(
-          "Scan Quality Too Low",
-          `The captured document does not meet the minimum resolution requirement of ${MIN_WIDTH} × ${MIN_HEIGHT} pixels. Please hold the device steady and try again.`,
-          {
-            type: "error",
-            buttons: [
-              {
-                text: "Cancel",
-                onPress: onClose,
-              },
-              {
-                text: "Try Again",
-                onPress: () => {
-                  captureDocumentRef.current();
-                },
-              },
-            ],
-          }
-        );
+        feedbackService.showScanProgress({
+          stage: "error",
+          message: `The captured document does not meet the minimum resolution requirement of ${MIN_WIDTH} × ${MIN_HEIGHT} pixels. Please hold the device steady and try again.`,
+          onRetry: () => captureDocumentRef.current(),
+        });
 
         return;
       }
@@ -345,6 +341,12 @@ export const DocumentScannerComponent = ({
 
       setScannedImages(merged);
       setSelectedPage(Math.max(0, Math.min(selectedPage, merged.length - 1)));
+
+      feedbackService.showScanProgress({
+        stage: "complete",
+        message: `${merged.length} page(s) scanned successfully`,
+        progress: 100,
+      });
 
       setScanning(false);
       setPhase("review");
@@ -368,12 +370,8 @@ export const DocumentScannerComponent = ({
     const currentCount = scannedImagesRef.current.length;
 
     if (currentCount >= MAX_PAGES) {
-      alert(
-        "Maximum Pages Reached",
-        `You can scan a maximum of ${MAX_PAGES} pages in one document.`,
-        {
-          type: "warning",
-        }
+      feedbackService.warning(
+        `You can scan a maximum of ${MAX_PAGES} pages in one document.`
       );
 
       return;
@@ -381,6 +379,11 @@ export const DocumentScannerComponent = ({
 
     setPhase("preparing");
     setScanning(true);
+    feedbackService.showScanProgress({
+      stage: "preparing",
+      message: "Preparing scanner...",
+      progress: 10,
+    });
 
     setScanAttempt((previous) => previous + 1);
 
@@ -400,19 +403,11 @@ export const DocumentScannerComponent = ({
         setScanning(false);
         setPhase("error");
 
-        alert(
-          "Camera Permission Required",
-          "Camera access is required to scan documents. Please enable camera access in your device settings.",
-          {
-            type: "warning",
-            buttons: [
-              {
-                text: "OK",
-                onPress: onClose,
-              },
-            ],
-          }
-        );
+        feedbackService.showScanProgress({
+          stage: "error",
+          message: "Camera access is required to scan documents. Please enable camera access in your device settings.",
+          onRetry: onClose,
+        });
 
         return;
       }
@@ -429,6 +424,11 @@ export const DocumentScannerComponent = ({
       /* -------------------------------------------------------------------- */
 
       setPhase("capturing");
+      feedbackService.showScanProgress({
+        stage: "capturing",
+        message: "Scanning document...",
+        progress: 20,
+      });
 
       const scanner = ScannerPlugin?.default;
 
@@ -436,19 +436,10 @@ export const DocumentScannerComponent = ({
         setScanning(false);
         setPhase("error");
 
-        alert(
-          "Scanner Unavailable",
-          "The native document scanner is not available in this build. Please use a development client or a production build that includes the document scanner module.",
-          {
-            type: "error",
-            buttons: [
-              {
-                text: "Close",
-                onPress: onClose,
-              },
-            ],
-          }
-        );
+        feedbackService.showScanProgress({
+          stage: "error",
+          message: "The native document scanner is not available in this build. Please use a development client or a production build that includes the document scanner module.",
+        });
 
         return;
       }
@@ -473,26 +464,11 @@ export const DocumentScannerComponent = ({
         setScanning(false);
         setPhase("error");
 
-        alert(
-          "Scan Cancelled",
-          "The document scan was cancelled or no valid image was captured.",
-          {
-            type: "warning",
-            buttons: [
-              {
-                text: "Cancel",
-                style: "cancel",
-                onPress: onClose,
-              },
-              {
-                text: "Try Again",
-                onPress: () => {
-                  captureDocumentRef.current();
-                },
-              },
-            ],
-          }
-        );
+        feedbackService.showScanProgress({
+          stage: "error",
+          message: "The document scan was cancelled or no valid image was captured.",
+          onRetry: () => captureDocumentRef.current(),
+        });
 
         return;
       }
@@ -518,25 +494,11 @@ export const DocumentScannerComponent = ({
       setScanning(false);
       setPhase("error");
 
-      alert(
-        "Scanning Error",
-        "Something went wrong while capturing the document. Please try again.",
-        {
-          type: "error",
-          buttons: [
-            {
-              text: "Cancel",
-              onPress: onClose,
-            },
-            {
-              text: "Try Again",
-              onPress: () => {
-                captureDocumentRef.current();
-              },
-            },
-          ],
-        }
-      );
+      feedbackService.showScanProgress({
+        stage: "error",
+        message: "Something went wrong while capturing the document. Please try again.",
+        onRetry: () => captureDocumentRef.current(),
+      });
     }
   }, [
     alert,
@@ -694,30 +656,20 @@ export const DocumentScannerComponent = ({
       }
 
       if (scannedImages.length === 1) {
-        alert(
-          "Remove Document?",
-          "This will remove the only scanned page.",
-          {
-            type: "warning",
-            buttons: [
-              {
-                text: "Cancel",
-                style: "cancel",
-              },
-              {
-                text: "Remove",
-                style: "destructive",
-                onPress: () => {
-                  scannedImagesRef.current = [];
-                  setScannedImages([]);
-                  setSelectedPage(0);
-                  setScanAttempt(0);
-                  setPhase("preparing");
-                },
-              },
-            ],
-          }
-        );
+        feedbackService.confirm({
+          title: "Remove Document?",
+          message: "This will remove the only scanned page.",
+          confirmText: "Remove",
+          cancelText: "Cancel",
+          destructive: true,
+          onConfirm: () => {
+            scannedImagesRef.current = [];
+            setScannedImages([]);
+            setSelectedPage(0);
+            setScanAttempt(0);
+            setPhase("preparing");
+          },
+        });
 
         return;
       }

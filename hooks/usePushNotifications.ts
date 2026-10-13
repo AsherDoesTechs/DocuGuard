@@ -125,8 +125,8 @@ export async function registerForPushNotificationsAsync() {
       // Get native device push token (FCM on Android, APNs on iOS)
       const devicePushTokenData = await Notifications.getDevicePushTokenAsync();
       deviceToken = devicePushTokenData.data;
-    } catch (e) {
-      // Push token fetch failed
+    } catch (error) {
+      console.error("Push notification token registration failed:", error);
     }
   } else {
     // Must use physical device for Push Notifications
@@ -142,7 +142,10 @@ async function syncTokenToBackend(tokens: { expoToken?: string; deviceToken?: st
       expoPushToken: tokens.expoToken,
       devicePushToken: tokens.deviceToken,
     });
-  } catch (err: any) {
-    // Silently fail token sync
+  } catch (error: any) {
+    console.error("Push token backend synchronization failed:", {
+      message: error?.message,
+      status: error?.response?.status,
+    });
   }
 }

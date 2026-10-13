@@ -18,16 +18,16 @@ import {
   getUnsyncedReminders,
 } from "../../services/localDatabase";
 import { LocalDocument, LocalReminder } from "@/types/offline";
-import { useAlert } from "@/components/ui/AlertService";
+import { feedbackService, useFeedbackService } from "../../services/feedbackService";
 
 export default function SyncScreen() {
   const router = useRouter();
+  useFeedbackService();
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [lastSync, setLastSync] = useState<string | null>(null);
   const [pendingDocs, setPendingDocs] = useState<LocalDocument[]>([]);
   const [pendingReminders, setPendingReminders] = useState<LocalReminder[]>([]);
-  const { alert } = useAlert();
 
   const fetchPending = useCallback(async () => {
     try {
@@ -57,17 +57,14 @@ export default function SyncScreen() {
 
     const token = await SecureStore.getItemAsync("userToken");
     if (!token) {
-      alert(
-        "Authentication Required",
-        "Please sign in to sync with the cloud.",
-        {
-          type: "warning",
-          buttons: [
-            { text: "Cancel", style: "cancel" },
-            { text: "Sign In", onPress: () => router.replace("/login" as any) },
-          ],
-        },
-      );
+      await feedbackService.confirm({
+        title: "Authentication Required",
+        message: "Please sign in to sync with the cloud.",
+        confirmText: "Sign In",
+        cancelText: "Cancel",
+        destructive: true,
+        onConfirm: () => router.replace("/(auth)/login" as any),
+      });
       return;
     }
 
@@ -84,24 +81,26 @@ export default function SyncScreen() {
         await SecureStore.setItemAsync("lastSyncTime", time);
         setLastSync(time);
 
-        alert(
-          "Sync Complete",
-          `Successfully synced ${result.documentsSynced} document(s) and ${result.remindersSynced} reminder(s).`,
-          { type: "success" },
+        feedbackService.success(
+          `Successfully synced ${result.documentsSynced} document(s) and ${result.remindersSynced} reminder(s).`
         );
       } else if (result.errors && result.errors.length > 0) {
-        alert(
-          "Sync Completed with Errors",
-          `Synced ${result.documentsSynced} doc(s) and ${result.remindersSynced} reminder(s), but some items failed:\n\n${result.errors.join("\n")}`,
-          { type: "warning" },
-        );
+        await feedbackService.alert({
+          title: "Sync Completed with Errors",
+          message: `Synced ${result.documentsSynced} doc(s) and ${result.remindersSynced} reminder(s), but some items failed:\n\n${result.errors.join("\n")}`,
+          type: "warning",
+        });
       } else {
-        alert("Sync Failed", result.message || "Could not sync to cloud.", {
+        await feedbackService.alert({
+          title: "Sync Failed",
+          message: result.message || "Could not sync to cloud.",
           type: "error",
         });
       }
     } catch (err: any) {
-      alert("Sync Failed", err.message || "Could not sync to cloud.", {
+      await feedbackService.alert({
+        title: "Sync Failed",
+        message: err.message || "Could not sync to cloud.",
         type: "error",
       });
     } finally {

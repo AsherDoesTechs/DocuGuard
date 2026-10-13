@@ -9,6 +9,7 @@ interface ThemeContextType {
   setThemeMode: (mode: ThemeMode) => Promise<void>;
   isDark: boolean;
   toggleTheme: () => Promise<void>;
+  mounted: boolean;
 }
 
 const THEME_STORAGE_KEY = "docuguard.theme.mode";
@@ -70,12 +71,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     await setThemeMode(newMode);
   };
 
-  if (!mounted) {
-    return <>{children}</>;
-  }
+  const contextValue = { colors, themeMode, setThemeMode, isDark, toggleTheme, mounted };
 
   return (
-    <ThemeContext.Provider value={{ colors, themeMode, setThemeMode, isDark, toggleTheme }}>
+    <ThemeContext.Provider value={contextValue}>
       {children}
     </ThemeContext.Provider>
   );
@@ -90,7 +89,10 @@ export function useTheme() {
 }
 
 export function useColors(): ColorScheme {
-  const { colors } = useTheme();
+  const { colors, mounted } = useTheme();
+  if (!mounted) {
+    return LightColors;
+  }
   return colors;
 }
 
@@ -100,6 +102,9 @@ export function useThemeMode(): { themeMode: ThemeMode; setThemeMode: (mode: The
 }
 
 export function useIsDark(): boolean {
-  const { isDark } = useTheme();
+  const { isDark, mounted } = useTheme();
+  if (!mounted) {
+    return false;
+  }
   return isDark;
 }

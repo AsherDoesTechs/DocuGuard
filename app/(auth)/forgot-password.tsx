@@ -1,20 +1,24 @@
 import React, { useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Alert } from "react-native";
+import { View, Text, StyleSheet, ScrollView } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Link, useRouter } from "expo-router";
 import { Input, Button, Card } from "../../components/ui";
 import { useForm } from "../../hooks/useForm";
-import { COLORS } from "../../constants";
+import { Spacing, COLORS } from "../../constants";
 import { api } from "../../services/api";
 import {
   forgotPasswordSchema,
   type ForgotPasswordInput,
   validateSchema,
 } from "@/shared/validation";
+import { feedbackService, useFeedbackService } from "../../services/feedbackService";
 
 export default function ForgotPasswordScreen() {
   const router = useRouter();
   const [serverError, setServerError] = useState<string | null>(null);
+
+  // Initialize feedback service
+  useFeedbackService();
 
   const validate = (values: ForgotPasswordInput) => {
     const result = validateSchema(forgotPasswordSchema, values);
@@ -34,19 +38,18 @@ export default function ForgotPasswordScreen() {
       try {
         await api.auth.forgotPassword({ email });
 
-        Alert.alert(
-          "Check Your Email",
-          "If an account exists with that email, instructions and a secure link to reset your password have been sent.",
-          [
-            {
-              text: "OK",
-              onPress: () => router.replace("/(auth)/login" as any),
-            },
-          ],
-        );
+        await feedbackService.confirm({
+          title: "Check Your Email",
+          message: "If an account exists with that email, instructions and a secure link to reset your password have been sent.",
+          confirmText: "OK",
+          onConfirm: () => router.replace("/(auth)/login" as any),
+        });
       } catch (err: any) {
         console.error("Forgot password request failed:", err);
         setServerError(
+          "We couldn't process that request. Please try again in a moment.",
+        );
+        feedbackService.error(
           "We couldn't process that request. Please try again in a moment.",
         );
       }
@@ -80,12 +83,11 @@ export default function ForgotPasswordScreen() {
             keyboardType="email-address"
           />
 
-          <View style={{ marginTop: 12 }}>
+          <View style={{ marginTop: Spacing.sm }}>
             <Button
               title="Send Reset Link"
               onPress={form.handleSubmit}
               loading={form.isSubmitting}
-              feedbackType="info"
             />
           </View>
         </Card>
@@ -111,13 +113,13 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.background,
   },
   content: {
-    padding: 20,
-    paddingBottom: 40,
+    padding: 24,
+    paddingBottom: 32,
   },
   header: {
     alignItems: "center",
-    marginBottom: 40,
-    marginTop: 20,
+    marginBottom: 32,
+    marginTop: 16,
   },
   title: {
     fontSize: 28,
@@ -139,7 +141,7 @@ const styles = StyleSheet.create({
   footer: {
     flexDirection: "row",
     justifyContent: "center",
-    marginTop: 20,
+    marginTop: 24,
   },
   footerText: {
     color: COLORS.textSecondary,

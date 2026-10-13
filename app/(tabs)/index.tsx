@@ -1,9 +1,8 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
   TouchableOpacity,
   Image,
 } from "react-native";
@@ -11,11 +10,9 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { Card } from "../../components/ui";
-import { COLORS } from "@/constants";
+import { COLORS, Spacing, BORDER_RADIUS } from "@/constants";
 import { formatShortDate } from "../../utils";
 import { RefreshableContainer } from "@/components/ui/RefreshableContainer";
-import { Toast } from "@/components/ui/Toast";
-import type { ToastType } from "@/components/ui/Toast";
 import {
   getAllDocuments,
   getAllReminders,
@@ -26,7 +23,7 @@ import {
   LocalDocument,
 } from "../../services/localDatabase";
 import type { DocumentStatistics } from "../../services/localDatabase";
-import { classifyExpiration } from "@/utils";
+import { feedbackService, useFeedbackService } from "../../services/feedbackService";
 
 interface DashboardSummary {
   safetyScore: number;
@@ -47,6 +44,7 @@ interface Reminder {
 
 export default function HomeScreen() {
   const router = useRouter();
+  useFeedbackService();
   const [loading, setLoading] = useState(true);
   const [summary, setSummary] = useState<DashboardSummary>({
     safetyScore: 0,
@@ -60,11 +58,6 @@ export default function HomeScreen() {
   const [urgentReminders, setUrgentReminders] = useState<Reminder[]>([]);
   const [statistics, setStatistics] = useState<DocumentStatistics | null>(null);
   const [userName, setUserName] = useState("User");
-  const [toast, setToast] = useState<{
-    visible: boolean;
-    message: string;
-    type: ToastType;
-  }>({ visible: false, message: "", type: "success" });
 
   const fetchDashboardData = async () => {
     try {
@@ -147,17 +140,9 @@ export default function HomeScreen() {
   const handleDataReload = async () => {
     try {
       await fetchDashboardData();
-      setToast({
-        visible: true,
-        message: "Dashboard updated",
-        type: "success",
-      });
+      feedbackService.success("Dashboard updated");
     } catch {
-      setToast({
-        visible: true,
-        message: "Could not refresh dashboard",
-        type: "error",
-      });
+      feedbackService.error("Could not refresh dashboard");
     }
   };
 
@@ -205,11 +190,13 @@ export default function HomeScreen() {
         onRefresh={handleDataReload}
         contentContainerStyle={styles.content}
       >
-        <ScrollView
-          style={styles.container}
-          contentContainerStyle={styles.content}
-          showsVerticalScrollIndicator={false}
-        >
+        <View style={styles.container}>
+          {loading && (
+            <View style={styles.loadingBanner}>
+              <Ionicons name="refresh-outline" size={16} color={COLORS.primary} />
+              <Text style={styles.loadingText}>Loading your vault...</Text>
+            </View>
+          )}
           <View style={styles.header}>
             <Text style={styles.greeting}>{getGreeting()}</Text>
             <Text style={styles.title}>Your Dashboard</Text>
@@ -218,7 +205,7 @@ export default function HomeScreen() {
           {/* Hero Analytics Card */}
           <Card style={styles.heroCard}>
             <View style={styles.scoreContainer}>
-              <View style={{ flex: 1 }}>
+              <View style={styles.scoreRow}>
                 <Text style={styles.scoreLabel}>Vault Safety Score</Text>
                 <Text style={styles.scoreValue}>{summary.safetyScore}%</Text>
 
@@ -243,7 +230,6 @@ export default function HomeScreen() {
                 name="shield-checkmark"
                 size={48}
                 color={status.color}
-                style={{ marginLeft: 15 }}
               />
             </View>
 
@@ -295,7 +281,7 @@ export default function HomeScreen() {
                 <View
                   style={[
                     styles.quickActionIcon,
-                    { backgroundColor: "#EEF2FF" },
+                    { backgroundColor: COLORS.primaryLight },
                   ]}
                 >
                   <Ionicons
@@ -314,7 +300,7 @@ export default function HomeScreen() {
                 <View
                   style={[
                     styles.quickActionIcon,
-                    { backgroundColor: "#ECFDF5" },
+                    { backgroundColor: COLORS.successLight },
                   ]}
                 >
                   <Ionicons
@@ -333,7 +319,7 @@ export default function HomeScreen() {
                 <View
                   style={[
                     styles.quickActionIcon,
-                    { backgroundColor: "#FFF7ED" },
+                    { backgroundColor: COLORS.warningLight },
                   ]}
                 >
                   <Ionicons
@@ -352,7 +338,7 @@ export default function HomeScreen() {
                 <View
                   style={[
                     styles.quickActionIcon,
-                    { backgroundColor: "#FEF2F2" },
+                    { backgroundColor: COLORS.dangerLight },
                   ]}
                 >
                   <Ionicons
@@ -387,7 +373,7 @@ export default function HomeScreen() {
                 <TouchableOpacity
                   key={doc.id || doc.documentNumber}
                   onPress={() =>
-                    router.push(`/document-detail?id=${doc.id}` as any)
+                    router.push(`/document-details/${doc.id}` as any)
                   }
                 >
                   <Card style={styles.docCard}>
@@ -396,7 +382,7 @@ export default function HomeScreen() {
                         style={[
                           styles.docImage,
                           styles.docImagePlaceholder,
-                          { backgroundColor: "#FFFBEB" },
+                          { backgroundColor: COLORS.warningLight },
                         ]}
                       >
                         <Ionicons
@@ -478,7 +464,7 @@ export default function HomeScreen() {
                   <TouchableOpacity
                     key={doc.id || doc.documentNumber}
                     onPress={() =>
-                      router.push(`/document-detail?id=${doc.id}` as any)
+                      router.push(`/document-details/${doc.id}` as any)
                     }
                   >
                     <Card style={styles.docCard}>
@@ -643,15 +629,8 @@ export default function HomeScreen() {
                   : "All documents up to date"}
             </Text>
           </View>
-        </ScrollView>
+        </View>
       </RefreshableContainer>
-
-      <Toast
-        visible={toast.visible}
-        message={toast.message}
-        type={toast.type}
-        onDismiss={() => setToast((t) => ({ ...t, visible: false }))}
-      />
     </SafeAreaView>
   );
 }
@@ -659,24 +638,42 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: COLORS.background },
   container: { flex: 1 },
-  content: { padding: 16, paddingBottom: 100 },
+  loadingBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 16,
+    borderRadius: BORDER_RADIUS.md,
+    backgroundColor: COLORS.primaryLight,
+  },
+  loadingText: {
+    fontSize: 13,
+    color: COLORS.primary,
+    fontWeight: "600",
+  },
+  content: { padding: Spacing.md, paddingBottom: 80 },
   header: { marginBottom: 24 },
   greeting: { fontSize: 16, color: COLORS.textSecondary, marginBottom: 4 },
   title: { fontSize: 28, fontWeight: "700", color: COLORS.text },
-  heroCard: { marginBottom: 20, backgroundColor: "#f0f4ff" },
+  heroCard: { marginBottom: 20, backgroundColor: COLORS.primaryLight },
   scoreContainer: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 20,
   },
+  scoreRow: {
+    flex: 1,
+    gap: Spacing.sm,
+  },
   riskDescription: { fontSize: 12, fontWeight: "600", marginTop: 6 },
   progressBarTrack: {
     height: 8,
-    backgroundColor: "#E5E7EB",
+    backgroundColor: COLORS.progressBackground,
     borderRadius: 4,
     marginTop: 8,
-    marginRight: 10,
     overflow: "hidden",
   },
   progressBarFill: { height: "100%", borderRadius: 4 },
@@ -690,28 +687,39 @@ const styles = StyleSheet.create({
   statItem: { width: "23%", alignItems: "center" },
   statValue: { fontSize: 18, fontWeight: "700", color: COLORS.text },
   statLabel: { fontSize: 12, color: COLORS.textSecondary, marginTop: 4 },
+  section: { marginBottom: 24 },
+  sectionHeaderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  sectionTitle: { fontSize: 18, fontWeight: "700", color: COLORS.text },
+  sectionSubtitle: {
+    fontSize: 13,
+    color: COLORS.textSecondary,
+    marginBottom: 4,
+  },
+  seeAllText: { fontSize: 14, fontWeight: "600", color: COLORS.primary },
   quickActionsGrid: {
     flexDirection: "row",
     justifyContent: "space-between",
-    gap: 8,
+    gap: Spacing.xs,
   },
   quickAction: {
     flex: 1,
-    backgroundColor: "#fff",
-    paddingVertical: 14,
-    paddingHorizontal: 8,
-    borderRadius: 12,
+    backgroundColor: COLORS.surface,
+    paddingVertical: 16,
+    borderRadius: BORDER_RADIUS.md,
     alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#F3F4F6",
+    gap: Spacing.sm,
   },
   quickActionIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     justifyContent: "center",
     alignItems: "center",
-    marginBottom: 8,
   },
   quickActionText: {
     fontSize: 12,
@@ -719,9 +727,27 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     textAlign: "center",
   },
-  section: { marginBottom: 24 },
-  statsCards: { flexDirection: "row", gap: 12 },
-  statCard: { flex: 1, alignItems: "center", padding: 12 },
+  emptyCard: { alignItems: "center", padding: 24, gap: Spacing.sm },
+  emptyTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: COLORS.text,
+  },
+  emptyText: {
+    color: COLORS.textSecondary,
+    fontSize: 13,
+    textAlign: "center",
+  },
+  emptyButton: {
+    backgroundColor: COLORS.primary,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: BORDER_RADIUS.sm,
+    marginTop: 8,
+  },
+  emptyButtonText: { color: "#fff", fontWeight: "600", fontSize: 14 },
+  statsCards: { flexDirection: "row", gap: Spacing.md },
+  statCard: { flex: 1, alignItems: "center", padding: Spacing.md },
   statCardRow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 4 },
   statCardLabel: { fontSize: 12, color: COLORS.textSecondary },
   statCardValue: { fontSize: 22, fontWeight: "700", color: COLORS.text },
@@ -730,52 +756,11 @@ const styles = StyleSheet.create({
   categoryStatRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 4 },
   categoryStatName: { fontSize: 13, color: COLORS.textSecondary },
   categoryStatCount: { fontSize: 13, fontWeight: "600", color: COLORS.text },
-  sectionHeaderRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  sectionTitle: { fontSize: 18, fontWeight: "700", color: COLORS.text },
-  seeAllText: { fontSize: 14, fontWeight: "600", color: COLORS.primary },
-  sectionSubtitle: {
-    fontSize: 13,
-    color: COLORS.textSecondary,
-    marginBottom: 4,
-  },
-  emptyCard: { alignItems: "center", padding: 24 },
-  emptyTitle: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: COLORS.text,
-    marginTop: 8,
-  },
-  emptyText: {
-    color: COLORS.textSecondary,
-    marginTop: 4,
-    fontSize: 13,
-    textAlign: "center",
-    marginBottom: 16,
-  },
-  emptyButton: {
-    backgroundColor: COLORS.primary,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-  },
-  emptyButtonText: { color: "#fff", fontWeight: "600", fontSize: 13 },
-  emptyRemindersCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: 16,
-    gap: 12,
-  },
-  emptyRemindersText: { color: COLORS.textSecondary, fontSize: 14 },
   docCard: { marginBottom: 10, padding: 12 },
   docRow: { flexDirection: "row", alignItems: "center" },
-  docImage: { width: 50, height: 50, borderRadius: 8, marginRight: 12 },
+  docImage: { width: 50, height: 50, borderRadius: BORDER_RADIUS.sm, marginRight: 12 },
   docImagePlaceholder: {
-    backgroundColor: "#EEF2FF",
+    backgroundColor: COLORS.primaryLight,
     justifyContent: "center",
     alignItems: "center",
   },
@@ -787,7 +772,7 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   docSubtitle: { fontSize: 13, color: COLORS.textSecondary, marginBottom: 2 },
-  docDate: { fontSize: 11, color: COLORS.textSecondary },
+  docDate: { fontSize: 11, color: COLORS.textMuted },
   reminderItem: { marginBottom: 12 },
   reminderContent: { flexDirection: "row", alignItems: "center" },
   reminderIcon: { marginRight: 12 },
@@ -795,6 +780,13 @@ const styles = StyleSheet.create({
   reminderTitle: { fontSize: 15, fontWeight: "600", color: COLORS.text },
   reminderDesc: { fontSize: 13, color: COLORS.textSecondary, marginTop: 2 },
   reminderDate: { fontSize: 12, color: COLORS.textSecondary, marginTop: 4 },
+  emptyRemindersCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 16,
+    gap: 12,
+  },
+  emptyRemindersText: { color: COLORS.textSecondary, fontSize: 14 },
   syncFooter: {
     flexDirection: "row",
     justifyContent: "center",

@@ -5,7 +5,6 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Alert,
   Platform,
   TextInput,
   KeyboardAvoidingView,
@@ -32,6 +31,8 @@ import {
 } from "../services/localDatabase";
 import { formatCategoryForBackend } from "@/utils/categories";
 import { scheduleRemindersForDocument } from "@/services/notificationScheduler";
+import { feedbackService, useFeedbackService } from "@/services/feedbackService";
+import { autofillService, useAutofill } from "@/services/autofillService";
 
 const MAX_TITLE_LENGTH = 100;
 const MAX_ISSUER_LENGTH = 150;
@@ -807,6 +808,8 @@ interface FieldProps {
     | "numeric"
     | "email-address"
     | "phone-pad";
+  suggestions?: string[];
+  onSelectSuggestion?: (suggestion: string) => void;
 }
 
 function Field({
@@ -817,7 +820,30 @@ function Field({
   onChangeText,
   multiline = false,
   keyboardType = "default",
+  suggestions = [],
+  onSelectSuggestion,
 }: FieldProps) {
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [filteredSuggestions, setFilteredSuggestions] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (value && suggestions.length > 0) {
+      const filtered = suggestions.filter(
+        (s) => s.toLowerCase().includes(value.toLowerCase()) && s !== value
+      );
+      setFilteredSuggestions(filtered);
+      setShowSuggestions(filtered.length > 0);
+    } else {
+      setShowSuggestions(false);
+    }
+  }, [value, suggestions]);
+
+  const handleSelectSuggestion = (suggestion: string) => {
+    onChangeText(suggestion);
+    onSelectSuggestion?.(suggestion);
+    setShowSuggestions(false);
+  };
+
   return (
     <View style={styles.field}>
       <Text style={styles.fieldLabel}>
@@ -828,7 +854,11 @@ function Field({
         value={value}
         placeholder={placeholder}
         placeholderTextColor="#9CA3AF"
-        onChangeText={onChangeText}
+        onChangeText={(text) => {
+          onChangeText(text);
+        }}
+        onFocus={() => setShowSuggestions(true)}
+        onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
         multiline={multiline}
         keyboardType={keyboardType}
         autoCapitalize="sentences"
@@ -836,6 +866,19 @@ function Field({
         textAlignVertical={multiline ? "top" : "center"}
         style={[styles.input, multiline ? styles.multilineInput : null]}
       />
+      {showSuggestions && filteredSuggestions.length > 0 && (
+        <View style={styles.suggestionsList}>
+          {filteredSuggestions.map((suggestion) => (
+            <TouchableOpacity
+              key={suggestion}
+              style={styles.suggestionItem}
+              onPress={() => handleSelectSuggestion(suggestion)}
+            >
+              <Text style={styles.suggestionText}>{suggestion}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
     </View>
   );
 }
@@ -864,6 +907,10 @@ function StepHeader({ step }: { step: number }) {
 
 export default function AddDocumentScreen() {
   const router = useRouter();
+
+  // Initialize services
+  useFeedbackService();
+  const { issuers, titles, docNumbers, reminderPrefs, loading: autofillLoading } = useAutofill();
 
   const [step, setStep] = useState<number>(0);
 
@@ -903,16 +950,6 @@ export default function AddDocumentScreen() {
   >(null);
   const [saving, setSaving] = useState<boolean>(false);
 
-  const [toast, setToast] = useState<{
-    visible: boolean;
-    message: string;
-    type: "success" | "warning" | "error";
-  }>({
-    visible: false,
-    message: "",
-    type: "success",
-  });
-
   const categories = useMemo(() => {
     if (documentType === "legal") return LEGAL_CATEGORIES;
     if (documentType === "non-legal") return NON_LEGAL_CATEGORIES;
@@ -932,13 +969,6 @@ export default function AddDocumentScreen() {
       }
     }
   }, [specificDocument]);
-
-  function showToast(
-    message: string,
-    type: "success" | "warning" | "error" = "success",
-  ) {
-    setToast({ visible: true, message, type });
-  }
 
   function selectDocumentType(type: "legal" | "non-legal") {
     setDocumentType(type);
@@ -980,12 +1010,9 @@ export default function AddDocumentScreen() {
       });
 
       setStep(4);
-      showToast("Document uploaded. Ready for review.", "success");
+      feedbackService.success("Document uploaded. Ready for review.");
     } catch (error) {
-      Alert.alert(
-        "Upload Error",
-        "Could not select the document. Please try again.",
-      );
+      feedbackService.error("Could not select the document. Please try again.");
     }
   }
 
@@ -1026,17 +1053,11 @@ export default function AddDocumentScreen() {
 
       setStep(4);
 
-      showToast(
-        `Document scanned successfully (${extracted.confidence}% extraction completeness)`,
-        "success",
-      );
+      feedbackService.success(`Document scanned successfully (${extracted.confidence}% extraction completeness)`);
     } catch (error: any) {
       console.error("Document OCR error:", error);
 
-      showToast(
-        error?.message || "The document could not be processed.",
-        "warning",
-      );
+      feedbackService.warning(error?.message || "The document could not be processed.");
 
       setStep(4);
     } finally {
@@ -1081,23 +1102,23 @@ export default function AddDocumentScreen() {
 
   function validateInformation(): boolean {
     if (!title.trim()) {
-      Alert.alert("Missing Information", "Please enter the document name.");
+      feedbackService.error("Please enter the document name.");
       return false;
     }
     if (!documentNumber.trim()) {
-      Alert.alert("Missing Information", "Please enter the document number.");
+      feedbackService.error("Please enter the document number.");
       return false;
     }
     if (!issuer.trim()) {
-      Alert.alert("Missing Information", "Please enter the issuing agency.");
+      feedbackService.error("Please enter the issuing agency.");
       return false;
     }
     if (!issueDate) {
-      Alert.alert("Missing Information", "Please select the issue date.");
+      feedbackService.error("Please select the issue date.");
       return false;
     }
     if (!expiryDate) {
-      Alert.alert("Missing Information", "Please select the expiration date.");
+      feedbackService.error("Please select the expiration date.");
       return false;
     }
     return true;
@@ -1157,21 +1178,17 @@ export default function AddDocumentScreen() {
 
       setSaving(false);
 
-      Alert.alert(
-        "Document Added",
-        `${title} has been successfully added to your document vault.`,
-        [
-          {
-            text: "View Documents",
-            onPress: () => router.replace("/(tabs)/documents"),
-          },
-        ],
-      );
+      await feedbackService.confirm({
+        title: "Document Added",
+        message: `${title} has been successfully added to your document vault.`,
+        confirmText: "View Documents",
+        onConfirm: () => router.replace("/(tabs)/documents"),
+      });
     } catch (error) {
       setSaving(false);
       const message =
         error instanceof Error ? error.message : "Could not save the document.";
-      Alert.alert("Save Failed", message);
+      feedbackService.error(message);
     }
   }
 
@@ -1447,6 +1464,7 @@ export default function AddDocumentScreen() {
           onChangeText={(value) =>
             setTitle(sanitizeText(value, MAX_TITLE_LENGTH))
           }
+          suggestions={titles}
         />
 
         <Field
@@ -1457,6 +1475,7 @@ export default function AddDocumentScreen() {
           onChangeText={(value) =>
             setDocumentNumber(sanitizeDocumentNumber(value))
           }
+          suggestions={docNumbers}
         />
 
         <Field
@@ -1467,6 +1486,7 @@ export default function AddDocumentScreen() {
           onChangeText={(value) =>
             setIssuer(sanitizeText(value, MAX_ISSUER_LENGTH))
           }
+          suggestions={issuers}
         />
 
         <View style={styles.field}>
@@ -2038,5 +2058,34 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "700",
     color: COLORS.primary,
+  },
+  suggestionsList: {
+    position: "absolute",
+    top: "100%",
+    left: 0,
+    right: 0,
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "#D1D5DB",
+    borderTopWidth: 0,
+    borderRadius: 8,
+    marginTop: 4,
+    zIndex: 10,
+    maxHeight: 200,
+    elevation: 4,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+  },
+  suggestionItem: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F3F4F6",
+  },
+  suggestionText: {
+    fontSize: 14,
+    color: COLORS.text,
   },
 });

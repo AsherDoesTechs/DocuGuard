@@ -2,6 +2,8 @@ import React, { useEffect, useState, useCallback, useRef } from "react";
 import { AppState, AppStateStatus } from "react-native";
 import * as LocalAuthentication from "expo-local-authentication";
 import * as SecureStore from "expo-secure-store";
+import { api } from "../services/api";
+import { getUserProfile } from "../services/localDatabase";
 import {
   View,
   Text,
@@ -30,14 +32,14 @@ const APP_LOCK_TIMEOUT_KEY = "docuguard.appLock.timeout";
 
 export function useAppLock() {
   const [isLocked, setIsLocked] = useState(false);
-  const [appLockEnabled, setAppLockEnabled] = useState(true);
+  const [appLockEnabled, setAppLockEnabled] = useState(false);
   const [biometricEnabled, setBiometricEnabled] = useState(false);
   const [lockTimeout, setLockTimeout] = useState<number>(
     DEFAULT_APP_LOCK_DELAY,
   );
 
   const lastActiveTimeRef = useRef<number>(Date.now());
-  const appLockEnabledRef = useRef(true);
+  const appLockEnabledRef = useRef(false);
   const biometricEnabledRef = useRef(false);
   const lockTimeoutRef = useRef(DEFAULT_APP_LOCK_DELAY);
   const mountedRef = useRef(true);
@@ -160,13 +162,15 @@ export function useAppLock() {
   const unlockWithPassword = useCallback(
     async (password: string): Promise<boolean> => {
       try {
-        // Retrieve the stored user password or token to validate against
-        // Replace this check with your secure password validation logic
         const storedToken = await SecureStore.getItemAsync("userToken");
         if (!storedToken) return false;
 
-        // Simple validation example (In production, verify against your auth state/hash)
-        if (password.length > 0) {
+        const profile = await getUserProfile();
+        const email = profile?.email?.trim();
+        if (!email || !password) return false;
+
+        const response = await api.auth.login({ email, password });
+        if (response.token && !response.requiresTwoFactor) {
           setIsLocked(false);
           return true;
         }

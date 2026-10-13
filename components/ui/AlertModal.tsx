@@ -8,7 +8,6 @@ import {
   Pressable,
   Animated,
   Easing,
-  Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { COLORS } from "@/constants";
@@ -130,12 +129,6 @@ export const AlertModal = ({
   }, [visible, fadeAnim, scaleAnim, slideAnim, iconScaleAnim, onDismiss]);
 
   const handleButtonPress = async (button: AlertButton) => {
-    if (Platform.OS !== "web") {
-      try {
-        const Haptics = await import("expo-haptics");
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      } catch {}
-    }
     if (button.onPress) {
       await button.onPress();
     }

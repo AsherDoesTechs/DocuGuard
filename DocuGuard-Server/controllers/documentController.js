@@ -9,6 +9,7 @@ const {
   sendProcessingCompleteNotification,
   sendVerificationNotification,
 } = require("../services/notificationService");
+const { syncDocument, deleteRecord } = require("../services/dataSyncService");
 const { ErrorCodes } = require("../utils/errorCodes");
 const { debug, info, warn, error: logError } = require("../utils/debugLogger");
 const {
@@ -256,6 +257,7 @@ exports.processDocument = async (req, res) => {
     }
 
     const updatedDocument = updateResult.rows[0];
+    await syncDocument(userId, updatedDocument, "UPDATE");
 
     /*
      * Notification is optional. Don't let a notification
@@ -307,6 +309,12 @@ exports.processDocument = async (req, res) => {
           `,
           [req.body.documentId, req.user.userId],
         );
+        await syncDocument(req.user.userId, {
+          id: req.body.documentId,
+          status: "active",
+          processing_status: "failed",
+          user_id: req.user.userId,
+        }, "UPDATE");
       }
     } catch (dbError) {
       logError("Could not update failed processing status:", dbError);
@@ -363,6 +371,12 @@ exports.verifyDocument = async (req, res) => {
     }
 
     if (docResult.rows.length > 0) {
+      await syncDocument(userId, {
+        id: documentId,
+        userId,
+        title: docResult.rows[0].title,
+        status: "verified",
+      }, "UPDATE");
       const userResult = await db.query(
         `SELECT fcm_token, expo_push_token FROM users WHERE id = $1`,
         [userId],
@@ -574,6 +588,7 @@ exports.createDocument = async (req, res) => {
       userId,
       docId: newDoc.rows[0].id,
     });
+    await syncDocument(userId, newDoc.rows[0], "INSERT");
     res.status(201).json({
       message: "Document created successfully",
       document: newDoc.rows[0],
@@ -658,6 +673,7 @@ exports.updateDocument = async (req, res) => {
     }
 
     info("Documents", "Document updated", { userId, docId });
+    await syncDocument(userId, updated.rows[0], "UPDATE");
 
     res.json({
       message: "Document updated successfully",
@@ -819,6 +835,7 @@ exports.syncDocument = async (req, res) => {
         userId,
         docId: existing.rows[0].id,
       });
+      await syncDocument(userId, updated.rows[0], "UPDATE");
 
       res.json({
         message: "Document synced (updated)",
@@ -864,6 +881,7 @@ exports.syncDocument = async (req, res) => {
         userId,
         docId: inserted.rows[0].id,
       });
+      await syncDocument(userId, inserted.rows[0], "INSERT");
 
       res.status(201).json({
         message: "Document synced (created)",
@@ -908,6 +926,7 @@ exports.deleteDocument = async (req, res) => {
     }
 
     info("Documents", "Document deleted", { userId, docId });
+    await deleteRecord("documents", docId, userId);
     res.json({ message: "Document deleted successfully" });
   } catch (err) {
     logError(

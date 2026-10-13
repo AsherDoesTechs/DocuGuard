@@ -5,18 +5,109 @@ export { default as Spacing } from "./spacing";
 export { ErrorCodes, getErrorMessage, formatError } from "./errorCodes";
 
 export const COLORS = {
-  primary: "#2563eb",
-  primaryDark: "#1e40af",
-  secondary: "#4f46e5",
-  success: "#10b981",
-  warning: "#f59e0b",
-  danger: "#ef4444",
-  background: "#f8fafc",
-  surface: "#ffffff",
-  text: "#1f2937",
-  textSecondary: "#6b7280",
-  textMuted: "#64748B",
-  border: "#e5e7eb",
+  primary: "#5B8DEF",
+  primaryDark: "#4778D8",
+  primaryLight: "#E8F1FF",
+  secondary: "#4F46E5",
+  success: "#10B981",
+  successLight: "#D1FAE5",
+  warning: "#F59E0B",
+  warningLight: "#FEF3C7",
+  danger: "#EF4444",
+  dangerLight: "#FEE2E2",
+  background: "#F7FAFE",
+  surface: "#FFFFFF",
+  surfaceSecondary: "#F3F7FC",
+  text: "#243247",
+  textSecondary: "#6B7A90",
+  textMuted: "#9AA8BA",
+  border: "#DCE6F2",
+  borderLight: "#EDF3FA",
+  shadow: "#000000",
+  overlay: "rgba(15, 23, 42, 0.5)",
+  divider: "#E2E8F0",
+  inputBackground: "#FFFFFF",
+  inputBorder: "#D1D5DB",
+  buttonPrimary: "#5B8DEF",
+  buttonPrimaryText: "#FFFFFF",
+  buttonSecondary: "#EDF3FA",
+  buttonSecondaryText: "#4778D8",
+  buttonDanger: "#EF4444",
+  buttonDangerText: "#FFFFFF",
+  tagBackground: "#E8F1FF",
+  tagText: "#4778D8",
+  tagBorder: "#C9DCF8",
+  progressBackground: "#DCE6F2",
+  progressFill: "#5B8DEF",
+  modalOverlay: "rgba(15, 23, 42, 0.4)",
+  headerBackground: "#FFFFFF",
+  tabBarBackground: "#FFFFFF",
+  tabBarBorder: "#E2E8F0",
+  searchBackground: "#F3F7FC",
+  cardShadow: "rgba(73, 103, 145, 0.08)",
+};
+
+export const TYPOGRAPHY = {
+  heading: {
+    fontSize: 32,
+    fontWeight: "700",
+    letterSpacing: -0.5,
+  },
+  title: {
+    fontSize: 22,
+    fontWeight: "600",
+    letterSpacing: -0.25,
+  },
+  subtitle: {
+    fontSize: 16,
+    fontWeight: "500",
+  },
+  body: {
+    fontSize: 16,
+    fontWeight: "400",
+    lineHeight: 24,
+  },
+  caption: {
+    fontSize: 13,
+    fontWeight: "500",
+  },
+  small: {
+    fontSize: 12,
+    fontWeight: "500",
+  },
+};
+
+export const SHADOWS = {
+  sm: {
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  md: {
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  lg: {
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 16,
+    elevation: 4,
+  },
+};
+
+export const BORDER_RADIUS = {
+  xs: 4,
+  sm: 8,
+  md: 12,
+  lg: 16,
+  xl: 24,
+  full: 999,
 };
 
 export const DOCUMENT_CATEGORIES = {

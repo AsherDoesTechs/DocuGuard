@@ -3,6 +3,15 @@ const { ErrorCodes } = require("../utils/errorCodes");
 const { debug, info, warn, error: logError } = require("../utils/debugLogger");
 const { reminderSchema, validateSchema } = require("../../shared/validation/schemas");
 const { z } = require("zod");
+const { syncReminder, deleteRecord } = require("../services/dataSyncService");
+
+function toDatabaseSeverity(severity) {
+  return severity === "Expiring Soon" ? "Expiring" : severity;
+}
+
+function toClientSeverity(severity) {
+  return severity === "Expiring" ? "Expiring Soon" : severity;
+}
 
 // Get all reminders for the user
 exports.getReminders = async (req, res) => {
@@ -13,7 +22,10 @@ exports.getReminders = async (req, res) => {
        FROM reminders WHERE user_id = $1 ORDER BY due_date ASC`,
       [userId],
     );
-    res.json(result.rows);
+    res.json(result.rows.map((reminder) => ({
+      ...reminder,
+      severity: toClientSeverity(reminder.severity),
+    })));
   } catch (err) {
     logError("Reminders", "Error fetching reminders", {
       error: err.message, stack: err.stack, userId,
@@ -44,11 +56,15 @@ exports.createReminder = async (req, res) => {
       `INSERT INTO reminders (user_id, title, description, due_date, severity, is_read)
        VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING id, title, description, due_date AS "dueDate", severity, is_read AS "read"`,
-      [userId, title, description || "", dueDate, severity || "Valid", false],
+      [userId, title, description || "", dueDate, toDatabaseSeverity(severity || "Valid"), false],
     );
 
     info("Reminders", "Reminder created", { userId, reminderId: result.rows[0].id });
-    res.status(201).json(result.rows[0]);
+    await syncReminder(userId, result.rows[0], "INSERT");
+    res.status(201).json({
+      ...result.rows[0],
+      severity: toClientSeverity(result.rows[0].severity),
+    });
   } catch (err) {
     logError("Reminders", "Error creating reminder", {
       error: err.message, stack: err.stack, userId,
@@ -121,7 +137,7 @@ exports.updateReminder = async (req, res) => {
            is_read = COALESCE($5, is_read)
        WHERE id = $6 AND user_id = $7
        RETURNING id, title, description, due_date AS "dueDate", severity, is_read AS "read"`,
-      [title, description, dueDate, severity, isRead, reminderId, userId],
+      [title, description, dueDate, toDatabaseSeverity(severity), isRead, reminderId, userId],
     );
 
     if (result.rows.length === 0) {
@@ -132,7 +148,11 @@ exports.updateReminder = async (req, res) => {
     }
 
     info("Reminders", "Reminder updated", { userId, reminderId });
-    res.json(result.rows[0]);
+    await syncReminder(userId, result.rows[0], "UPDATE");
+    res.json({
+      ...result.rows[0],
+      severity: toClientSeverity(result.rows[0].severity),
+    });
   } catch (err) {
     logError("Reminders", "Error updating reminder", {
       error: err.message, stack: err.stack, userId, reminderId,
@@ -163,6 +183,7 @@ exports.deleteReminder = async (req, res) => {
     }
 
     info("Reminders", "Reminder deleted", { userId, reminderId });
+    await deleteRecord("reminders", reminderId, userId);
     res.json({ message: "Reminder deleted successfully" });
   } catch (err) {
     logError("Reminders", "Error deleting reminder", {

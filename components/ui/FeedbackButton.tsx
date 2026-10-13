@@ -11,7 +11,7 @@ export interface FeedbackButtonProps extends TouchableOpacityProps {
 
 export function FeedbackButton({
   feedbackType = "selection",
-  feedbackOptions = { sound: false, haptic: true },
+  feedbackOptions = { sound: false, haptic: false },
   onPress,
   children,
   style,
@@ -19,8 +19,10 @@ export function FeedbackButton({
 }: FeedbackButtonProps) {
   const { trigger } = useFeedback();
 
-   const handlePress = async (...args: any[]) => {
-    await trigger(feedbackType, feedbackOptions);
+  const handlePress = async (...args: any[]) => {
+    if (feedbackOptions.sound || feedbackOptions.haptic) {
+      await trigger(feedbackType, feedbackOptions);
+    }
     if (onPress) {
       (onPress as any)(...args);
     }
@@ -53,7 +55,9 @@ export function withFeedback<P extends object>(
     const originalOnPress = (props as any).onPress;
     
     const handlePress = async (...args: any[]) => {
-      await trigger(feedbackType, feedbackOptions);
+      if (feedbackOptions?.sound || feedbackOptions?.haptic) {
+        await trigger(feedbackType, feedbackOptions);
+      }
       if (originalOnPress) {
         originalOnPress(...args);
       }

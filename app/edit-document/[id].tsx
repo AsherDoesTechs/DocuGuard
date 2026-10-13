@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -29,6 +28,7 @@ import {
 } from "@/services/localDatabase";
 import { api, API_BASE_URL } from "@/services/api";
 import { documentUpdateSchema, validateSchema } from "@/shared/validation";
+import { feedbackService, useFeedbackService } from "@/services/feedbackService";
 
 /* =========================================================
    TYPES
@@ -359,6 +359,7 @@ export default function EditDocumentScreen() {
   }>();
 
   const router = useRouter();
+  useFeedbackService();
   const documentId = Array.isArray(params.id) ? params.id[0] : params.id;
 
   const [isLoading, setIsLoading] = useState(true);
@@ -715,16 +716,21 @@ export default function EditDocumentScreen() {
     }
 
     if (!validateForm()) {
-      Alert.alert(
-        "Check Your Information",
-        "Please correct the highlighted fields before saving.",
-      );
+      await feedbackService.alert({
+        title: "Check Your Information",
+        message: "Please correct the highlighted fields before saving.",
+        type: "warning",
+      });
       return;
     }
 
     const numericId = Number(documentId);
     if (!Number.isInteger(numericId) || numericId <= 0) {
-      Alert.alert("Error", "Invalid document ID.");
+      await feedbackService.alert({
+        title: "Error",
+        message: "Invalid document ID.",
+        type: "error",
+      });
       return;
     }
 
@@ -786,77 +792,81 @@ export default function EditDocumentScreen() {
       setTouched({});
 
       if (cloudSaveSuccessful || useLocalData) {
-        Alert.alert(
-          "Changes Saved",
-          useLocalData
+        await feedbackService.confirm({
+          title: "Changes Saved",
+          message: useLocalData
             ? "Your document was updated on this device."
             : "Your document was updated successfully.",
-          [{ text: "OK", onPress: () => router.back() }],
-        );
+          confirmText: "OK",
+          onConfirm: () => router.back(),
+        });
       } else if (localSaveSuccessful) {
-        Alert.alert(
-          "Saved Locally",
-          "Your changes were saved on this device.",
-          [{ text: "OK", onPress: () => router.back() }],
-        );
+        await feedbackService.confirm({
+          title: "Saved Locally",
+          message: "Your changes were saved on this device.",
+          confirmText: "OK",
+          onConfirm: () => router.back(),
+        });
       }
     } catch (error: any) {
       console.error("Document update failed:", error);
       if (localSaveSuccessful) {
-        Alert.alert(
-          "Saved Locally",
-          `Your changes were saved on this device, but cloud synchronization failed.\n\n${
+        await feedbackService.alert({
+          title: "Saved Locally",
+          message: `Your changes were saved on this device, but cloud synchronization failed.\n\n${
             error?.message ||
             "Please try again when you have an internet connection."
           }`,
-        );
+          type: "warning",
+        });
       } else {
-        Alert.alert(
-          "Save Failed",
-          error?.message || "Could not save your changes.",
-        );
+        await feedbackService.alert({
+          title: "Save Failed",
+          message: error?.message || "Could not save your changes.",
+          type: "error",
+        });
       }
     } finally {
       setIsSaving(false);
     }
   }, [cloudId, documentId, isSaving, router, useLocalData, validateForm, values]);
 
-  const handleReset = useCallback(() => {
+  const handleReset = useCallback(async () => {
     if (!hasChanges) {
       return;
     }
 
-    Alert.alert("Reset Changes?", "All unsaved changes will be discarded.", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Reset",
-        style: "destructive",
-        onPress: () => {
-          setValues(initialData);
-          setSelectedGroup(initialData.documentGroup);
-          setErrors({});
-          setTouched({});
-          setTypeSearch("");
-          setShowAllTypes(false);
-        },
+    await feedbackService.confirm({
+      title: "Reset Changes?",
+      message: "All unsaved changes will be discarded.",
+      confirmText: "Reset",
+      cancelText: "Cancel",
+      destructive: true,
+      onConfirm: () => {
+        setValues(initialData);
+        setSelectedGroup(initialData.documentGroup);
+        setErrors({});
+        setTouched({});
+        setTypeSearch("");
+        setShowAllTypes(false);
       },
-    ]);
+    });
   }, [hasChanges, initialData]);
 
-  const handleBack = useCallback(() => {
+  const handleBack = useCallback(async () => {
     if (!hasChanges) {
       router.back();
       return;
     }
 
-    Alert.alert(
-      "Unsaved Changes",
-      "You have changes that have not been saved. Leave this page?",
-      [
-        { text: "Stay", style: "cancel" },
-        { text: "Discard", style: "destructive", onPress: () => router.back() },
-      ],
-    );
+    await feedbackService.confirm({
+      title: "Unsaved Changes",
+      message: "You have changes that have not been saved. Leave this page?",
+      confirmText: "Discard",
+      cancelText: "Stay",
+      destructive: true,
+      onConfirm: () => router.back(),
+    });
   }, [hasChanges, router]);
 
   if (isLoading) {

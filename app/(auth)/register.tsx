@@ -1,16 +1,18 @@
-import React, { useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Alert } from "react-native";
+import React, { useState, useMemo } from "react";
+import { View, Text, StyleSheet, ScrollView } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Link, useRouter } from "expo-router";
 import { Input, Button, Card } from "../../components/ui";
 import { useForm } from "../../hooks/useForm";
-import { COLORS } from "../../constants";
+import { useColors } from "@/context/ThemeContext";
+import { Spacing, COLORS } from "@/constants";
 import { api } from "../../services/api";
 import {
   registerSchema,
   type RegisterInput,
   validateSchema,
 } from "@/shared/validation";
+import { feedbackService, useFeedbackService } from "../../services/feedbackService";
 
 interface RegisterFormValues extends RegisterInput {
   firstName: string;
@@ -19,27 +21,30 @@ interface RegisterFormValues extends RegisterInput {
 
 export default function RegisterScreen() {
   const router = useRouter();
+  const colors = useColors();
   const [serverError, setServerError] = useState<string | null>(null);
+
+  useFeedbackService();
 
   const getPasswordStrength = (password: string) => {
     if (!password)
       return {
         score: 0,
         label: "Enter a password",
-        color: COLORS.textSecondary,
+        color: colors.textSecondary,
       };
     let score = 0;
-    if (password.length >= 6) score += 1;
+    if (password.length >= 8) score += 1;
     if (password.length >= 10) score += 1;
     if (/[A-Z]/.test(password)) score += 1;
     if (/[0-9]/.test(password)) score += 1;
     if (/[^A-Za-z0-9]/.test(password)) score += 1;
 
-    if (score <= 1) return { score: 20, label: "Weak", color: "#EF4444" };
-    if (score === 2) return { score: 40, label: "Fair", color: "#F59E0B" };
-    if (score === 3) return { score: 60, label: "Good", color: "#3B82F6" };
-    if (score === 4) return { score: 80, label: "Strong", color: "#10B981" };
-    return { score: 100, label: "Very strong", color: "#8B5CF6" };
+    if (score <= 1) return { score: 20, label: "Weak", color: COLORS.danger };
+    if (score === 2) return { score: 40, label: "Fair", color: COLORS.warning };
+    if (score === 3) return { score: 60, label: "Good", color: COLORS.primary };
+    if (score === 4) return { score: 80, label: "Strong", color: COLORS.success };
+    return { score: 100, label: "Very strong", color: COLORS.success };
   };
 
   const validate = (values: RegisterFormValues) => {
@@ -86,11 +91,12 @@ export default function RegisterScreen() {
         const response = await api.auth.register(payload);
 
         if (response?.emailSent === false) {
-          Alert.alert(
-            "Email Delivery Issue",
-            "Your account was created, but verification email could not be sent. You can try resending from the next screen.",
-            [{ text: "Continue" }],
-          );
+          await feedbackService.alert({
+            title: "Email Delivery Issue",
+            message: "Your account was created, but verification email could not be sent. You can try resending from the next screen.",
+            type: "warning",
+            buttons: [{ text: "Continue" }],
+          });
         }
 
         router.replace({
@@ -102,19 +108,59 @@ export default function RegisterScreen() {
           err?.response?.data?.error ||
           "Could not create account. Please try again.";
         setServerError(errorMsg);
+        feedbackService.error(errorMsg);
       }
     },
   });
 
-  const pwdStats = getPasswordStrength(form.values.password);
+  const pwdStats = useMemo(
+    () => getPasswordStrength(form.values.password),
+    [form.values.password, colors.textSecondary],
+  );
+
+  const styles = StyleSheet.create({
+    safeArea: { flex: 1, backgroundColor: colors.background },
+    container: { flex: 1, backgroundColor: colors.background },
+    content: { padding: 24, paddingBottom: 32 },
+    header: { alignItems: "center", marginBottom: 32, marginTop: 16 },
+    title: {
+      fontSize: 28,
+      fontWeight: "700",
+      color: colors.text,
+      marginBottom: 8,
+    },
+    subtitle: { fontSize: 15, color: colors.textSecondary, textAlign: "center" },
+    errorText: {
+      color: colors.error,
+      marginBottom: 12,
+      textAlign: "center",
+      fontSize: 14,
+    },
+    strengthContainer: { marginBottom: 16, marginTop: Spacing.xs },
+    progressBarBackground: {
+      height: 6,
+      backgroundColor: colors.border,
+      borderRadius: 3,
+      overflow: "hidden",
+      marginBottom: 6,
+    },
+    progressBarFill: { height: "100%", borderRadius: 3 },
+    strengthLabel: { fontSize: 12, fontWeight: "600" },
+    footer: {
+      flexDirection: "row",
+      justifyContent: "center",
+      marginTop: 24,
+    },
+    footerText: { color: colors.textSecondary, fontSize: 14 },
+    link: { color: colors.primary, fontSize: 14, fontWeight: "600" },
+  });
 
   return (
     <SafeAreaView style={styles.safeArea}>
       <ScrollView
         style={styles.container}
         contentContainerStyle={styles.content}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="on-drag"
+        showsVerticalScrollIndicator={false}
       >
         <View style={styles.header}>
           <Text style={styles.title}>Create Account</Text>
@@ -126,29 +172,33 @@ export default function RegisterScreen() {
         <Card>
           {serverError && <Text style={styles.errorText}>{serverError}</Text>}
 
-          <Input
-            label="First name"
-            placeholder="John"
-            value={form.values.firstName}
-            onChangeText={(text) => {
-              const cleanText = text.replace(/[^A-Za-zÀ-ÿ\s'-]/g, "");
-              if (cleanText.length <= 50) {
-                form.handleChange("firstName")(cleanText);
-              }
-            }}
-          />
+          <View style={{ flexDirection: "row", gap: Spacing.sm }}>
+            <Input
+              label="First name"
+              placeholder="John"
+              value={form.values.firstName}
+              onChangeText={(text) => {
+                const cleanText = text.replace(/[^A-Za-zÀ-ÿ\s'-]/g, "");
+                if (cleanText.length <= 50) {
+                  form.handleChange("firstName")(cleanText);
+                }
+              }}
+              style={{ flex: 1 }}
+            />
 
-          <Input
-            label="Last name"
-            placeholder="Doe"
-            value={form.values.lastName}
-            onChangeText={(text) => {
-              const cleanText = text.replace(/[^A-Za-zÀ-ÿ\s'-]/g, "");
-              if (cleanText.length <= 50) {
-                form.handleChange("lastName")(cleanText);
-              }
-            }}
-          />
+            <Input
+              label="Last name"
+              placeholder="Doe"
+              value={form.values.lastName}
+              onChangeText={(text) => {
+                const cleanText = text.replace(/[^A-Za-zÀ-ÿ\s'-]/g, "");
+                if (cleanText.length <= 50) {
+                  form.handleChange("lastName")(cleanText);
+                }
+              }}
+              style={{ flex: 1 }}
+            />
+          </View>
 
           <Input
             label="Email address"
@@ -203,12 +253,11 @@ export default function RegisterScreen() {
             secureTextEntry
           />
 
-          <View style={{ marginTop: 20 }}>
+          <View style={{ marginTop: Spacing.sm }}>
             <Button
               title="Create Account"
               onPress={form.handleSubmit}
               loading={form.isSubmitting}
-              feedbackType="success"
             />
           </View>
         </Card>
@@ -223,41 +272,3 @@ export default function RegisterScreen() {
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: COLORS.background },
-  container: { flex: 1, backgroundColor: COLORS.background },
-  content: { padding: 20, paddingBottom: 40 },
-  header: { alignItems: "center", marginBottom: 30, marginTop: 20 },
-  title: {
-    fontSize: 28,
-    fontWeight: "700",
-    color: COLORS.text,
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: COLORS.textSecondary,
-    textAlign: "center",
-    paddingHorizontal: 10,
-  },
-  errorText: {
-    color: COLORS.danger,
-    marginBottom: 12,
-    textAlign: "center",
-    fontSize: 14,
-  },
-  strengthContainer: { marginBottom: 16, marginTop: -4 },
-  progressBarBackground: {
-    height: 6,
-    backgroundColor: "#E5E7EB",
-    borderRadius: 3,
-    overflow: "hidden",
-    marginBottom: 6,
-  },
-  progressBarFill: { height: "100%", borderRadius: 3 },
-  strengthLabel: { fontSize: 12, fontWeight: "600" },
-  footer: { flexDirection: "row", justifyContent: "center", marginTop: 20 },
-  footerText: { color: COLORS.textSecondary, fontSize: 14 },
-  link: { color: COLORS.primary, fontSize: 14, fontWeight: "600" },
-});

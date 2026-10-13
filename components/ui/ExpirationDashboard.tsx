@@ -4,7 +4,6 @@ import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { COLORS } from "@/constants";
 import Spacing from "@/constants/spacing";
-import { Spacing as SpacingObj } from "@/constants/spacing";
 const RADIUS = { md: 12 };
 import { DocumentDashboardSummary } from "@/types/offline";
 import { formatShortDate } from "@/utils";

@@ -5,7 +5,6 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Alert,
   Switch,
   TextInput,
   ActivityIndicator,
@@ -17,8 +16,6 @@ import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { Card } from "../../components/ui";
 import { SubscriptionView } from "../../components/ui/SubscriptionView";
-import { Toast } from "../../components/ui/Toast";
-import type { ToastType } from "../../components/ui/Toast";
 import { COLORS } from "@/constants";
 import { RefreshableContainer } from "@/components/ui/RefreshableContainer";
 import * as SecureStore from "expo-secure-store";
@@ -29,6 +26,7 @@ import {
   clearLocalSession,
 } from "../../services/localDatabase";
 import * as LocalAuthentication from "expo-local-authentication";
+import { feedbackService, useFeedbackService } from "../../services/feedbackService";
 
 type SettingsTab =
   | "none"
@@ -164,11 +162,8 @@ export default function ProfileScreen() {
   const [, setLoading] = useState(true);
   const [user, setUser] = useState<UserProfile | null>(null);
 
-  const [toast, setToast] = useState<{
-    visible: boolean;
-    message: string;
-    type: ToastType;
-  }>({ visible: false, message: "", type: "success" });
+  // Initialize feedback service
+  useFeedbackService();
 
   const [passwords, setPasswords] = useState({
     current: "",
@@ -221,10 +216,6 @@ export default function ProfileScreen() {
     fontSize: "medium",
     reducedMotion: false,
   });
-
-  const showToast = (message: string, type: ToastType = "success") => {
-    setToast({ visible: true, message, type });
-  };
 
   const checkBiometrics = useCallback(async () => {
     try {
@@ -355,6 +346,20 @@ export default function ProfileScreen() {
     checkBiometrics();
   }, [fetchProfile, checkBiometrics]);
 
+  // Check storage and show warning at >= 80%
+  useEffect(() => {
+    if (user?.subscription?.storageUsed && user?.subscription?.storageTotal) {
+      const percentage = (user.subscription.storageUsed / user.subscription.storageTotal) * 100;
+      if (percentage >= 80) {
+        feedbackService.showStorageWarning({
+          used: user.subscription.storageUsed,
+          total: user.subscription.storageTotal,
+          action: "Consider upgrading your plan or removing old documents.",
+        });
+      }
+    }
+  }, [user?.subscription?.storageUsed, user?.subscription?.storageTotal]);
+
   const handleSetup2FA = async () => {
     try {
       setSettingUp2FA(true);
@@ -370,12 +375,9 @@ export default function ProfileScreen() {
         secret: res.data.secret,
         otpauthUri: res.data.otpauthUri,
       });
-      showToast("Scan the QR code with your authenticator app", "info");
+      feedbackService.info("Scan the QR code with your authenticator app");
     } catch (error) {
-      showToast(
-        getApiErrorMessage(error, "Unable to start 2FA setup."),
-        "error",
-      );
+      feedbackService.error(getApiErrorMessage(error, "Unable to start 2FA setup."));
     } finally {
       setSettingUp2FA(false);
     }
@@ -383,7 +385,8 @@ export default function ProfileScreen() {
 
   const handleVerify2FA = async () => {
     if (twoFactorCode.length !== 6) {
-      return Alert.alert("Error", "Please enter a valid 6-digit code.");
+      feedbackService.error("Please enter a valid 6-digit code.");
+      return;
     }
     try {
       setVerifying2FA(true);
@@ -400,12 +403,9 @@ export default function ProfileScreen() {
       setTwoFactor(true);
       setTwoFactorSetup(null);
       setTwoFactorCode("");
-      showToast("Two-factor authentication enabled successfully.", "success");
+      feedbackService.success("Two-factor authentication enabled successfully.");
     } catch (error) {
-      showToast(
-        getApiErrorMessage(error, "Invalid verification code."),
-        "error",
-      );
+      feedbackService.error(getApiErrorMessage(error, "Invalid verification code."));
     } finally {
       setVerifying2FA(false);
     }
@@ -414,37 +414,39 @@ export default function ProfileScreen() {
   const handleToggleBiometric = async (value: boolean) => {
     if (value) {
       if (!biometric.available || !biometric.enrolled) {
-        return Alert.alert(
-          "Error",
-          "Biometrics are not set up on this device.",
-        );
+        feedbackService.alert({
+          title: "Error",
+          message: "Biometrics are not set up on this device.",
+          type: "error",
+        });
+        return;
       }
       const auth = await LocalAuthentication.authenticateAsync({
         promptMessage: "Authenticate to enable biometric protection",
         fallbackLabel: "Use Passcode",
       });
       if (!auth.success) {
-        return showToast("Biometric authentication cancelled", "error");
+        feedbackService.error("Biometric authentication cancelled");
+        return;
       }
     }
     try {
       await SecureStore.setItemAsync("biometricEnabled", String(value));
       setBiometric((prev) => ({ ...prev, enabled: value }));
-      showToast(
-        value ? "Biometrics enabled" : "Biometrics disabled",
-        "success",
-      );
+      feedbackService.success(value ? "Biometrics enabled" : "Biometrics disabled");
     } catch {
-      showToast("Failed to update biometric preference", "error");
+      feedbackService.error("Failed to update biometric preference");
     }
   };
 
   const handleToggleAppLock = async (value: boolean) => {
     if (value && (!biometric.available || !biometric.enrolled)) {
-      return Alert.alert(
-        "Error",
-        "App lock requires device biometrics or passcode to be configured.",
-      );
+      feedbackService.alert({
+        title: "Error",
+        message: "App lock requires device biometrics or passcode to be configured.",
+        type: "error",
+      });
+      return;
     }
     try {
       await SecureStore.setItemAsync(
@@ -452,27 +454,24 @@ export default function ProfileScreen() {
         String(value),
       );
       setAppLockEnabled(value);
-      showToast(
-        value ? "App Lock enabled successfully" : "App Lock disabled",
-        "success",
-      );
+      feedbackService.success(value ? "App Lock enabled successfully" : "App Lock disabled");
     } catch {
-      showToast("Failed to update App Lock preference", "error");
+      feedbackService.error("Failed to update App Lock preference");
     }
   };
 
   const handleSaveSecurity = async () => {
     if (!passwords.current) {
-      return Alert.alert("Error", "Please enter your current password.");
+      feedbackService.error("Please enter your current password.");
+      return;
     }
     if (passwords.new && passwords.new.length < 12) {
-      return Alert.alert(
-        "Error",
-        "New password must be at least 12 characters.",
-      );
+      feedbackService.error("New password must be at least 12 characters.");
+      return;
     }
     if (passwords.new && passwords.new !== passwords.confirm) {
-      return Alert.alert("Error", "New passwords do not match.");
+      feedbackService.error("New passwords do not match.");
+      return;
     }
 
     try {
@@ -492,13 +491,10 @@ export default function ProfileScreen() {
         headers: { Authorization: `Bearer ${token}` },
       });
 
-      showToast("Security settings updated successfully", "success");
+      feedbackService.success("Security settings updated successfully");
       setPasswords({ current: "", new: "", confirm: "" });
     } catch (err: any) {
-      showToast(
-        getApiErrorMessage(err, "Failed to update security settings."),
-        "error",
-      );
+      feedbackService.error(getApiErrorMessage(err, "Failed to update security settings."));
     } finally {
       setSavingSecurity(false);
     }
@@ -506,7 +502,8 @@ export default function ProfileScreen() {
 
   const handleSavePersonalInfo = async () => {
     if (!personalInfo.name.trim() || !personalInfo.email.trim()) {
-      return Alert.alert("Error", "Name and email cannot be empty.");
+      feedbackService.error("Name and email cannot be empty.");
+      return;
     }
     try {
       setSavingPersonal(true);
@@ -515,9 +512,9 @@ export default function ProfileScreen() {
         headers: { Authorization: `Bearer ${token}` },
       });
       setUser((prev) => (prev ? { ...prev, ...personalInfo } : null));
-      showToast("Personal information updated", "success");
+      feedbackService.success("Personal information updated");
     } catch (err: any) {
-      showToast(getApiErrorMessage(err, "Failed to update profile"), "error");
+      feedbackService.error(getApiErrorMessage(err, "Failed to update profile"));
     } finally {
       setSavingPersonal(false);
     }
@@ -547,39 +544,35 @@ export default function ProfileScreen() {
       await api.client.delete(`/profile/sessions/${sessionId}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      showToast("Session revoked", "success");
+      feedbackService.success("Session revoked");
       fetchLoginSessions();
     } catch (err: any) {
-      showToast(getApiErrorMessage(err, "Failed to revoke session"), "error");
+      feedbackService.error(getApiErrorMessage(err, "Failed to revoke session"));
     }
   };
 
   const handleSignOut = () => {
-    Alert.alert(
-      "Sign Out",
-      "Are you sure you want to sign out of your account?",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Sign Out",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              // Purge the local vault, not just the token. Previously the
-              // document database was left intact, so the next person to sign
-              // in on this device saw the previous account's documents.
-              await clearLocalSession();
-              await SecureStore.deleteItemAsync("userToken");
-              await SecureStore.deleteItemAsync("biometricEnabled");
-              await SecureStore.deleteItemAsync("docuguard.appLock.enabled");
-              router.replace("/auth/login" as any);
-            } catch {
-              showToast("Failed to sign out cleanly", "error");
-            }
-          },
-        },
-      ],
-    );
+    feedbackService.confirm({
+      title: "Sign Out",
+      message: "Are you sure you want to sign out of your account?",
+      confirmText: "Sign Out",
+      cancelText: "Cancel",
+      destructive: true,
+      onConfirm: async () => {
+        try {
+          // Purge the local vault, not just the token. Previously the
+          // document database was left intact, so the next person to sign
+          // in on this device saw the previous account's documents.
+          await clearLocalSession();
+          await SecureStore.deleteItemAsync("userToken");
+          await SecureStore.deleteItemAsync("biometricEnabled");
+          await SecureStore.deleteItemAsync("docuguard.appLock.enabled");
+          router.replace("/(auth)/login" as any);
+        } catch {
+          feedbackService.error("Failed to sign out cleanly");
+        }
+      },
+    });
   };
 
   return (
@@ -988,13 +981,6 @@ export default function ProfileScreen() {
           </ScrollView>
         </RefreshableContainer>
       </KeyboardAvoidingView>
-
-      <Toast
-        visible={toast.visible}
-        message={toast.message}
-        type={toast.type}
-        onDismiss={() => setToast((t) => ({ ...t, visible: false }))}
-      />
     </SafeAreaView>
   );
 }

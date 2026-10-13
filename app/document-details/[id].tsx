@@ -5,7 +5,6 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Alert,
   ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -13,7 +12,6 @@ import { useRouter, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { Card, StatusBadge } from "@/components/ui";
 import { COLORS } from "@/constants";
-import { Toast } from "@/components/ui/Toast";
 import { formatShortDate, getDaysUntilExpiry, classifyExpiration, getSyncStatusDisplay } from "@/utils";
 import {
   getDocumentById,
@@ -31,7 +29,7 @@ import * as Clipboard from "expo-clipboard";
 import * as Sharing from "expo-sharing";
 import * as FileSystem from "expo-file-system/legacy";
 import Loading from "@/components/ui/Loading";
-import { useFeedback } from "@/hooks/useFeedback";
+import { feedbackService, useFeedbackService } from "@/services/feedbackService";
 
 export default function DocumentDetailsScreen() {
   const router = useRouter();
@@ -40,24 +38,26 @@ export default function DocumentDetailsScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [isDownloading, setIsDownloading] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
-  const [copySuccess, setCopySuccess] = useState<string | null>(null);
   const [history, setHistory] = useState<any[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const mountedRef = useRef(true);
 
-  const fetchDocumentDetails = useCallback(async () => {
+  // Initialize feedback service
+  useFeedbackService();
+
+const fetchDocumentDetails = useCallback(async () => {
     if (!id || !mountedRef.current) return;
     try {
       const docId = parseInt(id as string, 10);
       if (isNaN(docId)) throw new Error("Invalid document ID");
       const doc = await getDocumentById(docId);
       if (!doc) throw new Error("Document not found");
-if (mountedRef.current) {
-         setDocument(doc);
-       }
+      if (mountedRef.current) {
+        setDocument(doc);
+      }
     } catch (error: any) {
       if (mountedRef.current) {
-        Alert.alert("Error", error.message || "Could not retrieve document details.");
+        feedbackService.error(error.message || "Could not retrieve document details.");
       }
     } finally {
       if (mountedRef.current) setIsLoading(false);
@@ -88,49 +88,49 @@ if (mountedRef.current) {
 
   const handleDelete = async () => {
     if (!document?.id) return;
-    Alert.alert("Delete Document", "Are you sure you want to delete this document from your vault?", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: async () => {
-          const localId = document.id as number;
-          try {
-            // Cancel pending reminders so a deleted document cannot keep alerting.
-            await cancelDocumentNotifications(localId);
-            await logDocumentAction(localId, "deleted", document);
+    await feedbackService.confirm({
+      title: "Delete Document",
+      message: "Are you sure you want to delete this document from your vault?",
+      confirmText: "Delete",
+      cancelText: "Cancel",
+      destructive: true,
+      onConfirm: async () => {
+        const localId = document.id as number;
+        try {
+          // Cancel pending reminders so a deleted document cannot keep alerting.
+          await cancelDocumentNotifications(localId);
+          await logDocumentAction(localId, "deleted", document);
 
-            if (document.cloudId) {
-              // Queued for deletion on the next sync; the row must survive locally
-              // until the backend confirms, otherwise the delete never propagates.
-              await softDeleteDocument(localId);
-            } else {
-              // Never uploaded, so there is nothing to reconcile with the cloud.
-              await deleteDocument(localId);
-            }
-            router.back();
-          } catch (err) {
-            Alert.alert("Error", "Could not delete document.");
+          if (document.cloudId) {
+            // Queued for deletion on the next sync; the row must survive locally
+            // until the backend confirms, otherwise the delete never propagates.
+            await softDeleteDocument(localId);
+          } else {
+            // Never uploaded, so there is nothing to reconcile with the cloud.
+            await deleteDocument(localId);
           }
-        },
+          router.back();
+        } catch (err) {
+          feedbackService.error("Could not delete document.");
+        }
       },
-    ]);
+    });
   };
 
   const handleDownload = async () => {
     if (!document) return;
     if (!document.fileUrl) {
-      Alert.alert("Error", "No file attachment available for this document.");
+      feedbackService.error("No file attachment available for this document.");
       return;
     }
     setIsDownloading(true);
     try {
       const cleanTitle = document.title.replace(/[^a-z0-9]/gi, "_").toLowerCase();
       const filename = `${cleanTitle}_${document.id}.pdf`;
-      Alert.alert("Download", `Downloading ${filename}...`);
+      feedbackService.info(`Downloading ${filename}...`);
     } catch (error: any) {
       console.error("Download error:", error);
-      Alert.alert("Download Failed", "Something went wrong while retrieving your file.");
+      feedbackService.error("Something went wrong while retrieving your file.");
     } finally {
       if (mountedRef.current) setIsDownloading(false);
     }
@@ -151,9 +151,9 @@ if (mountedRef.current) {
           await logDocumentAction(localId, "verified", { status: "verified" });
         } catch (syncErr) { console.warn("Could not sync verification:", syncErr); }
       }
-      Alert.alert("Verified", "Document has been marked as verified.");
+      feedbackService.success("Document has been marked as verified.");
     } catch (err: any) {
-      Alert.alert("Verification Failed", "Could not verify document locally.");
+      feedbackService.error("Could not verify document locally.");
     } finally {
       if (mountedRef.current) setIsVerifying(false);
     }
@@ -181,14 +181,14 @@ if (mountedRef.current) {
         dialogTitle: "Export Document Details",
       });
     } catch (err: any) {
-      Alert.alert("Export Failed", err.message || "Could not export document.");
+      feedbackService.error(err.message || "Could not export document.");
     }
   };
 
   const handleShare = async () => {
     if (!document) return;
     if (!document.fileUrl) {
-      Alert.alert("No File", "This document has no attached file to share.");
+      feedbackService.error("This document has no attached file to share.");
       return;
     }
     try {
@@ -200,18 +200,16 @@ if (mountedRef.current) {
         dialogTitle: "Share Document",
       });
     } catch (err: any) {
-      Alert.alert("Share Failed", err.message || "Could not share document.");
+      feedbackService.error(err.message || "Could not share document.");
     }
   };
 
-   const copyToClipboard = async (text: string, label: string) => {
+  const copyToClipboard = async (text: string, label: string) => {
     try {
       await Clipboard.setStringAsync(text);
-      setCopySuccess(label);
+      feedbackService.success(`${label} copied!`);
     } catch (err) { console.error("Clipboard error:", err); }
   };
-
-  const dismissToast = () => setCopySuccess(null);
 
   function getHistoryIcon(action: string): keyof typeof Ionicons.glyphMap {
     switch (action) {
@@ -275,16 +273,6 @@ if (mountedRef.current) {
             <Ionicons name="copy" size={24} color={COLORS.primary} />
           </TouchableOpacity>
         </View>
-
-        {copySuccess && (
-          <Toast
-            visible
-            message={`${copySuccess} copied!`}
-            type="success"
-            duration={2000}
-            onDismiss={dismissToast}
-          />
-        )}
 
         <Card style={styles.docCard}>
           <View style={styles.docHeader}>

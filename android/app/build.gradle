@@ -88,21 +88,22 @@ android {
     compileSdk rootProject.ext.compileSdkVersion
 
     namespace 'com.anonymous.DocuGuard'
-   defaultConfig {
-    applicationId 'com.anonymous.DocuGuard'
-    minSdkVersion rootProject.ext.minSdkVersion
-    targetSdkVersion rootProject.ext.targetSdkVersion
-    versionCode 1
-    versionName "1.0.0"
-    buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
     
-    externalNativeBuild {
-    cmake {
-        arguments.add("-DCMAKE_SHARED_LINKER_FLAGS=-lc++_shared")
-        arguments.add("-DCMAKE_MODULE_LINKER_FLAGS=-lc++_shared")
+    defaultConfig {
+        applicationId 'com.anonymous.DocuGuard'
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode 1
+        versionName "1.0.0"
+
+        buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
+
+        externalNativeBuild {
+            cmake {
+                arguments "-DANDROID_STL=c++_shared"
+            }
+        }
     }
-}
-}
     signingConfigs {
         debug {
             storeFile file('debug.keystore')
@@ -187,3 +188,29 @@ dependencies {
     }
 }
 
+// Patch auto-generated codegen CMakeLists.txt to link C++ standard library (NDK 27 fix)
+// Run before ALL CMake configure tasks to ensure the flag is in place
+tasks.whenTaskAdded { task ->
+    if (task.name.contains("configureCMake")) {
+        task.doFirst {
+            def cmakeListsDir = file(".cxx")
+            if (cmakeListsDir.exists()) {
+                cmakeListsDir.eachFileRecurse { f ->
+                    if (f.name == "CMakeLists.txt") {
+                        def content = f.text
+                        if (!content.contains("ANDROID_STL")) {
+                            def lines = content.readLines()
+                            for (int i = 0; i < lines.size(); i++) {
+                                if (lines[i].trim().startsWith("project(")) {
+                                    lines.add(i + 1, 'set(ANDROID_STL "c++_shared" CACHE STRING "C++ standard library" FORCE)')
+                                    break
+                                }
+                            }
+                            f.text = lines.join("\n")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

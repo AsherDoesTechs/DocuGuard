@@ -6,7 +6,7 @@ exports.getDashboardData = async (req, res) => {
   try {
     // 1. Fetch user's documents
     const docsResult = await db.query(
-      "SELECT * FROM documents WHERE user_id = $1 ORDER BY expiry_date ASC",
+      "SELECT * FROM documents WHERE user_id = $1 AND status <> 'deleted' ORDER BY expiry_date ASC NULLS LAST",
       [userId],
     );
     const documents = docsResult.rows;
@@ -27,7 +27,16 @@ exports.getDashboardData = async (req, res) => {
     const today = new Date();
 
     documents.forEach((doc) => {
+      if (!doc.expiry_date) {
+        validDocuments++;
+        return;
+      }
+
       const expiry = new Date(doc.expiry_date);
+      if (Number.isNaN(expiry.getTime())) {
+        validDocuments++;
+        return;
+      }
       const diffTime = expiry - today;
       const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 

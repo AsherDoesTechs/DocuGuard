@@ -25,6 +25,18 @@ CREATE TABLE IF NOT EXISTS users (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 1a. Profile Mirror Table
+CREATE TABLE IF NOT EXISTS profiles (
+  id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  user_id BIGINT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT,
+  email TEXT,
+  notifications_enabled BOOLEAN DEFAULT TRUE,
+  email_alerts BOOLEAN DEFAULT TRUE,
+  expiry_alerts BOOLEAN DEFAULT TRUE,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- 2. Password Resets Table
 CREATE TABLE IF NOT EXISTS password_resets (
   id BIGSERIAL PRIMARY KEY,
@@ -87,7 +99,8 @@ CREATE TABLE IF NOT EXISTS reminders (
   severity TEXT NOT NULL DEFAULT 'Valid'
     CHECK (severity IN ('Valid', 'Expiring', 'Expired', 'info')),
   is_read BOOLEAN DEFAULT FALSE,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- 5. Device Tokens Table
@@ -228,6 +241,7 @@ CREATE INDEX IF NOT EXISTS idx_device_tokens_user_id ON device_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_activity_logs_user_id ON activity_logs(user_id);
 CREATE INDEX IF NOT EXISTS idx_support_tickets_user_id ON support_tickets(user_id);
 CREATE INDEX IF NOT EXISTS idx_exports_user_id ON exports(user_id);
+CREATE INDEX IF NOT EXISTS idx_profiles_user_id ON profiles(user_id);
 
 -- =========================================================================
 -- Migrations for databases created from an earlier version of this file
@@ -265,6 +279,7 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS notifications_enabled BOOLEAN DEFAULT TRUE;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS email_alerts BOOLEAN DEFAULT TRUE;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS expiry_alerts BOOLEAN DEFAULT TRUE;
+ALTER TABLE reminders ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
 
 -- support_tickets.subject had no default, so inserts that omitted it failed.
 ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS subject TEXT NOT NULL DEFAULT 'Support request';
@@ -338,6 +353,18 @@ CREATE TRIGGER update_user_settings_modtime
   FOR EACH ROW
   EXECUTE FUNCTION update_modified_column();
 
+DROP TRIGGER IF EXISTS update_profiles_modtime ON profiles;
+CREATE TRIGGER update_profiles_modtime
+  BEFORE UPDATE ON profiles
+  FOR EACH ROW
+  EXECUTE FUNCTION update_modified_column();
+
+DROP TRIGGER IF EXISTS update_reminders_modtime ON reminders;
+CREATE TRIGGER update_reminders_modtime
+  BEFORE UPDATE ON reminders
+  FOR EACH ROW
+  EXECUTE FUNCTION update_modified_column();
+
 -- =========================================================================
 -- Note on Row Level Security (RLS)
 -- =========================================================================
@@ -358,3 +385,29 @@ ALTER TABLE exports DISABLE ROW LEVEL SECURITY;
 ALTER TABLE user_settings DISABLE ROW LEVEL SECURITY;
 ALTER TABLE login_sessions DISABLE ROW LEVEL SECURITY;
 ALTER TABLE email_verifications DISABLE ROW LEVEL SECURITY;
+ALTER TABLE profiles DISABLE ROW LEVEL SECURITY;
+
+-- =========================================================================
+-- Supabase Realtime
+-- =========================================================================
+DO $$
+DECLARE
+  table_name TEXT;
+BEGIN
+  FOREACH table_name IN ARRAY ARRAY['documents', 'reminders', 'profiles'] LOOP
+    BEGIN
+      EXECUTE format('ALTER PUBLICATION supabase_realtime ADD TABLE public.%I', table_name);
+    EXCEPTION
+      WHEN duplicate_object THEN NULL;
+      WHEN undefined_object THEN
+        RAISE NOTICE 'supabase_realtime publication is not available';
+        EXIT;
+    END;
+  END LOOP;
+END;
+$$;
+
+-- Documents must remain private; the API issues short-lived signed URLs.
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('documents', 'documents', FALSE)
+ON CONFLICT (id) DO UPDATE SET public = FALSE;

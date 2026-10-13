@@ -9,7 +9,6 @@ import {
   TextStyle,
 } from "react-native";
 import { useColors } from "@/context/ThemeContext";
-import { useFeedbackTrigger } from "./FeedbackButton";
 import { Spacing } from "@/constants/spacing";
 
 interface InputProps {
@@ -46,12 +45,6 @@ export default function Input({
   editable,
 }: InputProps) {
   const colors = useColors();
-  const { light } = useFeedbackTrigger();
-
-  const handleFocus = () => {
-    light();
-  };
-
   const styles = useMemo(
     () =>
       StyleSheet.create({
@@ -82,7 +75,7 @@ export default function Input({
           fontWeight: "500",
         },
       }),
-    [],
+    [colors],
   );
 
   return (
@@ -105,7 +98,6 @@ export default function Input({
         value={value}
         onChangeText={onChangeText}
         onBlur={onBlur}
-        onFocus={handleFocus}
         secureTextEntry={secureTextEntry}
         keyboardType={keyboardType}
         autoCapitalize="none"

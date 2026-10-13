@@ -14,6 +14,13 @@ router.post(
 
     const { plan, payment_method, billing_cycle } = req.body;
 
+    if (process.env.NODE_ENV === "production") {
+      return res.status(503).json({
+        error: "Subscription payments are not configured.",
+        code: ErrorCodes.SYNC_BACKEND_UNAVAILABLE,
+      });
+    }
+
     /*
      * ---------------------------------------------------------
      * VALIDATION

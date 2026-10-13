@@ -9,6 +9,8 @@ import React, {
 // Removed NativeAlert import since we are forcing the custom modal
 import { AlertModal, type AlertButton, type AlertType } from "./AlertModal";
 
+export type { AlertType, AlertButton };
+
 interface AlertOptions {
   type?: AlertType;
   buttons?: AlertButton[];

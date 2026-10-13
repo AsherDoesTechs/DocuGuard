@@ -4,7 +4,6 @@ import {
   Text,
   StyleSheet,
   ScrollView,
-  Alert,
   TouchableOpacity,
   Animated,
 } from "react-native";
@@ -23,11 +22,16 @@ import {
   type LoginInput,
   validateSchema,
 } from "@/shared/validation";
+import { feedbackService } from "../../services/feedbackService";
+import { useFeedbackService } from "../../services/feedbackService";
 
 export default function BiometricLoginScreen() {
   const router = useRouter();
   const [isBiometricSupported, setIsBiometricSupported] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+
+  // Initialize feedback service
+  useFeedbackService();
 
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
@@ -124,7 +128,7 @@ export default function BiometricLoginScreen() {
           errorMessage = err.response.data.error;
         }
 
-        Alert.alert("Login Failed", errorMessage);
+        feedbackService.error(errorMessage);
       }
     },
   });
@@ -136,10 +140,11 @@ export default function BiometricLoginScreen() {
       const isEnrolled = await LocalAuthentication.isEnrolledAsync();
 
       if (!hasHardware || !isEnrolled) {
-        Alert.alert(
-          "Biometrics Unavailable",
-          "Please set up Face ID or fingerprint recognition on your device settings first.",
-        );
+        feedbackService.alert({
+          title: "Biometrics Unavailable",
+          message: "Please set up Face ID or fingerprint recognition on your device settings first.",
+          type: "warning",
+        });
         return;
       }
 
@@ -155,20 +160,18 @@ export default function BiometricLoginScreen() {
 
       const token = await SecureStore.getItemAsync("userToken");
       if (!token) {
-        Alert.alert(
-          "Session Expired",
-          "Please sign in with your password first to re-establish your secure session.",
-        );
+        feedbackService.alert({
+          title: "Session Expired",
+          message: "Please sign in with your password first to re-establish your secure session.",
+          type: "warning",
+        });
         return;
       }
 
       // Navigate straight into documents vault upon verified biometric match
       router.replace("/(tabs)/documents" as any);
     } catch (error) {
-      Alert.alert(
-        "Authentication Error",
-        "An unexpected error occurred during biometric validation. Please try again.",
-      );
+      feedbackService.error("An unexpected error occurred during biometric validation. Please try again.");
     }
   };
 
@@ -259,7 +262,6 @@ export default function BiometricLoginScreen() {
               title="Sign In"
               onPress={form.handleSubmit}
               loading={form.isSubmitting}
-              feedbackType="success"
             />
           </View>
         </Card>
@@ -306,8 +308,8 @@ export default function BiometricLoginScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
-  content: { padding: 20 },
-  header: { alignItems: "center", marginBottom: 30, marginTop: 20 },
+  content: { padding: 24, paddingBottom: 32 },
+  header: { alignItems: "center", marginBottom: 32, marginTop: 16 },
   title: {
     fontSize: 28,
     fontWeight: "700",
@@ -330,7 +332,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "500",
   },
-  biometricSection: { marginTop: 30, alignItems: "center" },
+  biometricSection: { marginTop: 32, alignItems: "center" },
   orText: {
     color: COLORS.textSecondary,
     fontSize: 12,
@@ -351,7 +353,7 @@ const styles = StyleSheet.create({
     borderColor: COLORS.primary,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "#EFF6FF",
+    backgroundColor: COLORS.primaryLight,
     shadowColor: COLORS.primary,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.2,
@@ -366,7 +368,7 @@ const styles = StyleSheet.create({
   footer: {
     flexDirection: "row",
     justifyContent: "center",
-    marginTop: 30,
+    marginTop: 32,
     paddingBottom: 20,
   },
   footerText: { color: COLORS.textSecondary, fontSize: 14 },

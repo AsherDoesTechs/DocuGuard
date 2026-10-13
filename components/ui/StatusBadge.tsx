@@ -2,6 +2,7 @@ import React from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { COLORS } from "@/constants";
 import Spacing from "@/constants/spacing";
+import { useColors } from "@/context/ThemeContext";
 
 interface StatusBadgeProps {
   status: string;
@@ -52,19 +53,30 @@ const LABEL_MAP: Record<string, string> = {
   failed: "Failed",
 };
 export default function StatusBadge({ status, text }: StatusBadgeProps) {
+  const colors = useColors();
+  const statusColors = {
+    success: { bg: colors.successLight, text: colors.success, dot: colors.success },
+    warning: { bg: colors.warningLight, text: colors.warning, dot: colors.warning },
+    error: { bg: colors.errorLight, text: colors.error, dot: colors.error },
+  };
   if (!status) {
     return (
-      <View style={[styles.badge, { backgroundColor: "#FEF3C7" }]}>
-        <Text style={[styles.text, { color: COLORS.warning }]}>Unknown</Text>
+      <View style={[styles.badge, { backgroundColor: statusColors.warning.bg }]}>
+        <Text style={[styles.text, { color: statusColors.warning.text }]}>Unknown</Text>
       </View>
     );
   }
   const normalized = status.toLowerCase().trim();
-  const config = STATUS_CONFIG[normalized] || {
-    bg: "#FEF3C7",
-    text: COLORS.warning,
-    dot: COLORS.warning,
+  const baseConfig = STATUS_CONFIG[normalized] || {
+    bg: colors.warningLight,
+    text: colors.warning,
+    dot: colors.warning,
   };
+  const config = baseConfig.text === COLORS.success
+    ? { ...baseConfig, ...statusColors.success }
+    : baseConfig.text === COLORS.danger
+      ? { ...baseConfig, ...statusColors.error }
+      : { ...baseConfig, ...statusColors.warning };
   const label = text || LABEL_MAP[normalized] || status;
 
   return (

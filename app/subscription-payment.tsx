@@ -1,7 +1,6 @@
 import { API_BASE_URL } from "../services/api";
 import { COLORS } from "../constants";
-import { Toast } from "../components/ui/Toast";
-import type { ToastType } from "../components/ui/Toast";
+import { feedbackService, useFeedbackService } from "../services/feedbackService";
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
 
@@ -10,7 +9,6 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  Alert,
   ActivityIndicator,
   PanResponder,
   Animated as RNAnimated,
@@ -24,7 +22,7 @@ import { useRouter } from "expo-router";
 
 import Animated, { FadeIn, FadeInDown, Easing } from "react-native-reanimated";
 
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as SecureStore from "expo-secure-store";
 import * as LocalAuthentication from "expo-local-authentication";
 
 const DG = {
@@ -46,20 +44,11 @@ const SLIDE_THRESHOLD = SLIDE_DISTANCE * 0.65;
 
 export default function DocuGuardCheckout() {
   const router = useRouter();
+  useFeedbackService();
 
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-
-  const [toast, setToast] = useState<{
-    visible: boolean;
-    message: string;
-    type: ToastType;
-  }>({
-    visible: false,
-    message: "",
-    type: "success",
-  });
 
   const [sliderUnlocked, setSliderUnlocked] = useState(false);
 
@@ -181,18 +170,20 @@ export default function DocuGuardCheckout() {
       const isEnrolled = await LocalAuthentication.isEnrolledAsync();
 
       if (!hasHardware) {
-        Alert.alert(
-          "Biometrics Unavailable",
-          "This device does not support biometric authentication.",
-        );
+        await feedbackService.alert({
+          title: "Biometrics Unavailable",
+          message: "This device does not support biometric authentication.",
+          type: "error",
+        });
         return;
       }
 
       if (!isEnrolled) {
-        Alert.alert(
-          "Biometrics Not Set Up",
-          "Please enroll a fingerprint or other biometric security method on your device first.",
-        );
+        await feedbackService.alert({
+          title: "Biometrics Not Set Up",
+          message: "Please enroll a fingerprint or other biometric security method on your device first.",
+          type: "warning",
+        });
         return;
       }
 
@@ -206,22 +197,14 @@ export default function DocuGuardCheckout() {
       if (auth.success) {
         await handleFinish();
       } else {
-        setToast({
-          visible: true,
-          message: "Verification cancelled.",
-          type: "error",
-        });
+        feedbackService.error("Verification cancelled.");
       }
     } catch (err) {
       console.error("Biometric error:", err);
 
       setErrorMessage("Could not complete biometric verification.");
 
-      setToast({
-        visible: true,
-        message: "Biometric verification failed.",
-        type: "error",
-      });
+      feedbackService.error("Biometric verification failed.");
     }
   }, [loading]);
 
@@ -238,7 +221,7 @@ export default function DocuGuardCheckout() {
     setErrorMessage(null);
 
     try {
-      const token = await AsyncStorage.getItem("userToken");
+      const token = await SecureStore.getItemAsync("userToken");
 
       if (!token) {
         throw new Error("Your session has expired. Please sign in again.");
@@ -274,11 +257,7 @@ export default function DocuGuardCheckout() {
         );
       }
 
-      setToast({
-        visible: true,
-        message: "DocuGuard Pro activated successfully!",
-        type: "success",
-      });
+      feedbackService.success("DocuGuard Pro activated successfully!");
 
       /*
        * Give the user enough time to see the success toast
@@ -301,11 +280,7 @@ export default function DocuGuardCheckout() {
 
       setErrorMessage(message);
 
-      setToast({
-        visible: true,
-        message,
-        type: "error",
-      });
+      feedbackService.error(message);
     } finally {
       setLoading(false);
     }
@@ -648,18 +623,6 @@ export default function DocuGuardCheckout() {
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
-
-      <Toast
-        visible={toast.visible}
-        message={toast.message}
-        type={toast.type}
-        onDismiss={() =>
-          setToast((current) => ({
-            ...current,
-            visible: false,
-          }))
-        }
-      />
     </View>
   );
 }

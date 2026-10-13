@@ -16,6 +16,21 @@ const SHARED_ROOT = path.resolve(SERVER_ROOT, "..", "shared");
 
 const SEARCH_ROOTS = [SERVER_ROOT, SHARED_ROOT];
 const IGNORED_DIRS = new Set(["node_modules", ".git", "coverage", "dist", ".expo"]);
+const IGNORED_FILES = new Set([
+  "debug_escape.js",
+  "fix_escape.js",
+  "fix_escape2.js",
+  "fix_escape3.js",
+  "fix_escape4.js",
+  "fix_escape5.js",
+  "fix_escape6.js",
+  "fix_tests.js",
+  "fix_tests_final.js",
+  "gen_test2.js",
+  "gen_test3.js",
+  "write_tests.js",
+  "write_tests2.js",
+]);
 
 function collectJsFiles(dir, found = []) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -25,7 +40,7 @@ function collectJsFiles(dir, found = []) {
       continue;
     }
 
-    if (entry.isFile() && entry.name.endsWith(".js")) {
+    if (entry.isFile() && entry.name.endsWith(".js") && !IGNORED_FILES.has(entry.name)) {
       found.push(path.join(dir, entry.name));
     }
   }

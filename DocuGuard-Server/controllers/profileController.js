@@ -5,6 +5,7 @@ const { validateSchema, profileSchema } = require("../../shared/validation/schem
 const { z } = require("zod");
 const { Readable } = require("stream");
 const totp = require("../utils/totp");
+const { syncProfile } = require("../services/dataSyncService");
 
 // Get user profile data and live stats
 exports.getProfile = async (req, res) => {
@@ -62,33 +63,38 @@ exports.updateSecurity = async (req, res) => {
     });
   }
 
-  const { currentPassword, newPassword, twoFactor, twoFactorCode } = validation.data;
+  const { currentPassword, newPassword, twoFactor } = validation.data;
 
   try {
+    const userRes = await db.query(
+      "SELECT password_hash, two_factor_secret, two_factor_enabled_at FROM users WHERE id = $1",
+      [userId],
+    );
+    const user = userRes.rows[0];
+    if (!user?.password_hash) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const validPassword = await bcrypt.compare(currentPassword, user.password_hash);
+    if (!validPassword) {
+      return res.status(400).json({ error: "Incorrect current password" });
+    }
+
+    if (twoFactor === true && (!user.two_factor_secret || !user.two_factor_enabled_at)) {
+      return res.status(400).json({
+        error: "Complete two-factor authentication setup before enabling it.",
+      });
+    }
+
     if (newPassword) {
-      const userRes = await db.query(
-        "SELECT password_hash FROM users WHERE id = $1",
-        [userId],
-      );
-      const storedHash = userRes.rows[0]?.password_hash;
-      if (!storedHash) {
-        return res.status(404).json({ error: "User not found" });
-      }
-      const validPassword = await bcrypt.compare(
-        currentPassword,
-        storedHash,
-      );
-      if (!validPassword) {
-        return res.status(400).json({ error: "Incorrect current password" });
-      }
       const salt = await bcrypt.genSalt(12);
       const hashedPassword = await bcrypt.hash(newPassword, salt);
 
       await db.query(
-        "UPDATE users SET password_hash = $1, two_factor = $2 WHERE id = $3",
-        [hashedPassword, twoFactor, userId],
+        "UPDATE users SET password_hash = $1, two_factor = COALESCE($2, two_factor) WHERE id = $3",
+        [hashedPassword, twoFactor ?? null, userId],
       );
-    } else {
+    } else if (twoFactor !== undefined) {
       await db.query("UPDATE users SET two_factor = $1 WHERE id = $2", [
         twoFactor,
         userId,
@@ -208,6 +214,7 @@ exports.updatePreferences = async (req, res) => {
       `UPDATE users SET email_alerts = $1, notifications_enabled = $2, expiry_alerts = $3 WHERE id = $4`,
       [notifyEmail, notifyPush, notifyExpiry, userId],
     );
+    await syncProfile(userId, { notifyEmail, notifyPush, notifyExpiry });
     res.json({ message: "Preferences updated" });
   } catch (err) {
     console.error("Error updating preferences:", err);
@@ -528,6 +535,7 @@ exports.updateProfile = async (req, res) => {
       `UPDATE users SET ${fields.join(", ")} WHERE id = $${idx}`,
       values,
     );
+    await syncProfile(userId, { name, email });
 
     res.json({ message: "Profile updated successfully" });
   } catch (err) {

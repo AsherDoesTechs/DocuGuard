@@ -24,7 +24,7 @@
 
       "adaptiveIcon": {
         "foregroundImage": "./app/assets/icon.png",
-        "backgroundColor": "#ffffff"
+        "backgroundColor": "#F7FAFE"
       },
 
       "permissions": [
@@ -43,12 +43,9 @@
       [
         "expo-splash-screen",
         {
-          "image": "./app/assets/icon.png",
-          "imageWidth": 200,
-          "resizeMode": "contain",
-          "backgroundColor": "#ffffff",
+          "backgroundColor": "#F7FAFE",
           "dark": {
-            "backgroundColor": "#0F172A"
+            "backgroundColor": "#F7FAFE"
           }
         }
       ],
@@ -73,7 +70,9 @@
     ],
 
     "extra": {
-      "router": {},
+      "router": {
+        "origin": "docuguard://"
+      },
       "apiBaseUrl": "https://docuguard-api-onoj.onrender.com",
       "eas": {
         "projectId": "118057a8-ff30-4258-b9a4-096c617ae595"

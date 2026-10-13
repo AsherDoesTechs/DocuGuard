@@ -168,8 +168,9 @@ class FeedbackManager {
    * Trigger sound and/or haptic feedback.
    */
   async trigger(type: FeedbackType, options?: FeedbackOptions): Promise<void> {
-    const soundEnabled = options?.sound !== false;
-    const hapticEnabled = options?.haptic !== false;
+    const isCritical = type === "success" || type === "error" || type === "warning";
+    const soundEnabled = options?.sound ?? isCritical;
+    const hapticEnabled = options?.haptic ?? isCritical;
 
     const tasks: Promise<void>[] = [];
 

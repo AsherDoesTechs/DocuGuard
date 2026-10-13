@@ -1,4 +1,5 @@
 const { supabaseAdmin } = require("../config/supabase");
+const crypto = require("crypto");
 
 const STORAGE_BUCKET = "documents";
 

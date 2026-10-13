@@ -8,15 +8,18 @@ import {
 } from "./localDatabase";
 import { isNotificationsEnabled } from "./notificationPreferences";
 import { getDaysUntilExpiry, parseLocalDate } from "@/utils";
+import { isRunningInExpoGo } from "expo";
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-  }),
-});
+if (!isRunningInExpoGo()) {
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowBanner: true,
+      shouldShowList: true,
+      shouldPlaySound: true,
+      shouldSetBadge: true,
+    }),
+  });
+}
 
 export async function checkAndScheduleAlerts() {
   if (!(await isNotificationsEnabled())) {

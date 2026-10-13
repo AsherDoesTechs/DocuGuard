@@ -4,12 +4,14 @@ interface UseFormConfig<T> {
   initialValues: T;
   validate: (values: T) => Record<string, string>;
   onSubmit: (values: T) => Promise<void> | void;
+  onValidationError?: (errors: Record<string, string>) => void;
 }
 
 export function useForm<T extends Record<string, any>>({
   initialValues,
   validate,
   onSubmit,
+  onValidationError,
 }: UseFormConfig<T>) {
   const [values, setValues] = useState<T>(initialValues);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -61,6 +63,8 @@ export function useForm<T extends Record<string, any>>({
       } finally {
         setIsSubmitting(false);
       }
+    } else {
+      onValidationError?.(validationErrors);
     }
   };
 

@@ -10,7 +10,13 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { Input, Card, StatusBadge, ExpirationDashboard } from "../../components/ui";
+import {
+  Input,
+  Card,
+  StatusBadge,
+  ExpirationDashboard,
+  EmptyState,
+} from "../../components/ui";
 import { COLORS, DOCUMENT_CATEGORIES } from "../../constants";
 import { formatShortDate, classifyExpiration, getSyncStatusDisplay } from "../../utils";
 import { RefreshableContainer } from "@/components/ui/RefreshableContainer";
@@ -207,15 +213,38 @@ export default function DocumentsScreen() {
         ) : (
           <View style={styles.docsList}>
             {filtered.length === 0 ? (
-              <View style={styles.emptyContainer}>
-                <Text style={styles.emptyIcon}>📄</Text>
-                <Text style={styles.emptyTitle}>No Documents Found</Text>
-                <Text style={styles.emptyText}>
-                  {search || selectedCategory !== "all"
-                    ? "Try changing your search or removing filters."
-                    : "Add your first document to start building your secure vault profile."}
-                </Text>
-              </View>
+              <EmptyState
+                illustration={search || selectedCategory !== "all" || selectedStatus !== "all" ? "search" : "documents"}
+                title={
+                  search || selectedCategory !== "all" || selectedStatus !== "all"
+                    ? "No matching documents"
+                    : "Your vault is empty"
+                }
+                message={
+                  search || selectedCategory !== "all" || selectedStatus !== "all"
+                    ? "Try a different search or clear the filters."
+                    : "Add your first document to start building your secure vault."
+                }
+                actionLabel={
+                  search || selectedCategory !== "all" || selectedStatus !== "all"
+                    ? "Clear filters"
+                    : "Add document"
+                }
+                onAction={() => {
+                  if (search || selectedCategory !== "all" || selectedStatus !== "all") {
+                    setSearch("");
+                    setSelectedCategory("all");
+                    setSelectedStatus("all");
+                  } else {
+                    router.push("/add-document" as any);
+                  }
+                }}
+                actionIcon={
+                  search || selectedCategory !== "all" || selectedStatus !== "all"
+                    ? "close-circle-outline"
+                    : "add"
+                }
+              />
             ) : (
               filtered.map((doc: LocalDocument) => (
                 <TouchableOpacity
@@ -381,24 +410,6 @@ const styles = StyleSheet.create({
   docNumber: { fontSize: 12, color: COLORS.textSecondary, fontWeight: "500" },
   docDate: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 2 },
   docDateText: { fontSize: 12, color: COLORS.textSecondary },
-  emptyContainer: {
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 40,
-    paddingHorizontal: 20,
-  },
-  emptyIcon: { fontSize: 40, marginBottom: 8 },
-  emptyTitle: {
-    fontSize: 16,
-    fontWeight: "bold",
-    color: COLORS.text,
-    marginBottom: 4,
-  },
-  emptyText: {
-    textAlign: "center",
-    color: COLORS.textSecondary,
-    fontSize: 14,
-  },
   floatingAddButton: {
     position: "absolute",
     bottom: 24,

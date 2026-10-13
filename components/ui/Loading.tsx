@@ -7,12 +7,14 @@ import Animated, {
   withTiming,
   Easing,
 } from "react-native-reanimated";
+import { useColors } from "@/context/ThemeContext";
 
 interface Props {
   text?: string;
 }
 
 export default function Loading({ text }: Props) {
+  const colors = useColors();
   const rotation = useSharedValue(0);
   const scale = useSharedValue(1);
 
@@ -40,9 +42,9 @@ export default function Loading({ text }: Props) {
   return (
     <View style={styles.container}>
       <Animated.View style={[styles.spinner, spinStyle, scaleStyle]}>
-        <View style={styles.spinnerCircle} />
+        <View style={[styles.spinnerCircle, { borderColor: colors.border, borderTopColor: colors.primary }]} />
       </Animated.View>
-      <Text style={styles.label}>{text || "Please wait..."}</Text>
+      <Text style={[styles.label, { color: colors.textSecondary }]}>{text || "Please wait..."}</Text>
     </View>
   );
 }
@@ -55,8 +57,6 @@ const styles = StyleSheet.create({
     height: 40,
     borderRadius: 20,
     borderWidth: 3,
-    borderColor: "#E5E7EB",
-    borderTopColor: "#2563EB",
   },
   label: { fontSize: 14, color: "#6b7280", fontWeight: "500" },
 });

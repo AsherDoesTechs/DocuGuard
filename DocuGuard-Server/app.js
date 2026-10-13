@@ -8,6 +8,8 @@ const profileRoutes = require("./routes/profile");
 const notificationRoutes = require("./routes/notification");
 const exportRoutes = require("./routes/export");
 const subscriptionRoutes = require("./routes/subscription");
+const http = require("http");
+const { attachWebSocketServer, subscribeAllUsers } = require("./services/realtimeService");
 
 // Security & Error Middlewares
 const {
@@ -80,7 +82,12 @@ app.use(errorHandler);
 const PORT = process.env.PORT || 3000;
 
 if (require.main === module) {
-  app.listen(PORT, () => {
+  const server = http.createServer(app);
+  attachWebSocketServer(server, process.env.JWT_SECRET);
+  subscribeAllUsers().catch((error) => {
+    console.error("Realtime startup subscription failed:", error);
+  });
+  server.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
   });
 }

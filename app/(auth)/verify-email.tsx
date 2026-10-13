@@ -4,18 +4,20 @@ import {
   Text,
   StyleSheet,
   ScrollView,
-  Alert,
   ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import * as SecureStore from "expo-secure-store";
 import { Button, Card } from "../../components/ui";
-import { COLORS } from "../../constants";
+import { Spacing, COLORS } from "../../constants";
+import { useColors } from "@/context/ThemeContext";
 import { api } from "../../services/api";
+import { feedbackService, useFeedbackService } from "../../services/feedbackService";
 
 export default function VerifyEmailScreen() {
   const router = useRouter();
+  const colors = useColors();
   const params = useLocalSearchParams();
 
   const emailParam = (params.email as string) || "your email inbox";
@@ -29,15 +31,18 @@ export default function VerifyEmailScreen() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [resending, setResending] = useState(false);
 
+  // Initialize feedback service
+  useFeedbackService();
+
   useEffect(() => {
     if (verifiedParam) {
       setStatus("success");
-      Alert.alert("Success", "Your email has been verified successfully!", [
-        {
-          text: "Continue",
-          onPress: () => router.replace("/(tabs)/documents" as any),
-        },
-      ]);
+      feedbackService.confirm({
+        title: "Success",
+        message: "Your email has been verified successfully!",
+        confirmText: "Continue",
+        onConfirm: () => router.replace("/(tabs)/documents" as any),
+      });
     } else if (tokenParam) {
       verifyTokenWithBackend(tokenParam);
     }
@@ -56,17 +61,18 @@ export default function VerifyEmailScreen() {
         await SecureStore.setItemAsync("userToken", authToken);
       }
 
-      Alert.alert("Success", "Your email has been verified successfully!", [
-        {
-          text: "Continue",
-          onPress: () => router.replace("/(tabs)/documents" as any),
-        },
-      ]);
+      await feedbackService.confirm({
+        title: "Success",
+        message: "Your email has been verified successfully!",
+        confirmText: "Continue",
+        onConfirm: () => router.replace("/(tabs)/documents" as any),
+      });
     } catch (err: any) {
       setStatus("error");
       const errorMsg =
         err?.response?.data?.error || "Invalid or expired verification link.";
       setErrorMessage(errorMsg);
+      feedbackService.error(errorMsg);
     }
   };
 
@@ -74,15 +80,9 @@ export default function VerifyEmailScreen() {
     setResending(true);
     try {
       await api.auth.resendVerification({ email: emailParam });
-      Alert.alert(
-        "Link Sent",
-        "A fresh verification link has been sent to your email.",
-      );
+      feedbackService.success("A fresh verification link has been sent to your email.");
     } catch (err: any) {
-      Alert.alert(
-        "Error",
-        "Could not resend the verification link. Please try again later.",
-      );
+      feedbackService.error("Could not resend the verification link. Please try again later.");
     } finally {
       setResending(false);
     }
@@ -123,8 +123,8 @@ export default function VerifyEmailScreen() {
             {status === "verifying" && (
               <ActivityIndicator
                 size="large"
-                color={COLORS.primary}
-                style={{ marginVertical: 20 }}
+                color={colors.primary}
+                style={{ marginVertical: Spacing.lg }}
               />
             )}
 
@@ -134,14 +134,12 @@ export default function VerifyEmailScreen() {
                   title="Resend verification link"
                   onPress={handleResend}
                   loading={resending}
-                  feedbackType="info"
                 />
 
                 <Button
                   title="Return to sign in"
                   onPress={() => router.replace("/(auth)/login" as any)}
                   variant="secondary"
-                  feedbackType="light"
                 />
               </>
             )}
@@ -156,12 +154,12 @@ const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: COLORS.background },
   container: { flex: 1, backgroundColor: COLORS.background },
   content: {
-    padding: 20,
+    padding: 24,
     justifyContent: "center",
     flexGrow: 1,
     paddingBottom: 40,
   },
-  header: { alignItems: "center", marginBottom: 30, marginTop: 20 },
+  header: { alignItems: "center", marginBottom: 32, marginTop: 16 },
   title: {
     fontSize: 28,
     fontWeight: "700",

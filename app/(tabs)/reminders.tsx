@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
   Switch,
   ActivityIndicator,
-  Alert,
   AppState,
   AppStateStatus,
 } from "react-native";
@@ -32,6 +31,7 @@ import {
   isNotificationsEnabled,
   setNotificationsEnabled as persistNotificationsEnabled,
 } from "../../services/notificationPreferences";
+import { feedbackService, useFeedbackService } from "../../services/feedbackService";
 
 type FilterType = "all" | "unread" | "expired" | "expiring";
 
@@ -54,6 +54,7 @@ const FILTERS: { key: FilterType; label: string }[] = [
 ];
 
 export default function RemindersScreen() {
+  useFeedbackService();
   const [notificationsEnabled, setNotificationsEnabled] =
     useState<boolean>(true);
   const [permissionGranted, setPermissionGranted] = useState<boolean>(false);
@@ -239,10 +240,11 @@ export default function RemindersScreen() {
         setPermissionGranted(granted);
 
         if (!granted) {
-          Alert.alert(
-            "Notifications Disabled",
-            "Please enable notifications in your device settings to receive reminder alerts.",
-          );
+          await feedbackService.alert({
+            title: "Notifications Disabled",
+            message: "Please enable notifications in your device settings to receive reminder alerts.",
+            type: "warning",
+          });
           return;
         }
       } else {
@@ -261,15 +263,20 @@ export default function RemindersScreen() {
           await checkAndScheduleAlerts();
         } catch (err) {
           console.error("Failed to schedule alerts:", err);
-          Alert.alert(
-            "Notification Setup Failed",
-            "Notifications are enabled, but reminders could not be scheduled.",
-          );
+          await feedbackService.alert({
+            title: "Notification Setup Failed",
+            message: "Notifications are enabled, but reminders could not be scheduled.",
+            type: "error",
+          });
         }
       }
     } catch (err) {
       console.error("Failed to update notification preference:", err);
-      Alert.alert("Error", "Could not update notification settings.");
+      await feedbackService.alert({
+        title: "Error",
+        message: "Could not update notification settings.",
+        type: "error",
+      });
     }
   };
 
@@ -291,7 +298,11 @@ export default function RemindersScreen() {
       }
     } catch (err) {
       console.error("Failed to mark reminder as read:", err);
-      Alert.alert("Error", "Could not update this reminder.");
+      await feedbackService.alert({
+        title: "Error",
+        message: "Could not update this reminder.",
+        type: "error",
+      });
     }
   };
 
@@ -307,7 +318,11 @@ export default function RemindersScreen() {
       }
     } catch (err) {
       console.error("Failed to mark all reminders as read:", err);
-      Alert.alert("Error", "Could not mark reminders as read.");
+      await feedbackService.alert({
+        title: "Error",
+        message: "Could not mark reminders as read.",
+        type: "error",
+      });
     } finally {
       if (mountedRef.current) {
         setMarkingAllRead(false);

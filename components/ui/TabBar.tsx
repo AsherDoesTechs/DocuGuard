@@ -7,9 +7,8 @@ import {
   Animated as RNAnimated,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import * as Haptics from "expo-haptics";
 import { Ionicons } from "@expo/vector-icons";
-import { COLORS } from "@/constants";
+import { useColors } from "@/context/ThemeContext";
 
 export interface TabItem {
   name: string;
@@ -28,9 +27,9 @@ interface TabBarProps {
 
 export const TabBar: React.FC<TabBarProps> = React.memo(
   ({ tabs, activeTab, onTabPress, disabled = false }) => {
-    if (!tabs || tabs.length === 0) return null;
-
-    const insets = useSafeAreaInsets();
+  const insets = useSafeAreaInsets();
+  const colors = useColors();
+  if (!tabs || tabs.length === 0) return null;
 
     const safeActiveTab = tabs.some((t) => t.name === activeTab)
       ? activeTab
@@ -49,8 +48,6 @@ export const TabBar: React.FC<TabBarProps> = React.memo(
         if (disabled) return;
         // For action buttons, we might want to allow pressing even if it's the "active" tab
         if (!tab.isCenterAction && tab.name === safeActiveTab) return;
-
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
 
         const currentAnim = scaleValues[tab.name];
         const prevAnim = scaleValues[safeActiveTab];
@@ -91,7 +88,8 @@ export const TabBar: React.FC<TabBarProps> = React.memo(
       <View
         style={[
           styles.container,
-          { height: containerHeight, paddingBottom: bottomPadding },
+        { backgroundColor: colors.tabBarBackground, borderTopColor: colors.tabBarBorder },
+        { height: containerHeight, paddingBottom: bottomPadding },
         ]}
         accessibilityRole="tablist"
       >
@@ -113,6 +111,7 @@ export const TabBar: React.FC<TabBarProps> = React.memo(
                 <Pressable
                   style={({ pressed }) => [
                     styles.centerButton,
+                    { backgroundColor: colors.primary },
                     pressed && { opacity: 0.85 },
                   ]}
                   onPress={() => handlePress(tab)}
@@ -158,10 +157,10 @@ export const TabBar: React.FC<TabBarProps> = React.memo(
                   <Ionicons
                     name={tab.icon}
                     size={isActive ? 24 : 22}
-                    color={isActive ? COLORS.primary : COLORS.textSecondary}
+                    color={isActive ? colors.primary : colors.textSecondary}
                   />
                   {typeof tab.badge === "number" && tab.badge > 0 && (
-                    <View style={styles.badge}>
+                    <View style={[styles.badge, { backgroundColor: colors.error }]}>
                       <Text style={styles.badgeText}>
                         {tab.badge > 99 ? "99+" : tab.badge}
                       </Text>
@@ -171,14 +170,18 @@ export const TabBar: React.FC<TabBarProps> = React.memo(
 
                 {tab.label ? (
                   <Text
-                    style={[styles.label, isActive && styles.labelActive]}
+                    style={[
+                      styles.label,
+                      { color: isActive ? colors.primary : colors.textSecondary },
+                      isActive && styles.labelActive,
+                    ]}
                     numberOfLines={1}
                   >
                     {tab.label}
                   </Text>
                 ) : null}
 
-                {isActive && <View style={styles.activeDot} />}
+                {isActive && <View style={[styles.activeDot, { backgroundColor: colors.primary }]} />}
               </Pressable>
             </RNAnimated.View>
           );
@@ -191,9 +194,7 @@ export const TabBar: React.FC<TabBarProps> = React.memo(
 const styles = StyleSheet.create({
   container: {
     flexDirection: "row",
-    backgroundColor: COLORS.surface,
     borderTopWidth: 1,
-    borderTopColor: COLORS.border,
     position: "relative",
     width: "100%",
   },
@@ -222,7 +223,6 @@ const styles = StyleSheet.create({
     width: 52,
     height: 52,
     borderRadius: 26,
-    backgroundColor: COLORS.primary,
     alignItems: "center",
     justifyContent: "center",
     shadowColor: "#000",
@@ -239,10 +239,8 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 10,
     fontWeight: "600",
-    color: COLORS.textSecondary,
   },
   labelActive: {
-    color: COLORS.primary,
     fontWeight: "700",
   },
   activeDot: {
@@ -251,13 +249,11 @@ const styles = StyleSheet.create({
     width: 4,
     height: 4,
     borderRadius: 2,
-    backgroundColor: COLORS.primary,
   },
   badge: {
     position: "absolute",
     top: -4,
     right: -10,
-    backgroundColor: COLORS.danger || "#EF4444",
     borderRadius: 8,
     paddingHorizontal: 4,
     minWidth: 16,

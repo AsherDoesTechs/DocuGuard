@@ -138,7 +138,7 @@ export async function syncToCloud(): Promise<SyncResult> {
         // only choice was create-or-create, so any retried or failed sync
         // appended another server copy of the same reminder.
         const response = reminder.cloudId
-          ? await api.client.patch(`/reminders/${reminder.cloudId}`, {
+          ? await api.client.put(`/reminders/${reminder.cloudId}`, {
               title: reminder.title,
               description: reminder.description,
               dueDate: reminder.dueDate,

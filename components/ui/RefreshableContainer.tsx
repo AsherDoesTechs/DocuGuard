@@ -1,7 +1,6 @@
 import React, { useState, useCallback } from "react";
-import { ScrollView, RefreshControl, Platform } from "react-native";
-import * as Haptics from "expo-haptics";
-import { COLORS } from "@/constants";
+import { ScrollView, RefreshControl } from "react-native";
+import { useColors } from "@/context/ThemeContext";
 
 interface Props {
   children: React.ReactNode;
@@ -16,37 +15,19 @@ export function RefreshableContainer({
 }: Props) {
   const [refreshing, setRefreshing] = useState(false);
 
-  // Helper to trigger haptics safely
-  const triggerHaptic = async (type: "impact" | "success") => {
-    try {
-      if (Platform.OS === "ios" || Platform.OS === "android") {
-        if (type === "impact") {
-          await Haptics.selectionAsync(); // Universally supported "tap"
-        } else {
-          await Haptics.notificationAsync(
-            Haptics.NotificationFeedbackType.Success,
-          );
-        }
-      }
-    } catch (error) {
-      // Ignore errors if hardware doesn't support haptics
-    }
-  };
+  const colors = useColors();
 
   const handleRefresh = useCallback(async () => {
-    await triggerHaptic("impact");
     setRefreshing(true);
 
-    const holdTimer = new Promise((resolve) => setTimeout(resolve, 2500));
-
     try {
-      await Promise.all([onRefresh(), holdTimer]);
+      await onRefresh();
+      setRefreshing(false);
     } catch (error) {
       console.error("Refresh failed:", error);
+    } finally {
+      setRefreshing(false);
     }
-
-    setRefreshing(false);
-    await triggerHaptic("success");
   }, [onRefresh]);
 
   return (
@@ -56,9 +37,9 @@ export function RefreshableContainer({
         <RefreshControl
           refreshing={refreshing}
           onRefresh={handleRefresh}
-          tintColor={COLORS.primary}
-          colors={[COLORS.primary]}
-          progressViewOffset={20}
+          tintColor={colors.primary}
+          colors={[colors.primary]}
+          progressViewOffset={12}
         />
       }
     >

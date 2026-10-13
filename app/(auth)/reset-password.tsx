@@ -1,16 +1,17 @@
 import React, { useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Alert } from "react-native";
+import { View, Text, StyleSheet, ScrollView } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Input, Button, Card } from "../../components/ui";
 import { useForm } from "../../hooks/useForm";
-import { COLORS } from "../../constants";
+import { Spacing, COLORS } from "../../constants";
 import { api } from "../../services/api";
 import {
   resetPasswordSchema,
   type ResetPasswordInput,
   validateSchema,
 } from "@/shared/validation";
+import { feedbackService, useFeedbackService } from "../../services/feedbackService";
 
 // Define local form state interface incorporating fields required by the screen UI
 interface FormValues {
@@ -26,6 +27,9 @@ export default function ResetPasswordScreen() {
   const token = typeof rawToken === "string" ? rawToken.trim() : "";
 
   const [serverError, setServerError] = useState<string | null>(null);
+
+  // Initialize feedback service
+  useFeedbackService();
 
   const validate = (values: FormValues) => {
     // Include the token in the payload being validated against the schema
@@ -56,9 +60,10 @@ export default function ResetPasswordScreen() {
     validate,
     onSubmit: async (values) => {
       if (!token) {
-        setServerError(
-          "This password reset link is invalid or has expired. Please request a new one.",
-        );
+        const message =
+          "This password reset link is invalid or has expired. Please request a new one.";
+        setServerError(message);
+        feedbackService.error(message);
         return;
       }
 
@@ -76,27 +81,25 @@ export default function ResetPasswordScreen() {
           });
         }
 
-        Alert.alert(
-          "Password Updated Successfully",
-          "Your password has been changed. You can now log in with your new credentials.",
-          [
-            {
-              text: "Sign In",
-              onPress: () => router.replace("/(auth)/login" as any),
-            },
-          ],
-        );
+        await feedbackService.confirm({
+          title: "Password Updated Successfully",
+          message: "Your password has been changed. You can now log in with your new credentials.",
+          confirmText: "Sign In",
+          onConfirm: () => router.replace("/(auth)/login" as any),
+        });
       } catch (err: any) {
         const status = err?.response?.status;
         if (status === 400 || status === 401 || status === 410) {
-          setServerError(
-            "This password reset link is invalid or has expired. Please request a new one.",
-          );
+          const message =
+            "This password reset link is invalid or has expired. Please request a new one.";
+          setServerError(message);
+          feedbackService.error(message);
         } else {
-          setServerError(
+          const message =
             err?.response?.data?.error ||
-              "We couldn't reset your password right now. Please try again.",
-          );
+            "We couldn't reset your password right now. Please try again.";
+          setServerError(message);
+          feedbackService.error(message);
         }
       }
     },
@@ -146,12 +149,11 @@ export default function ResetPasswordScreen() {
             }
           />
 
-          <View style={{ marginTop: 12 }}>
+          <View style={{ marginTop: Spacing.sm }}>
             <Button
               title="Update Password"
               onPress={form.handleSubmit}
               loading={form.isSubmitting}
-              feedbackType="success"
             />
           </View>
         </Card>
@@ -170,13 +172,13 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.background,
   },
   content: {
-    padding: 20,
-    paddingBottom: 40,
+    padding: 24,
+    paddingBottom: 32,
   },
   header: {
     alignItems: "center",
-    marginBottom: 40,
-    marginTop: 20,
+    marginBottom: 32,
+    marginTop: 16,
   },
   title: {
     fontSize: 28,
