@@ -1,10 +1,11 @@
 import React, { useState } from "react";
-import { View, Text, StyleSheet, ScrollView } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { View, Text, StyleSheet } from "react-native";
 import { Link, useRouter } from "expo-router";
 import { Input, Button, Card } from "../../components/ui";
+import { AuthScreen } from "../../components/ui/AuthScreen";
 import { useForm } from "../../hooks/useForm";
-import { Spacing, COLORS } from "../../constants";
+import { Spacing } from "../../constants";
+import { useColors } from "@/context/ThemeContext";
 import { api } from "../../services/api";
 import {
   forgotPasswordSchema,
@@ -15,6 +16,7 @@ import { feedbackService, useFeedbackService } from "../../services/feedbackServ
 
 export default function ForgotPasswordScreen() {
   const router = useRouter();
+  const colors = useColors();
   const [serverError, setServerError] = useState<string | null>(null);
 
   // Initialize feedback service
@@ -57,21 +59,13 @@ export default function ForgotPasswordScreen() {
   });
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <ScrollView
-        style={styles.container}
-        contentContainerStyle={styles.content}
-        keyboardShouldPersistTaps="handled"
-      >
-        <View style={styles.header}>
-          <Text style={styles.title}>Reset Password</Text>
-          <Text style={styles.subtitle}>
-            Enter your email to receive a secure reset link
-          </Text>
-        </View>
-
+    <AuthScreen
+      title="Reset Password"
+      subtitle="Enter your email to receive a secure reset link"
+      icon="mail-outline"
+    >
         <Card>
-          {serverError && <Text style={styles.errorText}>{serverError}</Text>}
+          {serverError && <Text style={[styles.errorText, { color: colors.error }]}>{serverError}</Text>}
 
           <Input
             label="Email"
@@ -93,47 +87,19 @@ export default function ForgotPasswordScreen() {
         </Card>
 
         <View style={styles.footer}>
-          <Text style={styles.footerText}>Remember your password? </Text>
+          <Text style={[styles.footerText, { color: colors.textSecondary }]}>
+            Remember your password?{" "}
+          </Text>
           <Link href="/(auth)/login" asChild>
-            <Text style={styles.link}>Sign in</Text>
+            <Text style={[styles.link, { color: colors.primary }]}>Sign in</Text>
           </Link>
         </View>
-      </ScrollView>
-    </SafeAreaView>
+    </AuthScreen>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-  },
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-  },
-  content: {
-    padding: 24,
-    paddingBottom: 32,
-  },
-  header: {
-    alignItems: "center",
-    marginBottom: 32,
-    marginTop: 16,
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: "700",
-    color: COLORS.text,
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: COLORS.textSecondary,
-    textAlign: "center",
-  },
   errorText: {
-    color: COLORS.danger,
     marginBottom: 12,
     textAlign: "center",
     fontSize: 14,
@@ -144,11 +110,9 @@ const styles = StyleSheet.create({
     marginTop: 24,
   },
   footerText: {
-    color: COLORS.textSecondary,
     fontSize: 14,
   },
   link: {
-    color: COLORS.primary,
     fontSize: 14,
     fontWeight: "600",
   },

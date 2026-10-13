@@ -1,18 +1,12 @@
 import React, { useState, useEffect, useCallback } from "react";
-import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
-} from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
 import { Link, useRouter } from "expo-router";
 import * as LocalAuthentication from "expo-local-authentication";
 import * as SecureStore from "expo-secure-store";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
 import { Input, Button, Card } from "../../components/ui";
+import { AuthScreen } from "../../components/ui/AuthScreen";
 import { useForm } from "../../hooks/useForm";
 import { useColors } from "@/context/ThemeContext";
 import { Spacing, BORDER_RADIUS } from "@/constants";
@@ -257,23 +251,14 @@ export default function LoginScreen() {
   });
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <ScrollView
-        style={styles.container}
-        contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}
-      >
-        <View style={styles.header}>
-          <Text style={styles.title}>
-            {pendingTwoFactor ? "Two-Factor Authentication" : "Welcome Back"}
-          </Text>
-          <Text style={styles.subtitle}>
-            {pendingTwoFactor
-              ? "Enter the 6-digit code from your authenticator app"
-              : "Sign in to access your secure documents"}
-          </Text>
-        </View>
-
+    <AuthScreen
+      title={pendingTwoFactor ? "Two-Factor Authentication" : "Welcome Back"}
+      subtitle={
+        pendingTwoFactor
+          ? "Enter the 6-digit code from your authenticator app"
+          : "Sign in to access your secure documents"
+      }
+    >
         {pendingTwoFactor ? (
           <Card>
             <Input
@@ -430,7 +415,6 @@ export default function LoginScreen() {
             </Link>
           </View>
         )}
-      </ScrollView>
-    </SafeAreaView>
+    </AuthScreen>
   );
 }

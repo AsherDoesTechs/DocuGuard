@@ -1,20 +1,14 @@
 import React, { useState, useEffect, useRef } from "react";
-import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
-  Animated,
-} from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { View, Text, StyleSheet, TouchableOpacity, Animated } from "react-native";
 import { Link, useRouter } from "expo-router";
 import * as LocalAuthentication from "expo-local-authentication";
 import * as SecureStore from "expo-secure-store";
 import { Ionicons } from "@expo/vector-icons";
 import { Input, Button, Card } from "../../components/ui";
+import { AuthScreen } from "../../components/ui/AuthScreen";
 import { useForm } from "../../hooks/useForm";
 import { COLORS } from "../../constants";
+import { useColors } from "@/context/ThemeContext";
 import { api } from "../../services/api";
 import { switchLocalUser } from "../../services/localDatabase";
 import {
@@ -27,6 +21,7 @@ import { useFeedbackService } from "../../services/feedbackService";
 
 export default function BiometricLoginScreen() {
   const router = useRouter();
+  const colors = useColors();
   const [isBiometricSupported, setIsBiometricSupported] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
@@ -176,18 +171,11 @@ export default function BiometricLoginScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
-      <ScrollView
-        contentContainerStyle={styles.content}
-        keyboardShouldPersistTaps="handled"
-      >
-        <View style={styles.header}>
-          <Text style={styles.title}>Welcome Back</Text>
-          <Text style={styles.subtitle}>
-            Sign in to access your secure documents
-          </Text>
-        </View>
-
+    <AuthScreen
+      title="Welcome Back"
+      subtitle="Sign in to access your secure documents"
+      icon="finger-print-outline"
+    >
         <Card>
           <Input
             label="Email"
@@ -224,7 +212,7 @@ export default function BiometricLoginScreen() {
               <Ionicons
                 name={showPassword ? "eye-off" : "eye"}
                 size={22}
-                color={COLORS.textSecondary}
+                color={colors.textSecondary}
               />
             </TouchableOpacity>
           </View>
@@ -244,7 +232,7 @@ export default function BiometricLoginScreen() {
                 name={form.values.rememberMe ? "checkbox" : "square-outline"}
                 size={22}
                 color={
-                  form.values.rememberMe ? COLORS.primary : COLORS.textSecondary
+                  form.values.rememberMe ? colors.primary : colors.textSecondary
                 }
               />
               <Text style={styles.checkboxLabel}>Remember me</Text>
@@ -285,7 +273,7 @@ export default function BiometricLoginScreen() {
                 <Ionicons
                   name="finger-print"
                   size={40}
-                  color={COLORS.primary}
+                  color={colors.primary}
                 />
               </Animated.View>
             </TouchableOpacity>
@@ -301,8 +289,7 @@ export default function BiometricLoginScreen() {
             </TouchableOpacity>
           </Link>
         </View>
-      </ScrollView>
-    </SafeAreaView>
+    </AuthScreen>
   );
 }
 

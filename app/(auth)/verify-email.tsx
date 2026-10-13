@@ -3,14 +3,13 @@ import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
   ActivityIndicator,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import * as SecureStore from "expo-secure-store";
 import { Button, Card } from "../../components/ui";
-import { Spacing, COLORS } from "../../constants";
+import { AuthScreen } from "../../components/ui/AuthScreen";
+import { Spacing } from "../../constants";
 import { useColors } from "@/context/ThemeContext";
 import { api } from "../../services/api";
 import { feedbackService, useFeedbackService } from "../../services/feedbackService";
@@ -88,36 +87,27 @@ export default function VerifyEmailScreen() {
     }
   };
 
-  return (
-    <SafeAreaView style={styles.safeArea}>
-      <ScrollView
-        style={styles.container}
-        contentContainerStyle={styles.content}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="on-drag"
-      >
-        <View style={styles.header}>
-          <Text style={styles.title}>
-            {status === "success" ? "Email Verified" : "Verify your email"}
-          </Text>
-          <Text style={styles.subtitle}>
-            {status === "verifying" &&
-              "Verifying your secure token, please wait..."}
-            {status === "success" &&
-              "Your account is now fully activated and secured."}
-            {status === "pending" && (
-              <>
-                We sent a verification link to{" "}
-                <Text style={styles.boldText}>{emailParam}</Text>. Open your
-                inbox to activate your account.
-              </>
-            )}
-            {status === "error" &&
-              (errorMessage ||
-                "We couldn't verify your token. It may have expired.")}
-          </Text>
-        </View>
+  const subtitle =
+    status === "verifying"
+      ? "Verifying your secure token, please wait..."
+      : status === "success"
+        ? "Your account is now fully activated and secured."
+        : status === "pending"
+          ? (
+            <>
+              We sent a verification link to{" "}
+              <Text style={styles.boldText}>{emailParam}</Text>. Open your
+              inbox to activate your account.
+            </>
+          )
+          : errorMessage || "We couldn't verify your token. It may have expired.";
 
+  return (
+    <AuthScreen
+      title={status === "success" ? "Email Verified" : "Verify your email"}
+      icon={status === "success" ? "checkmark-circle-outline" : "mail-outline"}
+      subtitle={subtitle}
+    >
         <Card>
           <View style={{ gap: 16, alignItems: "center" }}>
             {status === "verifying" && (
@@ -145,34 +135,10 @@ export default function VerifyEmailScreen() {
             )}
           </View>
         </Card>
-      </ScrollView>
-    </SafeAreaView>
+    </AuthScreen>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: COLORS.background },
-  container: { flex: 1, backgroundColor: COLORS.background },
-  content: {
-    padding: 24,
-    justifyContent: "center",
-    flexGrow: 1,
-    paddingBottom: 40,
-  },
-  header: { alignItems: "center", marginBottom: 32, marginTop: 16 },
-  title: {
-    fontSize: 28,
-    fontWeight: "700",
-    color: COLORS.text,
-    marginBottom: 8,
-    textAlign: "center",
-  },
-  subtitle: {
-    fontSize: 14,
-    color: COLORS.textSecondary,
-    textAlign: "center",
-    paddingHorizontal: 10,
-    lineHeight: 20,
-  },
-  boldText: { fontWeight: "600", color: COLORS.text },
+  boldText: { fontWeight: "600" },
 });

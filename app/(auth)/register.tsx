@@ -1,8 +1,8 @@
 import React, { useState, useMemo } from "react";
-import { View, Text, StyleSheet, ScrollView } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { View, Text, StyleSheet } from "react-native";
 import { Link, useRouter } from "expo-router";
 import { Input, Button, Card } from "../../components/ui";
+import { AuthScreen } from "../../components/ui/AuthScreen";
 import { useForm } from "../../hooks/useForm";
 import { useColors } from "@/context/ThemeContext";
 import { Spacing, COLORS } from "@/constants";
@@ -156,19 +156,11 @@ export default function RegisterScreen() {
   });
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <ScrollView
-        style={styles.container}
-        contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}
-      >
-        <View style={styles.header}>
-          <Text style={styles.title}>Create Account</Text>
-          <Text style={styles.subtitle}>
-            Secure your personal identity documents today
-          </Text>
-        </View>
-
+    <AuthScreen
+      title="Create Account"
+      subtitle="Secure your personal identity documents today"
+      icon="person-add-outline"
+    >
         <Card>
           {serverError && <Text style={styles.errorText}>{serverError}</Text>}
 
@@ -268,7 +260,6 @@ export default function RegisterScreen() {
             <Text style={styles.link}>Sign in</Text>
           </Link>
         </View>
-      </ScrollView>
-    </SafeAreaView>
+    </AuthScreen>
   );
 }

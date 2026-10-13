@@ -1,10 +1,11 @@
 import React, { useState } from "react";
-import { View, Text, StyleSheet, ScrollView } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { View, Text, StyleSheet } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Input, Button, Card } from "../../components/ui";
+import { AuthScreen } from "../../components/ui/AuthScreen";
 import { useForm } from "../../hooks/useForm";
-import { Spacing, COLORS } from "../../constants";
+import { Spacing } from "../../constants";
+import { useColors } from "@/context/ThemeContext";
 import { api } from "../../services/api";
 import {
   resetPasswordSchema,
@@ -21,6 +22,7 @@ interface FormValues {
 
 export default function ResetPasswordScreen() {
   const router = useRouter();
+  const colors = useColors();
   const params = useLocalSearchParams();
 
   const rawToken = params.token;
@@ -106,22 +108,13 @@ export default function ResetPasswordScreen() {
   });
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <ScrollView
-        style={styles.container}
-        contentContainerStyle={styles.content}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="on-drag"
-      >
-        <View style={styles.header}>
-          <Text style={styles.title}>Create New Password</Text>
-          <Text style={styles.subtitle}>
-            Enter a secure new password for your account below.
-          </Text>
-        </View>
-
+    <AuthScreen
+      title="Create New Password"
+      subtitle="Enter a secure new password for your account below."
+      icon="lock-closed-outline"
+    >
         <Card>
-          {serverError && <Text style={styles.errorText}>{serverError}</Text>}
+          {serverError && <Text style={[styles.errorText, { color: colors.error }]}>{serverError}</Text>}
 
           <Input
             label="New Password"
@@ -157,42 +150,12 @@ export default function ResetPasswordScreen() {
             />
           </View>
         </Card>
-      </ScrollView>
-    </SafeAreaView>
+    </AuthScreen>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-  },
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-  },
-  content: {
-    padding: 24,
-    paddingBottom: 32,
-  },
-  header: {
-    alignItems: "center",
-    marginBottom: 32,
-    marginTop: 16,
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: "700",
-    color: COLORS.text,
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: COLORS.textSecondary,
-    textAlign: "center",
-  },
   errorText: {
-    color: COLORS.danger,
     marginBottom: 12,
     textAlign: "center",
     fontSize: 14,
