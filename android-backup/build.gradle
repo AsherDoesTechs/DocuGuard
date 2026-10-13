@@ -1,0 +1,64 @@
+// Top-level build file where you can add configuration options common to all sub-projects/modules.
+
+buildscript {
+  repositories {
+    google()
+    mavenCentral()
+  }
+  dependencies {
+    classpath('com.android.tools.build:gradle')
+    classpath('com.facebook.react:react-native-gradle-plugin')
+    classpath('org.jetbrains.kotlin:kotlin-gradle-plugin')
+  }
+}
+
+allprojects {
+  repositories {
+    google()
+    mavenCentral()
+    maven { url 'https://www.jitpack.io' }
+  }
+}
+
+apply plugin: "expo-root-project"
+apply plugin: "com.facebook.react.rootproject"
+
+subprojects { project ->
+    tasks.whenTaskAdded { task ->
+        if (task.name.contains("configureCMake")) {
+            task.doFirst {
+                def sourceCmake = file("${project.projectDir}/CMakeLists.txt")
+                if (sourceCmake.exists()) {
+                    def content = sourceCmake.text
+                    def nativeTargets = [
+                        [name: "NitroModules", marker: "add_library(NitroModules"],
+                        [name: "QuickCrypto", marker: "PACKAGE_NAME QuickCrypto"],
+                    ]
+                    nativeTargets.each { nativeTarget ->
+                        if (content.contains(nativeTarget.marker) &&
+                            !content.contains("target_link_libraries(${nativeTarget.name} c++_shared)")) {
+                            sourceCmake << "\n\n# Link the C++ runtime explicitly for NDK 27 release builds.\n" +
+                                "target_link_libraries(${nativeTarget.name} c++_shared)\n"
+                        }
+                    }
+                }
+
+                def generatedCmakeDir = file("${project.buildDir}/.cxx")
+                if (generatedCmakeDir.exists()) {
+                    generatedCmakeDir.eachFileRecurse { f ->
+                        if (f.name == "CMakeLists.txt" && !f.text.contains("ANDROID_STL")) {
+                            def lines = f.text.readLines()
+                            for (int i = 0; i < lines.size(); i++) {
+                                if (lines[i].trim().startsWith("project(")) {
+                                    lines.add(i + 1, 'set(ANDROID_STL "c++_shared" CACHE STRING "C++ standard library" FORCE)')
+                                    break
+                                }
+                            }
+                            f.text = lines.join("\n")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
