@@ -1,0 +1,26 @@
+{
+  "installationFolder": "C:\\Users\\Asher Basco\\Documents\\DocuGuard\\node_modules\\react-native-nitro-modules\\android\\build\\intermediates\\prefab_package\\release\\prefab",
+  "gradlePath": ":react-native-nitro-modules",
+  "packageInfo": {
+    "packageName": "react-native-nitro-modules",
+    "packageSchemaVersion": 2,
+    "packageDependencies": [],
+    "modules": [
+      {
+        "moduleName": "NitroModules",
+        "moduleHeaders": "C:\\Users\\Asher Basco\\Documents\\DocuGuard\\node_modules\\react-native-nitro-modules\\android\\build\\headers\\nitromodules",
+        "moduleExportLibraries": [],
+        "abis": [
+          {
+            "abiName": "armeabi-v7a",
+            "abiApi": 24,
+            "abiNdkMajor": 27,
+            "abiStl": "c++_shared",
+            "abiLibrary": "C:\\Users\\Asher Basco\\Documents\\DocuGuard\\node_modules\\react-native-nitro-modules\\android\\build\\intermediates\\cxx\\RelWithDebInfo\\26506t22\\obj\\armeabi-v7a\\libNitroModules.so",
+            "abiAndroidGradleBuildJsonFile": "C:\\Users\\Asher Basco\\Documents\\DocuGuard\\node_modules\\react-native-nitro-modules\\android\\.cxx\\RelWithDebInfo\\26506t22\\armeabi-v7a\\android_gradle_build.json"
+          }
+        ]
+      }
+    ]
+  }
+}

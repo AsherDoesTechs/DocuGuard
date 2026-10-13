@@ -1,0 +1,14 @@
+CMake Warning in C:/Users/Asher Basco/Documents/DocuGuard/node_modules/react-native-gesture-handler/android/build/generated/source/codegen/jni/CMakeLists.txt:
+  The object file directory
+
+    C:/Users/Asher Basco/Documents/DocuGuard/android/app/.cxx/RelWithDebInfo/f442w126/armeabi-v7a/rngesturehandler_codegen_autolinked_build/CMakeFiles/react_codegen_rngesturehandler_codegen.dir/./
+
+  has 192 characters.  The maximum full path to an object file is 250
+  characters (see CMAKE_OBJECT_PATH_MAX).  Object file
+
+    react/renderer/components/rngesturehandler_codegen/ComponentDescriptors.cpp.o
+
+  cannot be safely placed under this directory.  The build may not work
+  correctly.
+
+

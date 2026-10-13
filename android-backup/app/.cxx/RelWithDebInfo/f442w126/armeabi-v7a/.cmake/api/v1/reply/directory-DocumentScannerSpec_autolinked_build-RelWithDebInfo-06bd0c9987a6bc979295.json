@@ -1,0 +1,14 @@
+{
+	"backtraceGraph" : 
+	{
+		"commands" : [],
+		"files" : [],
+		"nodes" : []
+	},
+	"installers" : [],
+	"paths" : 
+	{
+		"build" : "DocumentScannerSpec_autolinked_build",
+		"source" : "C:/Users/Asher Basco/Documents/DocuGuard/node_modules/react-native-document-scanner-plugin/android/build/generated/source/codegen/jni"
+	}
+}

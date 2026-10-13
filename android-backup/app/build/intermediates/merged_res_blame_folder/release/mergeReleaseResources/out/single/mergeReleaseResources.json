@@ -1,0 +1,338 @@
+[
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/drawable-xhdpi_node_modules_exporouter_assets_reactnavigation_elements_backicon.png.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/drawable-xhdpi/node_modules_exporouter_assets_reactnavigation_elements_backicon.png"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/raw_node_modules_expo_vectoricons_build_vendor_reactnativevectoricons_fonts_feather.ttf.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/raw/node_modules_expo_vectoricons_build_vendor_reactnativevectoricons_fonts_feather.ttf"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/drawable-mdpi_node_modules_exporouter_assets_sitemap.png.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/drawable-mdpi/node_modules_exporouter_assets_sitemap.png"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/drawable-mdpi_node_modules_exporouter_assets_arrow_right.xml.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/drawable-mdpi/node_modules_exporouter_assets_arrow_right.xml"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/drawable-mdpi_notification_icon.png.flat",
+        "source": "com.anonymous.DocuGuard.app-main-93:/drawable-mdpi/notification_icon.png"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/drawable-mdpi_splashscreen_logo.png.flat",
+        "source": "com.anonymous.DocuGuard.app-main-93:/drawable-mdpi/splashscreen_logo.png"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/drawable-mdpi_node_modules_exporouter_assets_arrow_down.png.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/drawable-mdpi/node_modules_exporouter_assets_arrow_down.png"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/raw_node_modules_expo_vectoricons_build_vendor_reactnativevectoricons_fonts_materialicons.ttf.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/raw/node_modules_expo_vectoricons_build_vendor_reactnativevectoricons_fonts_materialicons.ttf"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/mipmap-hdpi_ic_launcher_foreground.webp.flat",
+        "source": "com.anonymous.DocuGuard.app-main-93:/mipmap-hdpi/ic_launcher_foreground.webp"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/raw_node_modules_expo_vectoricons_build_vendor_reactnativevectoricons_fonts_foundation.ttf.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/raw/node_modules_expo_vectoricons_build_vendor_reactnativevectoricons_fonts_foundation.ttf"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/mipmap-mdpi_ic_launcher_round.webp.flat",
+        "source": "com.anonymous.DocuGuard.app-main-93:/mipmap-mdpi/ic_launcher_round.webp"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/drawable-mdpi_node_modules_exporouter_assets_forward.png.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/drawable-mdpi/node_modules_exporouter_assets_forward.png"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/raw_node_modules_expo_vectoricons_build_vendor_reactnativevectoricons_fonts_fontisto.ttf.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/raw/node_modules_expo_vectoricons_build_vendor_reactnativevectoricons_fonts_fontisto.ttf"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/mipmap-xxhdpi_ic_launcher_round.webp.flat",
+        "source": "com.anonymous.DocuGuard.app-main-93:/mipmap-xxhdpi/ic_launcher_round.webp"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/raw_node_modules_expo_vectoricons_build_vendor_reactnativevectoricons_fonts_entypo.ttf.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/raw/node_modules_expo_vectoricons_build_vendor_reactnativevectoricons_fonts_entypo.ttf"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/drawable-mdpi_node_modules_exporouter_assets_reactnavigation_elements_searchicon.png.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/drawable-mdpi/node_modules_exporouter_assets_reactnavigation_elements_searchicon.png"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/raw_assets_sounds_light.mp3.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/raw/assets_sounds_light.mp3"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/raw_node_modules_expogooglefonts_materialsymbols_400regular_materialsymbols_400regular.ttf.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/raw/node_modules_expogooglefonts_materialsymbols_400regular_materialsymbols_400regular.ttf"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/drawable-xxxhdpi_node_modules_exporouter_assets_reactnavigation_elements_clearicon.png.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/drawable-xxxhdpi/node_modules_exporouter_assets_reactnavigation_elements_clearicon.png"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/drawable-xhdpi_node_modules_exporouter_assets_reactnavigation_elements_searchicon.png.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/drawable-xhdpi/node_modules_exporouter_assets_reactnavigation_elements_searchicon.png"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/raw_keep.xml.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/raw/keep.xml"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/drawable-hdpi_splashscreen_logo.png.flat",
+        "source": "com.anonymous.DocuGuard.app-main-93:/drawable-hdpi/splashscreen_logo.png"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/drawable-xhdpi_node_modules_exporouter_assets_reactnavigation_elements_clearicon.png.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/drawable-xhdpi/node_modules_exporouter_assets_reactnavigation_elements_clearicon.png"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/mipmap-xxxhdpi_ic_launcher.webp.flat",
+        "source": "com.anonymous.DocuGuard.app-main-93:/mipmap-xxxhdpi/ic_launcher.webp"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/drawable-xxhdpi_node_modules_exporouter_assets_reactnavigation_elements_backicon.png.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/drawable-xxhdpi/node_modules_exporouter_assets_reactnavigation_elements_backicon.png"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/mipmap-xhdpi_ic_launcher.webp.flat",
+        "source": "com.anonymous.DocuGuard.app-main-93:/mipmap-xhdpi/ic_launcher.webp"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/drawable-xxhdpi_splashscreen_logo.png.flat",
+        "source": "com.anonymous.DocuGuard.app-main-93:/drawable-xxhdpi/splashscreen_logo.png"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/raw_assets_sounds_success.mp3.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/raw/assets_sounds_success.mp3"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/raw_assets_sounds_error.mp3.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/raw/assets_sounds_error.mp3"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/drawable-xxhdpi_notification_icon.png.flat",
+        "source": "com.anonymous.DocuGuard.app-main-93:/drawable-xxhdpi/notification_icon.png"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/drawable-xxhdpi_node_modules_exporouter_assets_reactnavigation_elements_closeicon.png.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/drawable-xxhdpi/node_modules_exporouter_assets_reactnavigation_elements_closeicon.png"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/raw_assets_sounds_medium.mp3.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/raw/assets_sounds_medium.mp3"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/raw_node_modules_expo_vectoricons_build_vendor_reactnativevectoricons_fonts_simplelineicons.ttf.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/raw/node_modules_expo_vectoricons_build_vendor_reactnativevectoricons_fonts_simplelineicons.ttf"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/drawable-mdpi_node_modules_exporouter_assets_pkg.png.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/drawable-mdpi/node_modules_exporouter_assets_pkg.png"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/drawable-hdpi_notification_icon.png.flat",
+        "source": "com.anonymous.DocuGuard.app-main-93:/drawable-hdpi/notification_icon.png"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/raw_node_modules_expo_vectoricons_build_vendor_reactnativevectoricons_fonts_antdesign.ttf.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/raw/node_modules_expo_vectoricons_build_vendor_reactnativevectoricons_fonts_antdesign.ttf"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/raw_node_modules_expo_vectoricons_build_vendor_reactnativevectoricons_fonts_octicons.ttf.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/raw/node_modules_expo_vectoricons_build_vendor_reactnativevectoricons_fonts_octicons.ttf"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/drawable-xhdpi_notification_icon.png.flat",
+        "source": "com.anonymous.DocuGuard.app-main-93:/drawable-xhdpi/notification_icon.png"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/mipmap-anydpi-v26_ic_launcher_round.xml.flat",
+        "source": "com.anonymous.DocuGuard.app-main-93:/mipmap-anydpi-v26/ic_launcher_round.xml"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/mipmap-xhdpi_ic_launcher_round.webp.flat",
+        "source": "com.anonymous.DocuGuard.app-main-93:/mipmap-xhdpi/ic_launcher_round.webp"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/mipmap-mdpi_ic_launcher_foreground.webp.flat",
+        "source": "com.anonymous.DocuGuard.app-main-93:/mipmap-mdpi/ic_launcher_foreground.webp"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/drawable_ic_launcher_background.xml.flat",
+        "source": "com.anonymous.DocuGuard.app-main-93:/drawable/ic_launcher_background.xml"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/drawable-mdpi_node_modules_exporouter_assets_checkmark.xml.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/drawable-mdpi/node_modules_exporouter_assets_checkmark.xml"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/drawable-mdpi_node_modules_exporouter_assets_reactnavigation_elements_clearicon.png.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/drawable-mdpi/node_modules_exporouter_assets_reactnavigation_elements_clearicon.png"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/raw_node_modules_expo_vectoricons_build_vendor_reactnativevectoricons_fonts_fontawesome6_solid.ttf.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/raw/node_modules_expo_vectoricons_build_vendor_reactnativevectoricons_fonts_fontawesome6_solid.ttf"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/drawable_rn_edit_text_material.xml.flat",
+        "source": "com.anonymous.DocuGuard.app-main-93:/drawable/rn_edit_text_material.xml"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/mipmap-hdpi_ic_launcher_round.webp.flat",
+        "source": "com.anonymous.DocuGuard.app-main-93:/mipmap-hdpi/ic_launcher_round.webp"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/drawable-xhdpi_node_modules_exporouter_assets_reactnavigation_elements_closeicon.png.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/drawable-xhdpi/node_modules_exporouter_assets_reactnavigation_elements_closeicon.png"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/drawable-xxxhdpi_node_modules_exporouter_assets_reactnavigation_elements_searchicon.png.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/drawable-xxxhdpi/node_modules_exporouter_assets_reactnavigation_elements_searchicon.png"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/drawable-mdpi_node_modules_exporouter_assets_unmatched.png.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/drawable-mdpi/node_modules_exporouter_assets_unmatched.png"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/raw_node_modules_expo_vectoricons_build_vendor_reactnativevectoricons_fonts_fontawesome5_brands.ttf.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/raw/node_modules_expo_vectoricons_build_vendor_reactnativevectoricons_fonts_fontawesome5_brands.ttf"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/drawable-xxxhdpi_splashscreen_logo.png.flat",
+        "source": "com.anonymous.DocuGuard.app-main-93:/drawable-xxxhdpi/splashscreen_logo.png"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/drawable-xxxhdpi_node_modules_exporouter_assets_reactnavigation_elements_closeicon.png.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/drawable-xxxhdpi/node_modules_exporouter_assets_reactnavigation_elements_closeicon.png"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/drawable-mdpi_node_modules_exporouter_assets_reactnavigation_elements_backiconmask.png.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/drawable-mdpi/node_modules_exporouter_assets_reactnavigation_elements_backiconmask.png"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/raw_node_modules_expo_vectoricons_build_vendor_reactnativevectoricons_fonts_fontawesome6_brands.ttf.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/raw/node_modules_expo_vectoricons_build_vendor_reactnativevectoricons_fonts_fontawesome6_brands.ttf"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/drawable-mdpi_node_modules_exporouter_assets_file.png.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/drawable-mdpi/node_modules_exporouter_assets_file.png"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/raw_node_modules_expo_vectoricons_build_vendor_reactnativevectoricons_fonts_materialcommunityicons.ttf.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/raw/node_modules_expo_vectoricons_build_vendor_reactnativevectoricons_fonts_materialcommunityicons.ttf"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/raw_node_modules_expo_vectoricons_build_vendor_reactnativevectoricons_fonts_evilicons.ttf.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/raw/node_modules_expo_vectoricons_build_vendor_reactnativevectoricons_fonts_evilicons.ttf"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/drawable-xhdpi_splashscreen_logo.png.flat",
+        "source": "com.anonymous.DocuGuard.app-main-93:/drawable-xhdpi/splashscreen_logo.png"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/raw_assets_sounds_warning.mp3.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/raw/assets_sounds_warning.mp3"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/mipmap-xxhdpi_ic_launcher.webp.flat",
+        "source": "com.anonymous.DocuGuard.app-main-93:/mipmap-xxhdpi/ic_launcher.webp"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/drawable-xxxhdpi_notification_icon.png.flat",
+        "source": "com.anonymous.DocuGuard.app-main-93:/drawable-xxxhdpi/notification_icon.png"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/mipmap-mdpi_ic_launcher.webp.flat",
+        "source": "com.anonymous.DocuGuard.app-main-93:/mipmap-mdpi/ic_launcher.webp"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/drawable-mdpi_node_modules_exporouter_assets_reactnavigation_elements_closeicon.png.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/drawable-mdpi/node_modules_exporouter_assets_reactnavigation_elements_closeicon.png"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/raw_node_modules_expo_vectoricons_build_vendor_reactnativevectoricons_fonts_ionicons.ttf.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/raw/node_modules_expo_vectoricons_build_vendor_reactnativevectoricons_fonts_ionicons.ttf"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/mipmap-xxhdpi_ic_launcher_foreground.webp.flat",
+        "source": "com.anonymous.DocuGuard.app-main-93:/mipmap-xxhdpi/ic_launcher_foreground.webp"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/raw_node_modules_expo_vectoricons_build_vendor_reactnativevectoricons_fonts_fontawesome6_regular.ttf.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/raw/node_modules_expo_vectoricons_build_vendor_reactnativevectoricons_fonts_fontawesome6_regular.ttf"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/raw_node_modules_expo_vectoricons_build_vendor_reactnativevectoricons_fonts_zocial.ttf.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/raw/node_modules_expo_vectoricons_build_vendor_reactnativevectoricons_fonts_zocial.ttf"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/raw_node_modules_expo_vectoricons_build_vendor_reactnativevectoricons_fonts_fontawesome5_solid.ttf.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/raw/node_modules_expo_vectoricons_build_vendor_reactnativevectoricons_fonts_fontawesome5_solid.ttf"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/raw_assets_sounds_selection.mp3.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/raw/assets_sounds_selection.mp3"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/raw_assets_sounds_heavy.mp3.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/raw/assets_sounds_heavy.mp3"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/mipmap-xxxhdpi_ic_launcher_foreground.webp.flat",
+        "source": "com.anonymous.DocuGuard.app-main-93:/mipmap-xxxhdpi/ic_launcher_foreground.webp"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/mipmap-xhdpi_ic_launcher_foreground.webp.flat",
+        "source": "com.anonymous.DocuGuard.app-main-93:/mipmap-xhdpi/ic_launcher_foreground.webp"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/raw_node_modules_expo_vectoricons_build_vendor_reactnativevectoricons_fonts_fontawesome5_regular.ttf.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/raw/node_modules_expo_vectoricons_build_vendor_reactnativevectoricons_fonts_fontawesome5_regular.ttf"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/mipmap-hdpi_ic_launcher.webp.flat",
+        "source": "com.anonymous.DocuGuard.app-main-93:/mipmap-hdpi/ic_launcher.webp"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/drawable-mdpi_node_modules_exporouter_assets_error.png.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/drawable-mdpi/node_modules_exporouter_assets_error.png"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/mipmap-anydpi-v26_ic_launcher.xml.flat",
+        "source": "com.anonymous.DocuGuard.app-main-93:/mipmap-anydpi-v26/ic_launcher.xml"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/mipmap-xxxhdpi_ic_launcher_round.webp.flat",
+        "source": "com.anonymous.DocuGuard.app-main-93:/mipmap-xxxhdpi/ic_launcher_round.webp"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/drawable-xxhdpi_node_modules_exporouter_assets_reactnavigation_elements_searchicon.png.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/drawable-xxhdpi/node_modules_exporouter_assets_reactnavigation_elements_searchicon.png"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/drawable-xxxhdpi_node_modules_exporouter_assets_reactnavigation_elements_backicon.png.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/drawable-xxxhdpi/node_modules_exporouter_assets_reactnavigation_elements_backicon.png"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/drawable-mdpi_node_modules_exporouter_assets_reactnavigation_elements_backicon.png.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/drawable-mdpi/node_modules_exporouter_assets_reactnavigation_elements_backicon.png"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/raw_assets_sounds_info.mp3.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/raw/assets_sounds_info.mp3"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/drawable-xxhdpi_node_modules_exporouter_assets_reactnavigation_elements_clearicon.png.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/drawable-xxhdpi/node_modules_exporouter_assets_reactnavigation_elements_clearicon.png"
+    },
+    {
+        "merged": "com.anonymous.DocuGuard.app-release-92:/raw_node_modules_expo_vectoricons_build_vendor_reactnativevectoricons_fonts_fontawesome.ttf.flat",
+        "source": "com.anonymous.DocuGuard.app-react-88:/raw/node_modules_expo_vectoricons_build_vendor_reactnativevectoricons_fonts_fontawesome.ttf"
+    }
+]

@@ -1,0 +1,27 @@
+{
+  "installationFolder": "C:\\Users\\Asher Basco\\Documents\\DocuGuard\\node_modules\\react-native-worklets\\android\\build\\intermediates\\prefab_package\\release\\prefab",
+  "gradlePath": ":react-native-worklets",
+  "packageInfo": {
+    "packageName": "react-native-worklets",
+    "packageVersion": "0.10.1",
+    "packageSchemaVersion": 2,
+    "packageDependencies": [],
+    "modules": [
+      {
+        "moduleName": "worklets",
+        "moduleHeaders": "C:\\Users\\Asher Basco\\Documents\\DocuGuard\\node_modules\\react-native-worklets\\android\\build\\prefab-headers\\worklets",
+        "moduleExportLibraries": [],
+        "abis": [
+          {
+            "abiName": "x86",
+            "abiApi": 24,
+            "abiNdkMajor": 27,
+            "abiStl": "c++_shared",
+            "abiLibrary": "C:\\Users\\Asher Basco\\Documents\\DocuGuard\\node_modules\\react-native-worklets\\android\\build\\intermediates\\cxx\\RelWithDebInfo\\661c3la3\\obj\\x86\\libworklets.so",
+            "abiAndroidGradleBuildJsonFile": "C:\\Users\\Asher Basco\\Documents\\DocuGuard\\node_modules\\react-native-worklets\\android\\.cxx\\RelWithDebInfo\\661c3la3\\x86\\android_gradle_build.json"
+          }
+        ]
+      }
+    ]
+  }
+}

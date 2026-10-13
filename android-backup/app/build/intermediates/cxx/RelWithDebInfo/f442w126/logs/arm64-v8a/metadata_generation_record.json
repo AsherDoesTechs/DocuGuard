@@ -1,0 +1,249 @@
+[
+  {
+    "level_": 0,
+    "message_": "Start JSON generation. Platform version: 24 min SDK version: arm64-v8a",
+    "file_": "C:\\Users\\Asher Basco\\Documents\\DocuGuard\\node_modules\\react-native\\ReactAndroid\\cmake-utils\\default-app-setup\\CMakeLists.txt",
+    "tag_": "release|arm64-v8a",
+    "diagnosticCode_": 0,
+    "memoizedIsInitialized": 1,
+    "unknownFields": {
+      "fields": {}
+    },
+    "memoizedSize": -1,
+    "memoizedHashCode": 0
+  },
+  {
+    "level_": 0,
+    "message_": "rebuilding JSON C:\\Users\\Asher Basco\\Documents\\DocuGuard\\android\\app\\.cxx\\RelWithDebInfo\\f442w126\\arm64-v8a\\android_gradle_build.json due to:",
+    "file_": "C:\\Users\\Asher Basco\\Documents\\DocuGuard\\node_modules\\react-native\\ReactAndroid\\cmake-utils\\default-app-setup\\CMakeLists.txt",
+    "tag_": "release|arm64-v8a",
+    "diagnosticCode_": 0,
+    "memoizedIsInitialized": 1,
+    "unknownFields": {
+      "fields": {}
+    },
+    "memoizedSize": -1,
+    "memoizedHashCode": 0
+  },
+  {
+    "level_": 0,
+    "message_": "- a file changed",
+    "file_": "C:\\Users\\Asher Basco\\Documents\\DocuGuard\\node_modules\\react-native\\ReactAndroid\\cmake-utils\\default-app-setup\\CMakeLists.txt",
+    "tag_": "release|arm64-v8a",
+    "diagnosticCode_": 0,
+    "memoizedIsInitialized": 1,
+    "unknownFields": {
+      "fields": {}
+    },
+    "memoizedSize": -1,
+    "memoizedHashCode": 0
+  },
+  {
+    "level_": 0,
+    "message_": "  - C:\\Users\\Asher Basco\\Documents\\DocuGuard\\android\\app\\.cxx\\RelWithDebInfo\\f442w126\\arm64-v8a\\prefab_config.json (LAST_MODIFIED_CHANGED)",
+    "file_": "C:\\Users\\Asher Basco\\Documents\\DocuGuard\\node_modules\\react-native\\ReactAndroid\\cmake-utils\\default-app-setup\\CMakeLists.txt",
+    "tag_": "release|arm64-v8a",
+    "diagnosticCode_": 0,
+    "memoizedIsInitialized": 1,
+    "unknownFields": {
+      "fields": {}
+    },
+    "memoizedSize": -1,
+    "memoizedHashCode": 0
+  },
+  {
+    "level_": 0,
+    "message_": "  - C:\\Users\\Asher Basco\\Documents\\DocuGuard\\node_modules\\react-native-nitro-modules\\android\\build\\generated\\source\\codegen\\jni\\CMakeLists.txt (DELETED)",
+    "file_": "C:\\Users\\Asher Basco\\Documents\\DocuGuard\\node_modules\\react-native\\ReactAndroid\\cmake-utils\\default-app-setup\\CMakeLists.txt",
+    "tag_": "release|arm64-v8a",
+    "diagnosticCode_": 0,
+    "memoizedIsInitialized": 1,
+    "unknownFields": {
+      "fields": {}
+    },
+    "memoizedSize": -1,
+    "memoizedHashCode": 0
+  },
+  {
+    "level_": 0,
+    "message_": "  - C:\\Users\\Asher Basco\\Documents\\DocuGuard\\node_modules\\react-native-quick-base64\\android\\CMakeLists.txt (DELETED)",
+    "file_": "C:\\Users\\Asher Basco\\Documents\\DocuGuard\\node_modules\\react-native\\ReactAndroid\\cmake-utils\\default-app-setup\\CMakeLists.txt",
+    "tag_": "release|arm64-v8a",
+    "diagnosticCode_": 0,
+    "memoizedIsInitialized": 1,
+    "unknownFields": {
+      "fields": {}
+    },
+    "memoizedSize": -1,
+    "memoizedHashCode": 0
+  },
+  {
+    "level_": 0,
+    "message_": "  - C:\\Users\\Asher Basco\\Documents\\DocuGuard\\node_modules\\react-native-quick-base64\\android\\generated\\jni\\CMakeLists.txt (DELETED)",
+    "file_": "C:\\Users\\Asher Basco\\Documents\\DocuGuard\\node_modules\\react-native\\ReactAndroid\\cmake-utils\\default-app-setup\\CMakeLists.txt",
+    "tag_": "release|arm64-v8a",
+    "diagnosticCode_": 0,
+    "memoizedIsInitialized": 1,
+    "unknownFields": {
+      "fields": {}
+    },
+    "memoizedSize": -1,
+    "memoizedHashCode": 0
+  },
+  {
+    "level_": 0,
+    "message_": "  - C:\\Users\\Asher Basco\\Documents\\DocuGuard\\node_modules\\react-native-quick-crypto\\android\\build\\generated\\source\\codegen\\jni\\CMakeLists.txt (DELETED)",
+    "file_": "C:\\Users\\Asher Basco\\Documents\\DocuGuard\\node_modules\\react-native\\ReactAndroid\\cmake-utils\\default-app-setup\\CMakeLists.txt",
+    "tag_": "release|arm64-v8a",
+    "diagnosticCode_": 0,
+    "memoizedIsInitialized": 1,
+    "unknownFields": {
+      "fields": {}
+    },
+    "memoizedSize": -1,
+    "memoizedHashCode": 0
+  },
+  {
+    "level_": 0,
+    "message_": "@echo off\n\"C:\\\\Program Files\\\\Java\\\\jdk-23\\\\bin\\\\java\" ^\n  --class-path ^\n  \"C:\\\\Users\\\\Asher Basco\\\\.gradle\\\\caches\\\\modules-2\\\\files-2.1\\\\com.google.prefab\\\\cli\\\\2.1.0\\\\aa32fec809c44fa531f01dcfb739b5b3304d3050\\\\cli-2.1.0-all.jar\" ^\n  com.google.prefab.cli.AppKt ^\n  --build-system ^\n  cmake ^\n  --platform ^\n  android ^\n  --abi ^\n  arm64-v8a ^\n  --os-version ^\n  24 ^\n  --stl ^\n  c++_shared ^\n  --ndk-version ^\n  27 ^\n  --output ^\n  \"C:\\\\Users\\\\ASHERB~1\\\\AppData\\\\Local\\\\Temp\\\\agp-prefab-staging2622938550300493991\\\\staged-cli-output\" ^\n  \"C:\\\\Users\\\\Asher Basco\\\\Documents\\\\DocuGuard\\\\android\\\\app\\\\build\\\\intermediates\\\\cxx\\\\refs\\\\react-native-reanimated\\\\3m5m281k\" ^\n  \"C:\\\\Users\\\\Asher Basco\\\\Documents\\\\DocuGuard\\\\android\\\\app\\\\build\\\\intermediates\\\\cxx\\\\refs\\\\react-native-worklets\\\\6t3h1i55\" ^\n  \"C:\\\\Users\\\\Asher Basco\\\\.gradle\\\\caches\\\\9.3.1\\\\transforms\\\\2632d6d2d8d86a67264f1929d6ca7219\\\\workspace\\\\transformed\\\\react-android-0.86.3-release\\\\prefab\" ^\n  \"C:\\\\Users\\\\Asher Basco\\\\.gradle\\\\caches\\\\9.3.1\\\\transforms\\\\e2c55854edd4c38b955a74e1de76ff46\\\\workspace\\\\transformed\\\\hermes-android-250829098.0.17-release\\\\prefab\" ^\n  \"C:\\\\Users\\\\Asher Basco\\\\.gradle\\\\caches\\\\9.3.1\\\\transforms\\\\26bb4240ca4adbfe09a0334005f778e6\\\\workspace\\\\transformed\\\\fbjni-0.7.0\\\\prefab\"\n",
+    "file_": "C:\\Users\\Asher Basco\\Documents\\DocuGuard\\node_modules\\react-native\\ReactAndroid\\cmake-utils\\default-app-setup\\CMakeLists.txt",
+    "tag_": "release|arm64-v8a",
+    "diagnosticCode_": 0,
+    "memoizedIsInitialized": 1,
+    "unknownFields": {
+      "fields": {}
+    },
+    "memoizedSize": -1,
+    "memoizedHashCode": 0
+  },
+  {
+    "level_": 0,
+    "message_": "Received process result: 0",
+    "file_": "C:\\Users\\Asher Basco\\Documents\\DocuGuard\\node_modules\\react-native\\ReactAndroid\\cmake-utils\\default-app-setup\\CMakeLists.txt",
+    "tag_": "release|arm64-v8a",
+    "diagnosticCode_": 0,
+    "memoizedIsInitialized": 1,
+    "unknownFields": {
+      "fields": {}
+    },
+    "memoizedSize": -1,
+    "memoizedHashCode": 0
+  },
+  {
+    "level_": 0,
+    "message_": "keeping json folder \u0027C:\\Users\\Asher Basco\\Documents\\DocuGuard\\android\\app\\.cxx\\RelWithDebInfo\\f442w126\\arm64-v8a\u0027 but regenerating project",
+    "file_": "C:\\Users\\Asher Basco\\Documents\\DocuGuard\\node_modules\\react-native\\ReactAndroid\\cmake-utils\\default-app-setup\\CMakeLists.txt",
+    "tag_": "release|arm64-v8a",
+    "diagnosticCode_": 0,
+    "memoizedIsInitialized": 1,
+    "unknownFields": {
+      "fields": {}
+    },
+    "memoizedSize": -1,
+    "memoizedHashCode": 0
+  },
+  {
+    "level_": 0,
+    "message_": "executing cmake @echo off\n\"C:\\\\Users\\\\Asher Basco\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\cmake\\\\3.22.1\\\\bin\\\\cmake.exe\" ^\n  \"-HC:\\\\Users\\\\Asher Basco\\\\Documents\\\\DocuGuard\\\\node_modules\\\\react-native\\\\ReactAndroid\\\\cmake-utils\\\\default-app-setup\" ^\n  \"-DCMAKE_SYSTEM_NAME\u003dAndroid\" ^\n  \"-DCMAKE_EXPORT_COMPILE_COMMANDS\u003dON\" ^\n  \"-DCMAKE_SYSTEM_VERSION\u003d24\" ^\n  \"-DANDROID_PLATFORM\u003dandroid-24\" ^\n  \"-DANDROID_ABI\u003darm64-v8a\" ^\n  \"-DCMAKE_ANDROID_ARCH_ABI\u003darm64-v8a\" ^\n  \"-DANDROID_NDK\u003dC:\\\\Users\\\\Asher Basco\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\ndk\\\\27.1.12297006\" ^\n  \"-DCMAKE_ANDROID_NDK\u003dC:\\\\Users\\\\Asher Basco\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\ndk\\\\27.1.12297006\" ^\n  \"-DCMAKE_TOOLCHAIN_FILE\u003dC:\\\\Users\\\\Asher Basco\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\ndk\\\\27.1.12297006\\\\build\\\\cmake\\\\android.toolchain.cmake\" ^\n  \"-DCMAKE_MAKE_PROGRAM\u003dC:\\\\Users\\\\Asher Basco\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\cmake\\\\3.22.1\\\\bin\\\\ninja.exe\" ^\n  \"-DCMAKE_LIBRARY_OUTPUT_DIRECTORY\u003dC:\\\\Users\\\\Asher Basco\\\\Documents\\\\DocuGuard\\\\android\\\\app\\\\build\\\\intermediates\\\\cxx\\\\RelWithDebInfo\\\\f442w126\\\\obj\\\\arm64-v8a\" ^\n  \"-DCMAKE_RUNTIME_OUTPUT_DIRECTORY\u003dC:\\\\Users\\\\Asher Basco\\\\Documents\\\\DocuGuard\\\\android\\\\app\\\\build\\\\intermediates\\\\cxx\\\\RelWithDebInfo\\\\f442w126\\\\obj\\\\arm64-v8a\" ^\n  \"-DCMAKE_BUILD_TYPE\u003dRelWithDebInfo\" ^\n  \"-DCMAKE_FIND_ROOT_PATH\u003dC:\\\\Users\\\\Asher Basco\\\\Documents\\\\DocuGuard\\\\android\\\\app\\\\.cxx\\\\RelWithDebInfo\\\\f442w126\\\\prefab\\\\arm64-v8a\\\\prefab\" ^\n  \"-BC:\\\\Users\\\\Asher Basco\\\\Documents\\\\DocuGuard\\\\android\\\\app\\\\.cxx\\\\RelWithDebInfo\\\\f442w126\\\\arm64-v8a\" ^\n  -GNinja ^\n  \"-DANDROID_STL\u003dc++_shared\" ^\n  \"-DPROJECT_BUILD_DIR\u003dC:\\\\Users\\\\Asher Basco\\\\Documents\\\\DocuGuard\\\\android\\\\app\\\\build\" ^\n  \"-DPROJECT_ROOT_DIR\u003dC:\\\\Users\\\\Asher Basco\\\\Documents\\\\DocuGuard\\\\android\" ^\n  \"-DREACT_ANDROID_DIR\u003dC:\\\\Users\\\\Asher Basco\\\\Documents\\\\DocuGuard\\\\node_modules\\\\react-native\\\\ReactAndroid\" ^\n  \"-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES\u003dON\"\n",
+    "file_": "C:\\Users\\Asher Basco\\Documents\\DocuGuard\\node_modules\\react-native\\ReactAndroid\\cmake-utils\\default-app-setup\\CMakeLists.txt",
+    "tag_": "release|arm64-v8a",
+    "diagnosticCode_": 0,
+    "memoizedIsInitialized": 1,
+    "unknownFields": {
+      "fields": {}
+    },
+    "memoizedSize": -1,
+    "memoizedHashCode": 0
+  },
+  {
+    "level_": 0,
+    "message_": "@echo off\n\"C:\\\\Users\\\\Asher Basco\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\cmake\\\\3.22.1\\\\bin\\\\cmake.exe\" ^\n  \"-HC:\\\\Users\\\\Asher Basco\\\\Documents\\\\DocuGuard\\\\node_modules\\\\react-native\\\\ReactAndroid\\\\cmake-utils\\\\default-app-setup\" ^\n  \"-DCMAKE_SYSTEM_NAME\u003dAndroid\" ^\n  \"-DCMAKE_EXPORT_COMPILE_COMMANDS\u003dON\" ^\n  \"-DCMAKE_SYSTEM_VERSION\u003d24\" ^\n  \"-DANDROID_PLATFORM\u003dandroid-24\" ^\n  \"-DANDROID_ABI\u003darm64-v8a\" ^\n  \"-DCMAKE_ANDROID_ARCH_ABI\u003darm64-v8a\" ^\n  \"-DANDROID_NDK\u003dC:\\\\Users\\\\Asher Basco\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\ndk\\\\27.1.12297006\" ^\n  \"-DCMAKE_ANDROID_NDK\u003dC:\\\\Users\\\\Asher Basco\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\ndk\\\\27.1.12297006\" ^\n  \"-DCMAKE_TOOLCHAIN_FILE\u003dC:\\\\Users\\\\Asher Basco\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\ndk\\\\27.1.12297006\\\\build\\\\cmake\\\\android.toolchain.cmake\" ^\n  \"-DCMAKE_MAKE_PROGRAM\u003dC:\\\\Users\\\\Asher Basco\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\cmake\\\\3.22.1\\\\bin\\\\ninja.exe\" ^\n  \"-DCMAKE_LIBRARY_OUTPUT_DIRECTORY\u003dC:\\\\Users\\\\Asher Basco\\\\Documents\\\\DocuGuard\\\\android\\\\app\\\\build\\\\intermediates\\\\cxx\\\\RelWithDebInfo\\\\f442w126\\\\obj\\\\arm64-v8a\" ^\n  \"-DCMAKE_RUNTIME_OUTPUT_DIRECTORY\u003dC:\\\\Users\\\\Asher Basco\\\\Documents\\\\DocuGuard\\\\android\\\\app\\\\build\\\\intermediates\\\\cxx\\\\RelWithDebInfo\\\\f442w126\\\\obj\\\\arm64-v8a\" ^\n  \"-DCMAKE_BUILD_TYPE\u003dRelWithDebInfo\" ^\n  \"-DCMAKE_FIND_ROOT_PATH\u003dC:\\\\Users\\\\Asher Basco\\\\Documents\\\\DocuGuard\\\\android\\\\app\\\\.cxx\\\\RelWithDebInfo\\\\f442w126\\\\prefab\\\\arm64-v8a\\\\prefab\" ^\n  \"-BC:\\\\Users\\\\Asher Basco\\\\Documents\\\\DocuGuard\\\\android\\\\app\\\\.cxx\\\\RelWithDebInfo\\\\f442w126\\\\arm64-v8a\" ^\n  -GNinja ^\n  \"-DANDROID_STL\u003dc++_shared\" ^\n  \"-DPROJECT_BUILD_DIR\u003dC:\\\\Users\\\\Asher Basco\\\\Documents\\\\DocuGuard\\\\android\\\\app\\\\build\" ^\n  \"-DPROJECT_ROOT_DIR\u003dC:\\\\Users\\\\Asher Basco\\\\Documents\\\\DocuGuard\\\\android\" ^\n  \"-DREACT_ANDROID_DIR\u003dC:\\\\Users\\\\Asher Basco\\\\Documents\\\\DocuGuard\\\\node_modules\\\\react-native\\\\ReactAndroid\" ^\n  \"-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES\u003dON\"\n",
+    "file_": "C:\\Users\\Asher Basco\\Documents\\DocuGuard\\node_modules\\react-native\\ReactAndroid\\cmake-utils\\default-app-setup\\CMakeLists.txt",
+    "tag_": "release|arm64-v8a",
+    "diagnosticCode_": 0,
+    "memoizedIsInitialized": 1,
+    "unknownFields": {
+      "fields": {}
+    },
+    "memoizedSize": -1,
+    "memoizedHashCode": 0
+  },
+  {
+    "level_": 0,
+    "message_": "Received process result: 0",
+    "file_": "C:\\Users\\Asher Basco\\Documents\\DocuGuard\\node_modules\\react-native\\ReactAndroid\\cmake-utils\\default-app-setup\\CMakeLists.txt",
+    "tag_": "release|arm64-v8a",
+    "diagnosticCode_": 0,
+    "memoizedIsInitialized": 1,
+    "unknownFields": {
+      "fields": {}
+    },
+    "memoizedSize": -1,
+    "memoizedHashCode": 0
+  },
+  {
+    "level_": 0,
+    "message_": "Exiting generation of C:\\Users\\Asher Basco\\Documents\\DocuGuard\\android\\app\\.cxx\\RelWithDebInfo\\f442w126\\arm64-v8a\\compile_commands.json.bin normally",
+    "file_": "C:\\Users\\Asher Basco\\Documents\\DocuGuard\\node_modules\\react-native\\ReactAndroid\\cmake-utils\\default-app-setup\\CMakeLists.txt",
+    "tag_": "release|arm64-v8a",
+    "diagnosticCode_": 0,
+    "memoizedIsInitialized": 1,
+    "unknownFields": {
+      "fields": {}
+    },
+    "memoizedSize": -1,
+    "memoizedHashCode": 0
+  },
+  {
+    "level_": 0,
+    "message_": "done executing cmake",
+    "file_": "C:\\Users\\Asher Basco\\Documents\\DocuGuard\\node_modules\\react-native\\ReactAndroid\\cmake-utils\\default-app-setup\\CMakeLists.txt",
+    "tag_": "release|arm64-v8a",
+    "diagnosticCode_": 0,
+    "memoizedIsInitialized": 1,
+    "unknownFields": {
+      "fields": {}
+    },
+    "memoizedSize": -1,
+    "memoizedHashCode": 0
+  },
+  {
+    "level_": 0,
+    "message_": "deleted unexpected build output C:\\Users\\Asher Basco\\Documents\\DocuGuard\\android\\app\\build\\intermediates\\cxx\\RelWithDebInfo\\f442w126\\obj\\arm64-v8a\\libc++_shared.so in incremental regenerate",
+    "file_": "C:\\Users\\Asher Basco\\Documents\\DocuGuard\\node_modules\\react-native\\ReactAndroid\\cmake-utils\\default-app-setup\\CMakeLists.txt",
+    "tag_": "release|arm64-v8a",
+    "diagnosticCode_": 0,
+    "memoizedIsInitialized": 1,
+    "unknownFields": {
+      "fields": {}
+    },
+    "memoizedSize": -1,
+    "memoizedHashCode": 0
+  },
+  {
+    "level_": 0,
+    "message_": "hard linked C:\\Users\\Asher Basco\\Documents\\DocuGuard\\android\\app\\.cxx\\RelWithDebInfo\\f442w126\\arm64-v8a\\compile_commands.json to C:\\Users\\Asher Basco\\Documents\\DocuGuard\\android\\app\\.cxx\\tools\\release\\arm64-v8a\\compile_commands.json",
+    "file_": "C:\\Users\\Asher Basco\\Documents\\DocuGuard\\node_modules\\react-native\\ReactAndroid\\cmake-utils\\default-app-setup\\CMakeLists.txt",
+    "tag_": "release|arm64-v8a",
+    "diagnosticCode_": 0,
+    "memoizedIsInitialized": 1,
+    "unknownFields": {
+      "fields": {}
+    },
+    "memoizedSize": -1,
+    "memoizedHashCode": 0
+  },
+  {
+    "level_": 0,
+    "message_": "JSON generation completed without problems",
+    "file_": "C:\\Users\\Asher Basco\\Documents\\DocuGuard\\node_modules\\react-native\\ReactAndroid\\cmake-utils\\default-app-setup\\CMakeLists.txt",
+    "tag_": "release|arm64-v8a",
+    "diagnosticCode_": 0,
+    "memoizedIsInitialized": 1,
+    "unknownFields": {
+      "fields": {}
+    },
+    "memoizedSize": -1,
+    "memoizedHashCode": 0
+  }
+]
