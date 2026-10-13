@@ -23,6 +23,8 @@ build
 
 # Android build artifacts — keep the bare project, drop the cache and outputs
 android/.gradle
+android/.cxx
+android/app/.cxx
 android/app/build
 android/build
 android/caches
