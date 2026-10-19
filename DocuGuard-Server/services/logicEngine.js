@@ -453,11 +453,14 @@ async function analyzeDocument(fileUrl, contentType) {
   try {
     poller = await client.beginAnalyzeDocumentFromUrl(modelId, fileUrl);
   } catch (firstError) {
+    const msg = String(firstError?.message || "");
     console.warn(
       `Azure ${modelId} failed. Falling back to prebuilt-document:`,
-      firstError.message,
+      msg,
     );
-
+    if (/401|unauthorized|invalid.*key|access denied|authentication/i.test(msg)) {
+      throw firstError;
+    }
     poller = await client.beginAnalyzeDocumentFromUrl(
       "prebuilt-document",
       fileUrl,
