@@ -3,7 +3,7 @@ import { AppState, AppStateStatus } from "react-native";
 import * as LocalAuthentication from "expo-local-authentication";
 import * as SecureStore from "expo-secure-store";
 import { api } from "../services/api";
-import { getUserProfile } from "../services/localDatabase";
+import { getUserProfile, switchLocalUser } from "../services/localDatabase";
 import {
   View,
   Text,
@@ -26,25 +26,53 @@ import Animated, {
 } from "react-native-reanimated";
 import { COLORS, Spacing } from "@/constants";
 
-const DEFAULT_APP_LOCK_DELAY = 30000;
+const DEFAULT_APP_LOCK_DELAY = 30_000;
+const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
+
 const APP_LOCK_ENABLED_KEY = "docuguard.appLock.enabled";
 const APP_LOCK_TIMEOUT_KEY = "docuguard.appLock.timeout";
+const SESSION_BACKGROUND_AT_KEY = "docuguard.session.backgroundAt";
 
 export function useAppLock() {
+  const [sessionCheckComplete, setSessionCheckComplete] = useState(false);
+  const sessionCheckCompleteRef = useRef(false);
+
+  const [preferencesLoaded, setPreferencesLoaded] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
   const [appLockEnabled, setAppLockEnabled] = useState(false);
   const [biometricEnabled, setBiometricEnabled] = useState(false);
-  const [lockTimeout, setLockTimeout] = useState<number>(
-    DEFAULT_APP_LOCK_DELAY,
-  );
+  const [lockTimeout, setLockTimeout] = useState(DEFAULT_APP_LOCK_DELAY);
+  const [sessionExpired, setSessionExpired] = useState(false);
 
-  const lastActiveTimeRef = useRef<number>(Date.now());
+  // A successful expiration remains latched until RootLayout handles it.
+  const sessionExpiredRef = useRef(false);
+
+  // Prevent concurrent expiration operations.
+  const expirationInProgressRef = useRef(false);
+
+  // If security state cannot be verified, do not allow either unlock method.
+  const sessionVerificationFailedRef = useRef(false);
+
+  const lastActiveTimeRef = useRef(Date.now());
   const appLockEnabledRef = useRef(false);
   const biometricEnabledRef = useRef(false);
   const lockTimeoutRef = useRef(DEFAULT_APP_LOCK_DELAY);
   const mountedRef = useRef(true);
 
-  // Keep refs in sync with state
+  const resetSessionExpired = useCallback(() => {
+    sessionExpiredRef.current = false;
+    setSessionExpired(false);
+  }, []);
+
+  useEffect(() => {
+    mountedRef.current = true;
+
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  // Keep refs synchronized with React state.
   useEffect(() => {
     appLockEnabledRef.current = appLockEnabled;
   }, [appLockEnabled]);
@@ -57,75 +85,380 @@ export function useAppLock() {
     lockTimeoutRef.current = lockTimeout;
   }, [lockTimeout]);
 
-  // Load preferences from SecureStore on startup
+  // Load persisted app-lock preferences before checking the session.
   useEffect(() => {
+    let cancelled = false;
+
     const loadPreferences = async () => {
       try {
-        const storedEnabled =
-          await SecureStore.getItemAsync(APP_LOCK_ENABLED_KEY);
+        const [storedEnabled, storedTimeout] = await Promise.all([
+          SecureStore.getItemAsync(APP_LOCK_ENABLED_KEY),
+          SecureStore.getItemAsync(APP_LOCK_TIMEOUT_KEY),
+        ]);
+
+        if (cancelled || !mountedRef.current) return;
+
         if (storedEnabled !== null) {
           const enabled = storedEnabled === "true";
+
           setAppLockEnabled(enabled);
           appLockEnabledRef.current = enabled;
         }
 
-        const storedTimeout =
-          await SecureStore.getItemAsync(APP_LOCK_TIMEOUT_KEY);
         if (storedTimeout !== null) {
-          const timeout = parseInt(storedTimeout, 10);
-          setLockTimeout(timeout);
-          lockTimeoutRef.current = timeout;
+          const parsedTimeout = Number.parseInt(storedTimeout, 10);
+
+          if (Number.isFinite(parsedTimeout) && parsedTimeout >= 0) {
+            setLockTimeout(parsedTimeout);
+            lockTimeoutRef.current = parsedTimeout;
+          }
         }
-      } catch (err) {
-        console.warn("Failed to load app lock preferences:", err);
+      } catch (error) {
+        console.error("Failed to load app-lock preferences:", error);
+
+        // Do not silently disable protection when preferences
+        // cannot be read.
+        sessionVerificationFailedRef.current = true;
+
+        if (mountedRef.current) {
+          setAppLockEnabled(true);
+          appLockEnabledRef.current = true;
+          setIsLocked(true);
+        }
+      } finally {
+        if (!cancelled && mountedRef.current) {
+          setPreferencesLoaded(true);
+        }
       }
     };
-    loadPreferences();
+
+    void loadPreferences();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const checkBiometricSupport = useCallback(async () => {
     try {
-      const hasHardware = await LocalAuthentication.hasHardwareAsync();
-      const isEnrolled = await LocalAuthentication.isEnrolledAsync();
-      const token = await SecureStore.getItemAsync("userToken");
+      const [hasHardware, isEnrolled, token] = await Promise.all([
+        LocalAuthentication.hasHardwareAsync(),
+        LocalAuthentication.isEnrolledAsync(),
+        SecureStore.getItemAsync("userToken"),
+      ]);
 
       const enabled = hasHardware && isEnrolled && !!token;
+
       if (mountedRef.current) {
         setBiometricEnabled(enabled);
+        biometricEnabledRef.current = enabled;
       }
-    } catch (err) {
-      console.warn("Biometric check failed:", err);
+
+      return enabled;
+    } catch (error) {
+      console.warn("Biometric availability check failed:", error);
+
       if (mountedRef.current) {
         setBiometricEnabled(false);
+        biometricEnabledRef.current = false;
       }
+
+      return false;
     }
   }, []);
 
   useEffect(() => {
-    checkBiometricSupport();
-    return () => {
-      mountedRef.current = false;
-    };
+    void checkBiometricSupport();
   }, [checkBiometricSupport]);
 
-  const handleAppStateChange = useCallback(
-    (nextAppState: AppStateStatus) => {
-      if (!mountedRef.current) return;
+  /**
+   * Expire the current session.
+   *
+   * Returns true only when the existing session is no longer available
+   * in SecureStore. If token access or deletion fails, the app stays
+   * locked and the caller receives false.
+   */
+  const expireSession = useCallback(async (): Promise<boolean> => {
+    if (sessionExpiredRef.current) {
+      return true;
+    }
 
-      if (nextAppState === "background" || nextAppState === "inactive") {
-        lastActiveTimeRef.current = Date.now();
-      } else if (nextAppState === "active") {
-        checkBiometricSupport();
-        const now = Date.now();
-        const timeAway = now - lastActiveTimeRef.current;
+    if (expirationInProgressRef.current) {
+      return false;
+    }
 
-        if (appLockEnabledRef.current && timeAway > lockTimeoutRef.current) {
+    expirationInProgressRef.current = true;
+
+    try {
+      const token = await SecureStore.getItemAsync("userToken");
+
+      if (token) {
+        await SecureStore.deleteItemAsync("userToken");
+
+        // Confirm that the token is actually gone.
+        const remainingToken = await SecureStore.getItemAsync("userToken");
+
+        if (remainingToken) {
+          throw new Error("The authentication token still exists.");
+        }
+      }
+
+      // Clear the timestamp separately. Timestamp cleanup failure
+      // must not reverse a confirmed token deletion.
+      try {
+        await SecureStore.deleteItemAsync(SESSION_BACKGROUND_AT_KEY);
+      } catch (error) {
+        console.warn("Failed to clear the background timestamp:", error);
+      }
+
+      sessionExpiredRef.current = true;
+      sessionVerificationFailedRef.current = false;
+
+      if (mountedRef.current) {
+        setIsLocked(false);
+        setBiometricEnabled(false);
+        biometricEnabledRef.current = false;
+        setSessionExpired(true);
+      }
+
+      return true;
+    } catch (error) {
+      console.error("Failed to expire the session:", error);
+
+      sessionVerificationFailedRef.current = true;
+
+      if (mountedRef.current) {
+        setIsLocked(true);
+      }
+
+      return false;
+    } finally {
+      expirationInProgressRef.current = false;
+    }
+  }, []);
+
+  // Verify the previous session before RootLayout finishes its
+  // initial authentication check.
+  useEffect(() => {
+    if (!preferencesLoaded) return;
+
+    let cancelled = false;
+
+    const checkPreviousSession = async () => {
+      try {
+        const [token, storedBackgroundAt] = await Promise.all([
+          SecureStore.getItemAsync("userToken"),
+          SecureStore.getItemAsync(SESSION_BACKGROUND_AT_KEY),
+        ]);
+
+        if (cancelled || !mountedRef.current) return;
+
+        if (!token) {
+          if (storedBackgroundAt) {
+            await SecureStore.deleteItemAsync(SESSION_BACKGROUND_AT_KEY);
+          }
+
+          setIsLocked(false);
+          setBiometricEnabled(false);
+          biometricEnabledRef.current = false;
+          return;
+        }
+
+        if (!storedBackgroundAt) {
+          // A missing timestamp cannot prove how long the app was
+          // closed. Do not invent an elapsed time.
+          //
+          // If app lock is enabled, require unlocking before exposing
+          // the vault. The 30-minute timeout cannot be reconstructed
+          // without a persisted timestamp.
+          if (appLockEnabledRef.current) {
+            setIsLocked(true);
+          }
+
+          lastActiveTimeRef.current = Date.now();
+          return;
+        }
+
+        const backgroundAt = Number(storedBackgroundAt);
+
+        if (!Number.isFinite(backgroundAt) || backgroundAt <= 0) {
+          // We cannot establish the session's previous background time.
+          // Fail closed rather than silently trusting this session.
+          sessionVerificationFailedRef.current = true;
+          setIsLocked(true);
+          return;
+        }
+
+        const timeAway = Math.max(0, Date.now() - backgroundAt);
+
+        if (timeAway >= SESSION_TIMEOUT_MS) {
+          const expired = await expireSession();
+
+          if (!expired) {
+            sessionVerificationFailedRef.current = true;
+            setIsLocked(true);
+          }
+
+          return;
+        }
+
+        if (appLockEnabledRef.current && timeAway >= lockTimeoutRef.current) {
           setIsLocked(true);
         }
+
+        lastActiveTimeRef.current = Date.now();
+
+        await SecureStore.deleteItemAsync(SESSION_BACKGROUND_AT_KEY);
+      } catch (error) {
+        console.error("Failed to verify the previous session:", error);
+
+        sessionVerificationFailedRef.current = true;
+
+        if (!cancelled && mountedRef.current) {
+          setIsLocked(true);
+        }
+      } finally {
+        if (!cancelled && mountedRef.current) {
+          sessionCheckCompleteRef.current = true;
+          setSessionCheckComplete(true);
+        }
+      }
+    };
+
+    void checkPreviousSession();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [expireSession, preferencesLoaded]);
+
+  const handleAppStateChange = useCallback(
+    async (nextAppState: AppStateStatus) => {
+      if (!mountedRef.current) return;
+
+      // APP ENTERS BACKGROUND
+      if (nextAppState === "background" || nextAppState === "inactive") {
+        const backgroundAt = Date.now();
+        lastActiveTimeRef.current = backgroundAt;
+
+        try {
+          const token = await SecureStore.getItemAsync("userToken");
+
+          if (!mountedRef.current) return;
+
+          if (token) {
+            await SecureStore.setItemAsync(
+              SESSION_BACKGROUND_AT_KEY,
+              String(backgroundAt),
+            );
+          } else {
+            await SecureStore.deleteItemAsync(SESSION_BACKGROUND_AT_KEY);
+          }
+        } catch (error) {
+          console.error("Failed to record the background timestamp:", error);
+
+          // We cannot safely trust the session without knowing
+          // when the app entered the background.
+          sessionVerificationFailedRef.current = true;
+          setIsLocked(true);
+
+          const expired = await expireSession();
+
+          if (!expired && mountedRef.current) {
+            setIsLocked(true);
+          }
+        }
+
+        return;
+      }
+
+      // Ignore transitions that are not a return to the foreground.
+      if (nextAppState !== "active") return;
+
+      // Startup must finish its first security check first.
+      if (!sessionCheckCompleteRef.current) return;
+
+      try {
+        const [token, storedBackgroundAt] = await Promise.all([
+          SecureStore.getItemAsync("userToken"),
+          SecureStore.getItemAsync(SESSION_BACKGROUND_AT_KEY),
+        ]);
+
+        if (!mountedRef.current) return;
+
+        // No authentication token means there is no session to unlock.
+        if (!token) {
+          if (storedBackgroundAt) {
+            await SecureStore.deleteItemAsync(SESSION_BACKGROUND_AT_KEY);
+          }
+
+          setIsLocked(false);
+          setBiometricEnabled(false);
+          biometricEnabledRef.current = false;
+          lastActiveTimeRef.current = Date.now();
+          return;
+        }
+
+        if (sessionVerificationFailedRef.current) {
+          setIsLocked(true);
+          return;
+        }
+
+        if (storedBackgroundAt) {
+          const backgroundAt = Number(storedBackgroundAt);
+
+          if (!Number.isFinite(backgroundAt) || backgroundAt <= 0) {
+            sessionVerificationFailedRef.current = true;
+            setIsLocked(true);
+            return;
+          }
+
+          const timeAway = Math.max(0, Date.now() - backgroundAt);
+
+          // Session expiration always takes precedence over app lock.
+          if (timeAway >= SESSION_TIMEOUT_MS) {
+            const expired = await expireSession();
+
+            if (!expired && mountedRef.current) {
+              setIsLocked(true);
+            }
+
+            return;
+          }
+
+          if (appLockEnabledRef.current && timeAway >= lockTimeoutRef.current) {
+            setIsLocked(true);
+          }
+
+          await SecureStore.deleteItemAsync(SESSION_BACKGROUND_AT_KEY);
+        }
+
+        if (!mountedRef.current) return;
+
+        await checkBiometricSupport();
+
+        if (!mountedRef.current) return;
+
+        // Keep the existing in-process app-lock behavior as a fallback.
+        const now = Date.now();
+        const timeAway = Math.max(0, now - lastActiveTimeRef.current);
+
+        if (appLockEnabledRef.current && timeAway >= lockTimeoutRef.current) {
+          setIsLocked(true);
+        }
+
         lastActiveTimeRef.current = now;
+      } catch (error) {
+        console.error("Failed to check the session on app resume:", error);
+
+        sessionVerificationFailedRef.current = true;
+
+        if (mountedRef.current) {
+          setIsLocked(true);
+        }
       }
     },
-    [checkBiometricSupport],
+    [checkBiometricSupport, expireSession],
   );
 
   useEffect(() => {
@@ -133,13 +466,59 @@ export function useAppLock() {
       "change",
       handleAppStateChange,
     );
-    return () => subscription.remove();
+
+    return () => {
+      subscription.remove();
+    };
   }, [handleAppStateChange]);
 
+  // BIOMETRIC UNLOCK
   const unlockWithBiometric = useCallback(async (): Promise<boolean> => {
     try {
-      const hasHardware = await LocalAuthentication.hasHardwareAsync();
-      const isEnrolled = await LocalAuthentication.isEnrolledAsync();
+      if (
+        sessionExpiredRef.current ||
+        expirationInProgressRef.current ||
+        sessionVerificationFailedRef.current
+      ) {
+        return false;
+      }
+
+      const [token, storedBackgroundAt, hasHardware, isEnrolled] =
+        await Promise.all([
+          SecureStore.getItemAsync("userToken"),
+          SecureStore.getItemAsync(SESSION_BACKGROUND_AT_KEY),
+          LocalAuthentication.hasHardwareAsync(),
+          LocalAuthentication.isEnrolledAsync(),
+        ]);
+
+      if (
+        !token ||
+        sessionExpiredRef.current ||
+        sessionVerificationFailedRef.current
+      ) {
+        return false;
+      }
+
+      if (storedBackgroundAt) {
+        const backgroundAt = Number(storedBackgroundAt);
+
+        if (!Number.isFinite(backgroundAt) || backgroundAt <= 0) {
+          sessionVerificationFailedRef.current = true;
+          setIsLocked(true);
+          return false;
+        }
+
+        if (Date.now() - backgroundAt >= SESSION_TIMEOUT_MS) {
+          const expired = await expireSession();
+
+          if (!expired) {
+            setIsLocked(true);
+          }
+
+          return false;
+        }
+      }
+
       if (!hasHardware || !isEnrolled) return false;
 
       const authResult = await LocalAuthentication.authenticateAsync({
@@ -148,45 +527,196 @@ export function useAppLock() {
         disableDeviceFallback: false,
       });
 
-      if (authResult.success) {
-        setIsLocked(false);
-        return true;
+      if (!authResult.success) return false;
+
+      // Recheck token and timestamp after the biometric prompt.
+      // The session may have expired while authentication was open.
+      const [currentToken, currentBackgroundAt] = await Promise.all([
+        SecureStore.getItemAsync("userToken"),
+        SecureStore.getItemAsync(SESSION_BACKGROUND_AT_KEY),
+      ]);
+
+      if (
+        !currentToken ||
+        sessionExpiredRef.current ||
+        expirationInProgressRef.current ||
+        sessionVerificationFailedRef.current
+      ) {
+        return false;
       }
-      return false;
-    } catch (err) {
-      console.error("Biometric unlock failed:", err);
+
+      if (currentBackgroundAt) {
+        const backgroundAt = Number(currentBackgroundAt);
+
+        if (!Number.isFinite(backgroundAt) || backgroundAt <= 0) {
+          sessionVerificationFailedRef.current = true;
+          setIsLocked(true);
+          return false;
+        }
+
+        if (Date.now() - backgroundAt >= SESSION_TIMEOUT_MS) {
+          const expired = await expireSession();
+
+          if (!expired) {
+            setIsLocked(true);
+          }
+
+          return false;
+        }
+      }
+
+      if (mountedRef.current) {
+        setIsLocked(false);
+      }
+
+      return true;
+    } catch (error) {
+      console.error("Biometric unlock failed:", error);
       return false;
     }
-  }, []);
+  }, [expireSession]);
 
+  // PASSWORD UNLOCK
   const unlockWithPassword = useCallback(
     async (password: string): Promise<boolean> => {
       try {
-        const storedToken = await SecureStore.getItemAsync("userToken");
-        if (!storedToken) return false;
+        if (
+          !password ||
+          sessionExpiredRef.current ||
+          expirationInProgressRef.current ||
+          sessionVerificationFailedRef.current
+        ) {
+          return false;
+        }
+
+        const [storedToken, storedBackgroundAt] = await Promise.all([
+          SecureStore.getItemAsync("userToken"),
+          SecureStore.getItemAsync(SESSION_BACKGROUND_AT_KEY),
+        ]);
+
+        if (
+          !storedToken ||
+          sessionExpiredRef.current ||
+          sessionVerificationFailedRef.current
+        ) {
+          return false;
+        }
+
+        if (storedBackgroundAt) {
+          const backgroundAt = Number(storedBackgroundAt);
+
+          if (!Number.isFinite(backgroundAt) || backgroundAt <= 0) {
+            sessionVerificationFailedRef.current = true;
+            setIsLocked(true);
+            return false;
+          }
+
+          if (Date.now() - backgroundAt >= SESSION_TIMEOUT_MS) {
+            const expired = await expireSession();
+
+            if (!expired) {
+              setIsLocked(true);
+            }
+
+            return false;
+          }
+        }
 
         const profile = await getUserProfile();
         const email = profile?.email?.trim();
-        if (!email || !password) return false;
 
-        const response = await api.auth.login({ email, password });
-        if (response.token && !response.requiresTwoFactor) {
-          setIsLocked(false);
-          return true;
+        if (!email) return false;
+
+        const response = await api.auth.login({
+          email,
+          password,
+        });
+
+        // Never let an in-progress expiration or 2FA requirement
+        // be bypassed by the password-unlock flow.
+        if (
+          !response.token ||
+          response.requiresTwoFactor ||
+          sessionExpiredRef.current ||
+          expirationInProgressRef.current ||
+          sessionVerificationFailedRef.current
+        ) {
+          return false;
         }
-        return false;
-      } catch (err) {
-        console.error("Password unlock failed:", err);
+
+        // Recheck the original session before replacing its token.
+        const [currentToken, currentBackgroundAt] = await Promise.all([
+          SecureStore.getItemAsync("userToken"),
+          SecureStore.getItemAsync(SESSION_BACKGROUND_AT_KEY),
+        ]);
+
+        if (
+          !currentToken ||
+          sessionExpiredRef.current ||
+          expirationInProgressRef.current ||
+          sessionVerificationFailedRef.current
+        ) {
+          return false;
+        }
+
+        if (currentBackgroundAt) {
+          const backgroundAt = Number(currentBackgroundAt);
+
+          if (!Number.isFinite(backgroundAt) || backgroundAt <= 0) {
+            sessionVerificationFailedRef.current = true;
+            setIsLocked(true);
+            return false;
+          }
+
+          if (Date.now() - backgroundAt >= SESSION_TIMEOUT_MS) {
+            const expired = await expireSession();
+
+            if (!expired) {
+              setIsLocked(true);
+            }
+
+            return false;
+          }
+        }
+
+        await SecureStore.setItemAsync("userToken", response.token);
+
+        if (response.user?.id != null) {
+          await switchLocalUser(response.user.id);
+        }
+
+        const verifiedToken = await SecureStore.getItemAsync("userToken");
+
+        if (
+          !verifiedToken ||
+          sessionExpiredRef.current ||
+          expirationInProgressRef.current ||
+          sessionVerificationFailedRef.current
+        ) {
+          return false;
+        }
+
+        // The password flow only unlocks a still-valid session.
+        if (mountedRef.current) {
+          setIsLocked(false);
+        }
+
+        return true;
+      } catch (error) {
+        console.error("Password unlock failed:", error);
         return false;
       }
     },
-    [],
+    [expireSession],
   );
 
   return {
     isLocked,
     appLockEnabled,
     biometricEnabled,
+    sessionExpired,
+    sessionCheckComplete,
+    resetSessionExpired,
     unlockWithBiometric,
     unlockWithPassword,
     setIsLocked,
@@ -219,9 +749,17 @@ export function AppLockScreen({
 
   useEffect(() => {
     fadeAnim.value = withTiming(1, { duration: 450 });
-    scaleAnim.value = withSpring(1, { damping: 18, stiffness: 120 });
-    buttonScale.value = withSpring(1, { damping: 14, stiffness: 100 });
-  }, []);
+
+    scaleAnim.value = withSpring(1, {
+      damping: 18,
+      stiffness: 120,
+    });
+
+    buttonScale.value = withSpring(1, {
+      damping: 14,
+      stiffness: 100,
+    });
+  }, [fadeAnim, scaleAnim, buttonScale]);
 
   useEffect(() => {
     iconScale.value = withRepeat(
@@ -232,6 +770,7 @@ export function AppLockScreen({
       -1,
       true,
     );
+
     iconOpacity.value = withRepeat(
       withTiming(0.65, {
         duration: 2200,
@@ -240,7 +779,7 @@ export function AppLockScreen({
       -1,
       true,
     );
-  }, []);
+  }, [iconScale, iconOpacity]);
 
   const containerAnimatedStyle = useAnimatedStyle(() => ({
     opacity: fadeAnim.value,
@@ -257,24 +796,49 @@ export function AppLockScreen({
   }));
 
   const handleBiometricPress = async () => {
+    if (authenticating) return;
+
     setAuthenticating(true);
     setErrorMsg("");
-    const success = await onUnlockBiometric();
-    if (!success) {
-      setErrorMsg("Biometric verification failed. Try again.");
+
+    try {
+      const success = await onUnlockBiometric();
+
+      if (!success) {
+        setErrorMsg(
+          "Unable to unlock. Your session may have expired. Please sign in again if prompted.",
+        );
+      }
+    } catch (error) {
+      console.error("Biometric unlock action failed:", error);
+      setErrorMsg("Unable to verify your identity. Try again.");
+    } finally {
+      setAuthenticating(false);
     }
-    setAuthenticating(false);
   };
 
   const handlePasswordSubmit = async () => {
-    if (!passwordInput) return;
+    if (!passwordInput || authenticating) return;
+
     setAuthenticating(true);
     setErrorMsg("");
-    const success = await onUnlockPassword(passwordInput);
-    if (!success) {
-      setErrorMsg("Incorrect password. Please try again.");
+
+    try {
+      const success = await onUnlockPassword(passwordInput);
+
+      if (success) {
+        setPasswordInput("");
+      } else {
+        setErrorMsg(
+          "Unable to unlock. Check your password or sign in again if your session has expired.",
+        );
+      }
+    } catch (error) {
+      console.error("Password unlock action failed:", error);
+      setErrorMsg("Unable to unlock your vault. Please try again.");
+    } finally {
+      setAuthenticating(false);
     }
-    setAuthenticating(false);
   };
 
   if (!isLocked) return null;
@@ -284,11 +848,8 @@ export function AppLockScreen({
       colors={["#0B1120", "#0F172A", "#1E293B"]}
       style={[styles.gradient, StyleSheet.absoluteFill, { zIndex: 9999 }]}
     >
-      <BlurView
-        intensity={30}
-        tint="dark"
-        style={{ position: "absolute", top: 0, left: 0, bottom: 0, right: 0 }}
-      />
+      <BlurView intensity={30} tint="dark" style={styles.blurOverlay} />
+
       <SafeAreaView style={styles.safeArea}>
         <Animated.View style={[styles.content, containerAnimatedStyle]}>
           <Animated.View style={[styles.iconRing, iconAnimatedStyle]}>
@@ -296,7 +857,9 @@ export function AppLockScreen({
               <Ionicons name="lock-closed" size={36} color={COLORS.primary} />
             </View>
           </Animated.View>
+
           <Text style={styles.title}>App Locked</Text>
+
           <Text style={styles.subtitle}>
             Your vault is protected. Authenticate to continue.
           </Text>
@@ -336,7 +899,10 @@ export function AppLockScreen({
 
               <TouchableOpacity
                 style={styles.fallbackButton}
-                onPress={() => setUsePasswordMode(true)}
+                onPress={() => {
+                  setUsePasswordMode(true);
+                  setErrorMsg("");
+                }}
                 activeOpacity={0.6}
               >
                 <Text style={styles.fallbackText}>Use Password Instead</Text>
@@ -352,11 +918,16 @@ export function AppLockScreen({
                 value={passwordInput}
                 onChangeText={setPasswordInput}
                 autoFocus
+                autoCapitalize="none"
+                autoCorrect={false}
+                onSubmitEditing={handlePasswordSubmit}
+                returnKeyType="done"
               />
+
               <TouchableOpacity
                 style={styles.button}
                 onPress={handlePasswordSubmit}
-                disabled={authenticating}
+                disabled={authenticating || !passwordInput}
                 activeOpacity={0.85}
               >
                 {authenticating ? (
@@ -371,6 +942,7 @@ export function AppLockScreen({
                 onPress={() => {
                   setUsePasswordMode(false);
                   setErrorMsg("");
+                  setPasswordInput("");
                 }}
                 activeOpacity={0.6}
               >
@@ -385,8 +957,19 @@ export function AppLockScreen({
 }
 
 const styles = StyleSheet.create({
-  gradient: { flex: 1 },
-  safeArea: { flex: 1 },
+  gradient: {
+    flex: 1,
+  },
+  blurOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    bottom: 0,
+    right: 0,
+  },
+  safeArea: {
+    flex: 1,
+  },
   content: {
     flex: 1,
     justifyContent: "center",

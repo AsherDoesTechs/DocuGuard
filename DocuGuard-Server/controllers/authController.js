@@ -81,7 +81,11 @@ exports.register = async (req, res, next) => {
     let emailSent = true;
 
     try {
-      await sendVerificationEmail(newUser.email, newUser.name, verificationToken);
+      await sendVerificationEmail(
+        newUser.email,
+        newUser.name,
+        verificationToken,
+      );
       debug("Auth", "Verification email sent", {
         to: newUser.email,
         userId: newUser.id,
@@ -101,7 +105,8 @@ exports.register = async (req, res, next) => {
     }
 
     res.status(201).json({
-      message: "User registered successfully. Please check your email to verify your account.",
+      message:
+        "User registered successfully. Please check your email to verify your account.",
       user: { id: newUser.id, email: newUser.email, name: newUser.name },
       emailSent,
     });
@@ -143,12 +148,10 @@ exports.login = async (req, res, next) => {
     ]);
     if (rows.length === 0) {
       warn("Auth", "Login failed - user not found", { email });
-      return res
-        .status(401)
-        .json({
-          error: "Invalid credentials",
-          code: ErrorCodes.AUTH_LOGIN_FAILED,
-        });
+      return res.status(401).json({
+        error: "Invalid credentials",
+        code: ErrorCodes.AUTH_LOGIN_FAILED,
+      });
     }
 
     const user = rows[0];
@@ -156,12 +159,10 @@ exports.login = async (req, res, next) => {
     const isMatch = await bcrypt.compare(password, user.password_hash);
     if (!isMatch) {
       warn("Auth", "Login failed - password mismatch", { email });
-      return res
-        .status(401)
-        .json({
-          error: "Invalid credentials",
-          code: ErrorCodes.AUTH_LOGIN_FAILED,
-        });
+      return res.status(401).json({
+        error: "Invalid credentials",
+        code: ErrorCodes.AUTH_LOGIN_FAILED,
+      });
     }
 
     if (!user.is_verified) {
@@ -175,7 +176,8 @@ exports.login = async (req, res, next) => {
     // factor existed in the database and the UI but was never actually checked,
     // so the account looked protected while a stolen password was sufficient.
     if (user.two_factor_secret && user.two_factor_enabled_at) {
-      const code = typeof req.body.totpCode === "string" ? req.body.totpCode.trim() : "";
+      const code =
+        typeof req.body.totpCode === "string" ? req.body.totpCode.trim() : "";
 
       if (!code) {
         // No token is issued, only the fact that a second factor is required.
@@ -195,9 +197,13 @@ exports.login = async (req, res, next) => {
       }
     }
 
-    const token = jwt.sign({ userId: user.id, role: user.role || "user" }, process.env.JWT_SECRET, {
-      expiresIn: "7d",
-    });
+    const token = jwt.sign(
+      { userId: user.id, role: user.role || "user" },
+      process.env.JWT_SECRET,
+      {
+        expiresIn: "7d",
+      },
+    );
 
     info("Auth", "Login successful", { userId: user.id, email: user.email });
 
@@ -247,18 +253,18 @@ exports.checkEmail = async (req, res) => {
       { error: err.message, stack: err.stack },
       ErrorCodes.DB_QUERY_FAILED,
     );
-    return res
-      .status(500)
-      .json({
-        error: "Internal server error",
-        code: ErrorCodes.DB_QUERY_FAILED,
-      });
+    return res.status(500).json({
+      error: "Internal server error",
+      code: ErrorCodes.DB_QUERY_FAILED,
+    });
   }
 };
 
 // 4a. Verify Email (API / Deep Link)
+
 exports.verifyEmail = async (req, res, next) => {
   const validation = validateSchema(verifyEmailSchema, req.body);
+
   if (!validation.success) {
     return res.status(400).json({
       error: Object.values(validation.errors).join(", "),
@@ -270,33 +276,46 @@ exports.verifyEmail = async (req, res, next) => {
   const { token } = validation.data;
 
   try {
-    debug("Auth", "Email verification attempt", { tokenLength: token?.length });
+    debug("Auth", "Email verification attempt", {
+      tokenLength: token?.length,
+    });
 
+    // Atomically verify the account and consume the token.
+    // A token can succeed only once and only before expiration.
     const result = await db.query(
-      "SELECT id, email FROM users WHERE verification_token = $1 AND verification_expires_at > NOW()",
+      `UPDATE users
+       SET is_verified = TRUE,
+           verification_token = NULL,
+           verification_expires_at = NULL
+       WHERE verification_token = $1
+         AND verification_expires_at > NOW()
+         AND is_verified = FALSE
+       RETURNING id, email, role`,
       [token],
     );
 
     if (result.rows.length === 0) {
-      warn("Auth", "Invalid or expired verification token", {
+      warn("Auth", "Invalid, expired, or already-used verification token", {
         tokenLength: token?.length,
       });
+
       return res.status(400).json({
-        error: "Invalid or expired verification token.",
+        error:
+          "This verification link is invalid, expired, or has already been used. Please sign in or request a new verification email.",
         code: ErrorCodes.AUTH_TOKEN_INVALID,
       });
     }
 
     const user = result.rows[0];
 
-    await db.query(
-      "UPDATE users SET is_verified = TRUE, verification_token = NULL, verification_expires_at = NULL WHERE id = $1",
-      [user.id],
+    const authToken = jwt.sign(
+      {
+        userId: user.id,
+        role: user.role || "user",
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: "7d" },
     );
-
-    const authToken = jwt.sign({ userId: user.id, role: user.role || "user" }, process.env.JWT_SECRET, {
-      expiresIn: "7d",
-    });
 
     info("Auth", "Email verified successfully", {
       userId: user.id,
@@ -314,6 +333,7 @@ exports.verifyEmail = async (req, res, next) => {
       { error: err.message, stack: err.stack },
       ErrorCodes.UNKNOWN_ERROR,
     );
+
     return next(
       new AppError(
         "Internal server error during verification",
@@ -325,126 +345,122 @@ exports.verifyEmail = async (req, res, next) => {
 };
 
 // 4b. Verify Email via Web Link
-exports.verifyEmailWeb = async (req, res) => {
-  const { token } = req.query;
 
-  if (!token) {
-    return res.status(400).send(`
-      <html>
+exports.verifyEmailWeb = async (req, res) => {
+  const rawToken = req.query.token;
+  const token = typeof rawToken === "string" ? rawToken.trim() : "";
+
+  const appLoginLink = `${APP_DEEPLINK_SCHEME}://login`;
+
+  const renderPage = ({
+    title,
+    heading,
+    message,
+    type = "success",
+    buttonText = "Continue to DocuGuard",
+    buttonLink = appLoginLink,
+    statusCode = 200,
+  }) => {
+    const isSuccess = type === "success";
+    const isWarning = type === "warning";
+
+    const iconBackground = isSuccess
+      ? "#DCFCE7"
+      : isWarning
+        ? "#FEF3C7"
+        : "#FEE2E2";
+
+    const iconColor = isSuccess ? "#16A34A" : isWarning ? "#D97706" : "#DC2626";
+
+    const icon = isSuccess ? "&#10003;" : isWarning ? "&#9888;" : "!";
+
+    return res.status(statusCode).send(`
+      <!DOCTYPE html>
+      <html lang="en">
         <head>
-          <title>Invalid Link - DocuGuard</title>
+          <meta charset="UTF-8">
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <meta name="robots" content="noindex, nofollow">
+          <meta name="referrer" content="no-referrer">
+          <title>${escapeHtml(title)} - DocuGuard</title>
         </head>
-        <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; text-align: center; padding: 50px 20px; background-color: #f3f4f6;">
-          <div style="max-width: 400px; margin: 0 auto; background: #ffffff; border-radius: 16px; padding: 40px; box-shadow: 0 8px 32px rgba(0,0,0,0.08);">
-            <div style="width: 80px; height: 80px; background: #FEE2E2; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px; font-size: 32px; font-weight: 700; color: #DC2626;">!</div>
-            <h1 style="margin: 0 0 12px; color: #111827; font-size: 24px; font-weight: 700;">Invalid Verification Link</h1>
-            <p style="margin: 0; color: #6B7280; font-size: 16px;">This verification link is missing the required token.</p>
-          </div>
+        <body style="margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;text-align:center;padding:50px 20px;background:#f3f4f6;box-sizing:border-box;">
+          <main style="max-width:420px;margin:0 auto;background:#fff;border-radius:16px;padding:36px 28px;box-shadow:0 8px 32px rgba(0,0,0,0.08);">
+            <div style="width:72px;height:72px;background:${iconBackground};border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 20px;font-size:32px;font-weight:700;color:${iconColor};">
+              ${icon}
+            </div>
+            <h1 style="margin:0 0 12px;color:#111827;font-size:24px;font-weight:700;">
+              ${escapeHtml(heading)}
+            </h1>
+            <p style="margin:0 0 24px;color:#6B7280;font-size:16px;line-height:1.6;">
+              ${message}
+            </p>
+            <a href="${escapeHtml(buttonLink)}"
+               style="display:inline-block;padding:14px 24px;background:#2563EB;color:#fff;text-decoration:none;border-radius:10px;font-size:15px;font-weight:600;">
+              ${escapeHtml(buttonText)}
+            </a>
+          </main>
         </body>
       </html>
     `);
+  };
+
+  if (!token) {
+    return renderPage({
+      title: "Invalid Verification Link",
+      heading: "Invalid Verification Link",
+      message:
+        "This verification link is missing its required token. Please open the latest verification email or request a new link.",
+      type: "error",
+      buttonText: "Open DocuGuard",
+      statusCode: 400,
+    });
   }
 
   try {
+    // Verify and consume the token in one database operation.
+    // This also prevents concurrent requests from using the same token.
     const result = await db.query(
-      "SELECT id, email, name, is_verified FROM users WHERE verification_token = $1",
+      `UPDATE users
+       SET is_verified = TRUE,
+           verification_token = NULL,
+           verification_expires_at = NULL
+       WHERE verification_token = $1
+         AND verification_expires_at > NOW()
+         AND is_verified = FALSE
+       RETURNING id, email, name`,
       [token],
     );
 
     if (result.rows.length === 0) {
-      return res.status(400).send(`
-        <html>
-          <head>
-            <title>Invalid Link - DocuGuard</title>
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          </head>
-          <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; text-align: center; padding: 50px 20px; background-color: #f3f4f6;">
-            <div style="max-width: 400px; margin: 0 auto; background: #ffffff; border-radius: 16px; padding: 40px; box-shadow: 0 8px 32px rgba(0,0,0,0.08);">
-              <div style="width: 80px; height: 80px; background: #FEE2E2; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px; font-size: 32px; font-weight: 700; color: #DC2626;">!</div>
-              <h1 style="margin: 0 0 12px; color: #111827; font-size: 24px; font-weight: 700;">Invalid or Expired Link</h1>
-              <p style="margin: 0; color: #6B7280; font-size: 16px;">This link is invalid or has expired.</p>
-            </div>
-          </body>
-        </html>
-      `);
+      // The token may be invalid, expired, or already consumed.
+      // Do not attempt to reuse it or issue a session from this page.
+      return renderPage({
+        title: "Link Invalid or Expired",
+        heading: "Link Invalid or Expired",
+        message:
+          "This verification link is invalid, has expired, or has already been used. If you have already verified your email, you can sign in to DocuGuard. Otherwise, request a new verification email.",
+        type: "warning",
+        buttonText: "Open DocuGuard",
+        statusCode: 400,
+      });
     }
 
     const user = result.rows[0];
-
-    // If already verified, show success page without updating
-    if (user.is_verified) {
-      const deepLink = buildVerificationLink(token);
-      const displayName = escapeHtml(user.name || "there");
-
-      return res.send(`
-        <html>
-          <head>
-            <title>Email Already Verified - DocuGuard</title>
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          </head>
-          <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; text-align: center; padding: 50px 20px; background-color: #f3f4f6;">
-            <div style="max-width: 400px; margin: 0 auto; background: #ffffff; border-radius: 16px; padding: 40px; box-shadow: 0 8px 32px rgba(0,0,0,0.08);">
-              <div style="width: 80px; height: 80px; background: #DCFCE7; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px; font-size: 32px; font-weight: 700; color: #16A34A;">&#10003;</div>
-              <h1 style="margin: 0 0 12px; color: #111827; font-size: 24px; font-weight: 700;">Email Already Verified</h1>
-              <p style="margin: 0 0 24px; color: #6B7280; font-size: 16px;">Welcome back, <strong style="color: #111827;">${displayName}</strong>! Your email was already verified.</p>
-              <a href="${deepLink}" style="display: inline-block; padding: 14px 28px; background: linear-gradient(135deg, #2563EB 0%, #1d4ED8 100%); color: #ffffff; text-decoration: none; border-radius: 10px; font-size: 15px; font-weight: 600;">Continue to DocuGuard</a>
-            </div>
-          </body>
-        </html>
-      `);
-    }
-
-    // Check if token is expired
-    const expiresResult = await db.query(
-      "SELECT verification_expires_at FROM users WHERE id = $1",
-      [user.id],
-    );
-
-    if (expiresResult.rows.length > 0 && new Date(expiresResult.rows[0].verification_expires_at) <= new Date()) {
-      return res.status(400).send(`
-        <html>
-          <head>
-            <title>Link Expired - DocuGuard</title>
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          </head>
-          <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; text-align: center; padding: 50px 20px; background-color: #f3f4f6;">
-            <div style="max-width: 400px; margin: 0 auto; background: #ffffff; border-radius: 16px; padding: 40px; box-shadow: 0 8px 32px rgba(0,0,0,0.08);">
-              <div style="width: 80px; height: 80px; background: #FEF3C7; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px; font-size: 32px; font-weight: 700; color: #F59E0B;">&#9888;</div>
-              <h1 style="margin: 0 0 12px; color: #111827; font-size: 24px; font-weight: 700;">Link Expired</h1>
-              <p style="margin: 0 0 24px; color: #6B7280; font-size: 16px;">This verification link has expired. Please request a new one.</p>
-              <a href="${APP_DEEPLINK_SCHEME}://login" style="display: inline-block; padding: 14px 28px; background: linear-gradient(135deg, #2563EB 0%, #1d4ED8 100%); color: #ffffff; text-decoration: none; border-radius: 10px; font-size: 15px; font-weight: 600;">Open DocuGuard App</a>
-            </div>
-          </body>
-        </html>
-      `);
-    }
-
-    // Verify the email
-    await db.query(
-      "UPDATE users SET is_verified = TRUE, verification_token = NULL, verification_expires_at = NULL WHERE id = $1",
-      [user.id],
-    );
-
-    const deepLink = buildVerificationLink(token);
     const displayName = escapeHtml(user.name || "there");
 
-    return res.send(`
-      <html>
-        <head>
-          <title>Email Verified - DocuGuard</title>
-          <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        </head>
-        <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; text-align: center; padding: 50px 20px; background-color: #f3f4f6;">
-          <div style="max-width: 400px; margin: 0 auto; background: #ffffff; border-radius: 16px; padding: 40px; box-shadow: 0 8px 32px rgba(0,0,0,0.08);">
-            <div style="width: 80px; height: 80px; background: #DCFCE7; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px; font-size: 32px; font-weight: 700; color: #16A34A;">&#10003;</div>
-            <h1 style="margin: 0 0 12px; color: #111827; font-size: 24px; font-weight: 700;">Email Verified!</h1>
-            <p style="margin: 0 0 24px; color: #6B7280; font-size: 16px;">Welcome, <strong style="color: #111827;">${displayName}</strong>! Your email has been verified successfully.</p>
-            <a href="${deepLink}" style="display: inline-block; padding: 14px 28px; background: linear-gradient(135deg, #2563EB 0%, #1d4ED8 100%); color: #ffffff; text-decoration: none; border-radius: 10px; font-size: 15px; font-weight: 600;">Continue to DocuGuard</a>
-          </div>
-        </body>
-      </html>
-    `);
+    info("Auth", "Email verified through web link", {
+      userId: user.id,
+      email: user.email,
+    });
+
+    return renderPage({
+      title: "Email Verified",
+      heading: "Email Verified!",
+      message: `Welcome, <strong style="color:#111827;">${displayName}</strong>! Your email has been verified successfully. You can now sign in to your DocuGuard account.`,
+      type: "success",
+      buttonText: "Continue to DocuGuard",
+    });
   } catch (err) {
     logError(
       "Auth",
@@ -452,23 +468,19 @@ exports.verifyEmailWeb = async (req, res) => {
       { error: err.message, stack: err.stack },
       ErrorCodes.UNKNOWN_ERROR,
     );
-    return res.status(500).send(`
-      <html>
-        <head>
-          <title>Error - DocuGuard</title>
-          <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        </head>
-        <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; text-align: center; padding: 50px 20px; background-color: #f3f4f6;">
-          <div style="max-width: 400px; margin: 0 auto; background: #ffffff; border-radius: 16px; padding: 40px; box-shadow: 0 8px 32px rgba(0,0,0,0.08);">
-            <div style="width: 80px; height: 80px; background: #FEE2E2; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px; font-size: 32px; font-weight: 700; color: #DC2626;">!</div>
-            <h1 style="margin: 0 0 12px; color: #111827; font-size: 24px; font-weight: 700;">Verification Error</h1>
-            <p style="margin: 0; color: #6B7280; font-size: 16px;">An error occurred. Please try again later.</p>
-          </div>
-        </body>
-      </html>
-    `);
+
+    return renderPage({
+      title: "Verification Error",
+      heading: "Verification Error",
+      message:
+        "We couldn't complete your email verification because of a server error. Please try again later.",
+      type: "error",
+      buttonText: "Open DocuGuard",
+      statusCode: 500,
+    });
   }
 };
+
 exports.resendVerification = async (req, res) => {
   const validation = validateSchema(resendVerificationSchema, req.body);
   if (!validation.success) {
@@ -483,7 +495,7 @@ exports.resendVerification = async (req, res) => {
 
   try {
     const result = await db.query(
-      "SELECT id, is_verified FROM users WHERE email = $1",
+      "SELECT id, name, is_verified FROM users WHERE email = $1",
       [email.trim().toLowerCase()],
     );
     if (result.rows.length === 0) {
@@ -504,7 +516,11 @@ exports.resendVerification = async (req, res) => {
     );
 
     try {
-      await sendVerificationEmail(email, user.name || "there", verificationToken);
+      await sendVerificationEmail(
+        email,
+        user.name || "there",
+        verificationToken,
+      );
       info("Auth", "Verification email resent", {
         to: email,
         userId: user.id,
@@ -517,7 +533,8 @@ exports.resendVerification = async (req, res) => {
         ErrorCodes.UNKNOWN_ERROR,
       );
       return res.status(500).json({
-        error: "Failed to resend verification email. Please check your Resend configuration and try again later.",
+        error:
+          "Failed to resend verification email. Please check your Resend configuration and try again later.",
         code: ErrorCodes.UNKNOWN_ERROR,
       });
     }
@@ -579,9 +596,9 @@ exports.forgotPassword = async (req, res) => {
         { email, error: mailErr.message },
         ErrorCodes.UNKNOWN_ERROR,
       );
-      return res
-        .status(500)
-        .json({ error: "Failed to send password reset email. Please try again later." });
+      return res.status(500).json({
+        error: "Failed to send password reset email. Please try again later.",
+      });
     }
 
     res.json({ message: "Password reset instructions sent successfully" });
@@ -631,13 +648,14 @@ exports.resetPassword = async (req, res) => {
       const salt = await bcrypt.genSalt(12);
       const passwordHash = await bcrypt.hash(newPassword, salt);
 
-      await client.query("UPDATE users SET password_hash = $1 WHERE email = $2", [
-        passwordHash,
-        resetRecord.email,
-      ]);
-      await client.query("UPDATE password_resets SET used = TRUE WHERE id = $1", [
-        resetRecord.id,
-      ]);
+      await client.query(
+        "UPDATE users SET password_hash = $1 WHERE email = $2",
+        [passwordHash, resetRecord.email],
+      );
+      await client.query(
+        "UPDATE password_resets SET used = TRUE WHERE id = $1",
+        [resetRecord.id],
+      );
 
       return resetRecord;
     });

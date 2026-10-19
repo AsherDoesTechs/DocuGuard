@@ -5,11 +5,14 @@
     "slug": "DocuGuard",
     "version": "1.0.0",
     "icon": "./app/assets/icon.png",
-
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/118057a8-ff30-4258-b9a4-096c617ae595"
+    },
     "orientation": "portrait",
-
-    "userInterfaceStyle": "automatic",
-
+    "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.anonymous.DocuGuard",
@@ -17,16 +20,13 @@
         "ITSAppUsesNonExemptEncryption": false
       }
     },
-
     "android": {
       "predictiveBackGestureEnabled": false,
       "package": "com.anonymous.DocuGuard",
-
       "adaptiveIcon": {
         "foregroundImage": "./app/assets/icon.png",
-        "backgroundColor": "#F7FAFE"
+        "backgroundColor": "#FFFFFF"
       },
-
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",
@@ -34,23 +34,30 @@
         "android.permission.RECEIVE_BOOT_COMPLETED"
       ]
     },
-
     "web": {},
-
     "plugins": [
       "expo-router",
       "expo-status-bar",
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#F7FAFE",
+          "backgroundColor": "#FFFFFF",
+          "image": "./app/assets/icon.png",
+          "imageWidth": 100,
           "dark": {
-            "backgroundColor": "#F7FAFE"
+            "backgroundColor": "#FFFFFF",
+            "image": "./app/assets/icon.png"
           }
         }
       ],
       "expo-sharing",
       "expo-sqlite",
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Allow DocuGuard to use Face ID to unlock your secure documents."
+        }
+      ],
       [
         "expo-camera",
         {
@@ -61,14 +68,14 @@
         "expo-notifications",
         {
           "icon": "./app/assets/icon.png",
-          "color": "#4F46E5",
+          "color": "#2563EB",
           "sounds": []
         }
       ],
       "react-native-document-scanner-plugin",
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      "expo-asset"
     ],
-
     "extra": {
       "router": {
         "origin": "docuguard://"
