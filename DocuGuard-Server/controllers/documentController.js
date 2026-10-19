@@ -367,7 +367,7 @@ exports.processDocument = async (req, res) => {
       `
       UPDATE documents
       SET
-        title = COALESCE(NULLIF(trim(title), ''), $1, title),
+        title = COALESCE(NULLIF(trim(title), ''), NULLIF(trim($1), ''), 'Scanned Document'),
         category = CASE WHEN category IS NULL OR category = '' OR category = 'other'
           THEN COALESCE($2, category) ELSE category END,
         issuer = COALESCE(NULLIF(trim(issuer), ''), $3, issuer),
