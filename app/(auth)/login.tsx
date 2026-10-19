@@ -83,15 +83,18 @@ export default function LoginScreen() {
 
     const checkBiometricSupport = async () => {
       try {
-        const [hasHardware, isEnrolled, biometricSetting] = await Promise.all([
+const [hasHardware, isEnrolled, biometricSetting, token] = await Promise.all([
           LocalAuthentication.hasHardwareAsync(),
           LocalAuthentication.isEnrolledAsync(),
           SecureStore.getItemAsync("biometricEnabled"),
+          SecureStore.getItemAsync("userToken"),
         ]);
 
         if (mounted) {
           setIsBiometricSupported(
-            hasHardware && isEnrolled && biometricSetting === "true",
+            hasHardware &&
+              isEnrolled &&
+              (biometricSetting === "true" || Boolean(token)),
           );
         }
       } catch (error) {
