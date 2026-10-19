@@ -97,6 +97,30 @@ exports.rehydrateFileUrls = async (documents) => {
   );
 };
 
+/**
+ * Removes a stored object from the documents bucket.
+ * Best-effort: logs but does not throw on failure so callers can proceed.
+ */
+exports.deleteStorageObject = async (s3Key) => {
+  if (!s3Key) return;
+  try {
+    const { error } = await supabaseAdmin.storage
+      .from(STORAGE_BUCKET)
+      .remove([s3Key]);
+    if (error) {
+      console.warn("Storage: Failed to remove stored object", {
+        s3Key,
+        error: error.message,
+      });
+    }
+  } catch (err) {
+    console.warn("Storage: Exception removing stored object", {
+      s3Key,
+      error: err.message,
+    });
+  }
+};
+
 exports.generatePresignedUploadUrl = async (userId, fileName, fileType) => {
   if (!userId) {
     throw new Error("User ID is required");

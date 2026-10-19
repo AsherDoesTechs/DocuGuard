@@ -31,7 +31,10 @@ import {
 } from "../services/localDatabase";
 import { formatCategoryForBackend } from "@/utils/categories";
 import { scheduleRemindersForDocument } from "@/services/notificationScheduler";
-import { feedbackService, useFeedbackService } from "@/services/feedbackService";
+import {
+  feedbackService,
+  useFeedbackService,
+} from "@/services/feedbackService";
 import { autofillService, useAutofill } from "@/services/autofillService";
 
 const MAX_TITLE_LENGTH = 100;
@@ -799,6 +802,7 @@ interface FieldProps {
   value: string;
   placeholder?: string;
   required?: boolean;
+  error?: string;
   onChangeText: (text: string) => void;
   multiline?: boolean;
   keyboardType?:
@@ -817,6 +821,7 @@ function Field({
   value,
   placeholder,
   required = false,
+  error,
   onChangeText,
   multiline = false,
   keyboardType = "default",
@@ -829,7 +834,7 @@ function Field({
   useEffect(() => {
     if (value && suggestions.length > 0) {
       const filtered = suggestions.filter(
-        (s) => s.toLowerCase().includes(value.toLowerCase()) && s !== value
+        (s) => s.toLowerCase().includes(value.toLowerCase()) && s !== value,
       );
       setFilteredSuggestions(filtered);
       setShowSuggestions(filtered.length > 0);
@@ -864,8 +869,21 @@ function Field({
         autoCapitalize="sentences"
         autoCorrect={false}
         textAlignVertical={multiline ? "top" : "center"}
-        style={[styles.input, multiline ? styles.multilineInput : null]}
+        style={[
+          styles.input,
+          multiline ? styles.multilineInput : null,
+          error ? { borderColor: COLORS.danger } : null,
+        ]}
       />
+      {error ? (
+        <Text
+          style={styles.fieldError}
+          accessibilityRole="alert"
+          accessibilityLiveRegion="polite"
+        >
+          {error}
+        </Text>
+      ) : null}
       {showSuggestions && filteredSuggestions.length > 0 && (
         <View style={styles.suggestionsList}>
           {filteredSuggestions.map((suggestion) => (
@@ -910,7 +928,26 @@ export default function AddDocumentScreen() {
 
   // Initialize services
   useFeedbackService();
-  const { issuers, titles, docNumbers, reminderPrefs, loading: autofillLoading } = useAutofill();
+  const {
+    issuers,
+    titles,
+    docNumbers,
+    reminderPrefs,
+    loading: autofillLoading,
+  } = useAutofill();
+
+  const [hasNoExpirationDate, setHasNoExpirationDate] = useState(false);
+
+  const [fieldErrors, setFieldErrors] = useState<
+    Partial<
+      Record<
+        "title" | "documentNumber" | "issuer" | "issueDate" | "expiryDate",
+        string
+      >
+    >
+  >({});
+
+  const saveInProgressRef = React.useRef(false);
 
   const [step, setStep] = useState<number>(0);
 
@@ -1022,42 +1059,44 @@ export default function AddDocumentScreen() {
     try {
       const raw = await extractDocumentData(uri);
 
-      const extracted = normalizeExtractedData(raw);
-      setExtractedData(extracted);
-      setOcrUploadMeta({
-        fileUrl: raw?.fileUrl,
-        s3Key: raw?.s3Key,
-        storagePath: raw?.storagePath,
-        documentId: raw?.documentId,
-      });
+              const extracted = normalizeExtractedData(raw);
+        setExtractedData(extracted);
+        setOcrUploadMeta({
+          fileUrl: raw?.fileUrl,
+          s3Key: raw?.s3Key,
+          storagePath: raw?.storagePath,
+          documentId: raw?.documentId,
+        });
 
-      if (extracted.title) {
-        setTitle(extracted.title);
-      }
+        // Only overwrite fields that are empty - preserve user-entered values
+        if (!title && extracted.title) {
+          setTitle(extracted.title);
+        }
+        if (!documentNumber && extracted.documentNumber) {
+          setDocumentNumber(extracted.documentNumber);
+        }
+        if (!issuer && extracted.issuer) {
+          setIssuer(extracted.issuer);
+        }
+        if (!issueDate && extracted.issueDate) {
+          setIssueDate(extracted.issueDate);
+        }
+        if (!expiryDate && extracted.expiryDate) {
+          setExpiryDate(extracted.expiryDate);
+        }
 
-      if (extracted.documentNumber) {
-        setDocumentNumber(extracted.documentNumber);
-      }
+        setStep(4);
 
-      if (extracted.issuer) {
-        setIssuer(extracted.issuer);
-      }
 
-      if (extracted.issueDate) {
-        setIssueDate(extracted.issueDate);
-      }
-
-      if (extracted.expiryDate) {
-        setExpiryDate(extracted.expiryDate);
-      }
-
-      setStep(4);
-
-      feedbackService.success(`Document scanned successfully (${extracted.confidence}% extraction completeness)`);
+      feedbackService.success(
+        `Document scanned successfully (${extracted.confidence}% extraction completeness)`,
+      );
     } catch (error: any) {
       console.error("Document OCR error:", error);
 
-      feedbackService.warning(error?.message || "The document could not be processed.");
+      feedbackService.warning(
+        error?.message || "The document could not be processed.",
+      );
 
       setStep(4);
     } finally {
@@ -1092,43 +1131,90 @@ export default function AddDocumentScreen() {
     }
 
     const value = formatDate(selectedDate);
-    if (datePicker === "issueDate") setIssueDate(value);
-    if (datePicker === "expiryDate") setExpiryDate(value);
+    if (datePicker === "issueDate") {
+      setIssueDate(value);
+      setFieldErrors((current) => ({ ...current, issueDate: undefined }));
+    }
+    if (datePicker === "expiryDate") {
+      setExpiryDate(value);
+      setFieldErrors((current) => ({ ...current, expiryDate: undefined }));
+    }
 
     if (Platform.OS === "android") {
       setDatePicker(null);
     }
   }
 
+  function isValidDateString(value: string): boolean {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      return false;
+    }
+
+    const [year, month, day] = value.split("-").map(Number);
+    const date = new Date(year, month - 1, day);
+
+    return (
+      date.getFullYear() === year &&
+      date.getMonth() === month - 1 &&
+      date.getDate() === day
+    );
+  }
+
   function validateInformation(): boolean {
+    const errors: typeof fieldErrors = {};
+
     if (!title.trim()) {
-      feedbackService.error("Please enter the document name.");
-      return false;
+      errors.title = "Enter a document name.";
     }
+
     if (!documentNumber.trim()) {
-      feedbackService.error("Please enter the document number.");
-      return false;
+      errors.documentNumber = "Enter the document number.";
     }
+
     if (!issuer.trim()) {
-      feedbackService.error("Please enter the issuing agency.");
-      return false;
+      errors.issuer = "Enter the issuing agency.";
     }
+
     if (!issueDate) {
-      feedbackService.error("Please select the issue date.");
+      errors.issueDate = "Select the issue date.";
+    } else if (!isValidDateString(issueDate)) {
+      errors.issueDate = "Select a valid issue date.";
+    }
+
+    if (!hasNoExpirationDate) {
+      if (!expiryDate) {
+        errors.expiryDate =
+          "Select an expiration date or choose No expiration date.";
+      } else if (!isValidDateString(expiryDate)) {
+        errors.expiryDate = "Select a valid expiration date.";
+      } else if (isValidDateString(issueDate) && expiryDate < issueDate) {
+        errors.expiryDate =
+          "Expiration date cannot be earlier than the issue date.";
+      }
+    }
+
+    setFieldErrors(errors);
+
+    if (Object.keys(errors).length > 0) {
+      feedbackService.warning(
+        "Please correct the highlighted fields before saving.",
+      );
       return false;
     }
-    if (!expiryDate) {
-      feedbackService.error("Please select the expiration date.");
-      return false;
-    }
+
     return true;
   }
 
   async function saveDocument() {
+    if (saveInProgressRef.current || saving) {
+      return;
+    }
+
     if (!validateInformation()) {
       return;
     }
 
+    saveInProgressRef.current = true;
     setSaving(true);
 
     try {
@@ -1151,7 +1237,7 @@ export default function AddDocumentScreen() {
         issuer: issuer.trim(),
         documentNumber: documentNumber.trim().toUpperCase(),
         issueDate,
-        expiryDate,
+        expiryDate: hasNoExpirationDate ? null : expiryDate,
         notes: notes.trim(),
         status: "active",
         enableAlerts: enableAlerts,
@@ -1183,12 +1269,15 @@ export default function AddDocumentScreen() {
         message: `${title} has been successfully added to your document vault.`,
         confirmText: "View Documents",
         onConfirm: () => router.replace("/(tabs)/documents"),
+        onCancel: () => {},
       });
     } catch (error) {
-      setSaving(false);
       const message =
         error instanceof Error ? error.message : "Could not save the document.";
       feedbackService.error(message);
+    } finally {
+      saveInProgressRef.current = false;
+      setSaving(false);
     }
   }
 
@@ -1461,9 +1550,14 @@ export default function AddDocumentScreen() {
           value={title}
           placeholder="e.g. Philippine Passport"
           required
-          onChangeText={(value) =>
-            setTitle(sanitizeText(value, MAX_TITLE_LENGTH))
-          }
+          error={fieldErrors.title}
+          onChangeText={(value) => {
+            setTitle(sanitizeText(value, MAX_TITLE_LENGTH));
+            setFieldErrors((current) => ({
+              ...current,
+              title: undefined,
+            }));
+          }}
           suggestions={titles}
         />
 
@@ -1472,9 +1566,14 @@ export default function AddDocumentScreen() {
           value={documentNumber}
           placeholder="e.g. P1234567"
           required
-          onChangeText={(value) =>
-            setDocumentNumber(sanitizeDocumentNumber(value))
-          }
+          error={fieldErrors.documentNumber}
+          onChangeText={(value) => {
+            setDocumentNumber(sanitizeDocumentNumber(value));
+            setFieldErrors((current) => ({
+              ...current,
+              documentNumber: undefined,
+            }));
+          }}
           suggestions={docNumbers}
         />
 
@@ -1483,9 +1582,11 @@ export default function AddDocumentScreen() {
           value={issuer}
           placeholder="e.g. Department of Foreign Affairs"
           required
-          onChangeText={(value) =>
-            setIssuer(sanitizeText(value, MAX_ISSUER_LENGTH))
-          }
+          error={fieldErrors.issuer}
+          onChangeText={(value) => {
+            setIssuer(sanitizeText(value, MAX_ISSUER_LENGTH));
+            setFieldErrors((current) => ({ ...current, issuer: undefined }));
+          }}
           suggestions={issuers}
         />
 
@@ -1495,7 +1596,10 @@ export default function AddDocumentScreen() {
             <Text style={styles.required}> *</Text>
           </Text>
           <TouchableOpacity
-            style={styles.dateButton}
+            style={[
+              styles.dateButton,
+              fieldErrors.issueDate ? { borderColor: COLORS.danger } : null,
+            ]}
             onPress={() => openDatePicker("issueDate")}
           >
             <Ionicons
@@ -1508,27 +1612,109 @@ export default function AddDocumentScreen() {
             </Text>
             <Ionicons name="chevron-forward" size={18} color="#999" />
           </TouchableOpacity>
+          {fieldErrors.issueDate ? (
+            <Text
+              style={styles.fieldError}
+              accessibilityRole="alert"
+              accessibilityLiveRegion="polite"
+            >
+              {fieldErrors.issueDate}
+            </Text>
+          ) : null}
         </View>
 
         <View style={styles.field}>
           <Text style={styles.fieldLabel}>
             Expiration Date
-            <Text style={styles.required}> *</Text>
+            {!hasNoExpirationDate && <Text style={styles.required}> *</Text>}
           </Text>
+
           <TouchableOpacity
-            style={styles.dateButton}
-            onPress={() => openDatePicker("expiryDate")}
+            style={[
+              styles.dateButton,
+              hasNoExpirationDate && styles.dateButtonDisabled,
+            ]}
+            onPress={() => {
+              if (!hasNoExpirationDate) {
+                openDatePicker("expiryDate");
+              }
+            }}
+            disabled={hasNoExpirationDate}
+            accessibilityRole="button"
+            accessibilityLabel={
+              hasNoExpirationDate
+                ? "Expiration date not applicable"
+                : `Expiration date: ${expiryDate || "not selected"}`
+            }
           >
             <Ionicons
               name="calendar-outline"
               size={22}
-              color={COLORS.primary}
+              color={hasNoExpirationDate ? "#9CA3AF" : COLORS.primary}
             />
-            <Text style={expiryDate ? styles.dateText : styles.datePlaceholder}>
-              {expiryDate || "Select expiration date"}
+
+            <Text
+              style={
+                expiryDate && !hasNoExpirationDate
+                  ? styles.dateText
+                  : styles.datePlaceholder
+              }
+            >
+              {hasNoExpirationDate
+                ? "No expiration date"
+                : expiryDate || "Select expiration date"}
             </Text>
-            <Ionicons name="chevron-forward" size={18} color="#999" />
+
+            {!hasNoExpirationDate && (
+              <Ionicons name="chevron-forward" size={18} color="#999" />
+            )}
           </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.noExpirationOption}
+            onPress={() => {
+              setHasNoExpirationDate((current) => {
+                const next = !current;
+
+                if (next) {
+                  setExpiryDate("");
+                  setFieldErrors((errors) => ({
+                    ...errors,
+                    expiryDate: undefined,
+                  }));
+                }
+
+                return next;
+              });
+            }}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: hasNoExpirationDate }}
+          >
+            <Ionicons
+              name={hasNoExpirationDate ? "checkbox" : "square-outline"}
+              size={21}
+              color={
+                hasNoExpirationDate ? COLORS.primary : COLORS.textSecondary
+              }
+            />
+
+            <View style={styles.noExpirationTextContainer}>
+              <Text style={styles.noExpirationTitle}>No expiration date</Text>
+              <Text style={styles.noExpirationDescription}>
+                This document does not expire.
+              </Text>
+            </View>
+          </TouchableOpacity>
+
+          {!hasNoExpirationDate && fieldErrors.expiryDate ? (
+            <Text
+              style={styles.fieldError}
+              accessibilityRole="alert"
+              accessibilityLiveRegion="polite"
+            >
+              {fieldErrors.expiryDate}
+            </Text>
+          ) : null}
         </View>
 
         <Field
@@ -1565,38 +1751,34 @@ export default function AddDocumentScreen() {
             <Text style={styles.reminderTitle}>
               Remind me before expiration:
             </Text>
-            {[7, 14, 30, 60, 90].map((days) => (
-              <TouchableOpacity
-                key={days}
-                style={styles.reminderOption}
-                onPress={() => {
-                  if (reminderIntervals.includes(days)) {
-                    setReminderIntervals(
-                      reminderIntervals.filter((d) => d !== days),
-                    );
-                  } else {
-                    setReminderIntervals(
-                      [...reminderIntervals, days].sort((a, b) => a - b),
-                    );
-                  }
-                }}
-                activeOpacity={0.7}
-              >
-                <View
-                  style={[
-                    styles.checkbox,
-                    reminderIntervals.includes(days) && styles.checkboxChecked,
-                  ]}
+
+            {[7, 14, 30, 60, 90].map((days) => {
+              const isSelected = reminderIntervals.includes(days);
+
+              return (
+                <TouchableOpacity
+                  key={days}
+                  style={styles.reminderOption}
+                  onPress={() => setReminderIntervals([days])}
+                  activeOpacity={0.7}
+                  accessibilityRole="radio"
+                  accessibilityState={{ checked: isSelected }}
                 >
-                  {reminderIntervals.includes(days) && (
-                    <Ionicons name="checkmark" size={14} color="#fff" />
-                  )}
-                </View>
-                <Text style={styles.reminderOptionText}>
-                  {days} day{days !== 1 ? "s" : ""} before
-                </Text>
-              </TouchableOpacity>
-            ))}
+                  <View
+                    style={[
+                      styles.radioButton,
+                      isSelected && styles.radioButtonSelected,
+                    ]}
+                  >
+                    {isSelected && <View style={styles.radioButtonInner} />}
+                  </View>
+
+                  <Text style={styles.reminderOptionText}>
+                    {days} days before
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
           </View>
         )}
 
@@ -1652,7 +1834,6 @@ export default function AddDocumentScreen() {
           visible={scannerVisible}
           onScanSuccess={(data) => {
             if (data.images && data.images.length > 0) {
-              // Wrap the URI in an object to match what handleScanSuccess expects
               handleScanSuccess({ images: [{ uri: data.images[0].uri }] });
             }
           }}
@@ -1805,6 +1986,40 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginRight: 16,
   },
+  dateButtonDisabled: {
+    backgroundColor: "#F3F4F6",
+    borderColor: "#E5E7EB",
+  },
+
+  noExpirationOption: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 12,
+    paddingVertical: 4,
+    gap: 10,
+  },
+
+  noExpirationTextContainer: {
+    flex: 1,
+  },
+
+  noExpirationTitle: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: COLORS.text,
+  },
+
+  noExpirationDescription: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    marginTop: 2,
+  },
+
+  fieldError: {
+    color: COLORS.danger,
+    fontSize: 12,
+    marginTop: 5,
+  },
   documentChoice: {
     flexDirection: "row",
     alignItems: "center",
@@ -1876,18 +2091,23 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: COLORS.text,
   },
-  checkbox: {
+  radioButton: {
     width: 20,
     height: 20,
-    borderRadius: 4,
+    borderRadius: 10,
     borderWidth: 2,
-    borderColor: COLORS.border,
+    borderColor: "#9CA3AF",
     alignItems: "center",
     justifyContent: "center",
   },
-  checkboxChecked: {
-    backgroundColor: COLORS.primary,
-    borderColor: COLORS.primary,
+  radioButtonSelected: {
+    borderColor: "#2563EB",
+  },
+  radioButtonInner: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: "#2563EB",
   },
   field: {
     marginBottom: 16,

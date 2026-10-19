@@ -197,6 +197,30 @@ export const documentUpdateSchema = z
   .partial()
   .extend({
     id: z.number().int().positive(),
+    // expiryDate is nullable on update: the client sends null to clear it.
+    // dateStringSchema alone rejects null, so override it here.
+    expiryDate: z
+      .string()
+      .nullable()
+      .optional()
+      .transform((val) => {
+        if (val === null || val === undefined || val === "") return null;
+        return val.trim();
+      })
+      .refine((val) => {
+        if (val === null) return true;
+        return DATE_REGEX.test(val);
+      }, "Date must be in YYYY-MM-DD format")
+      .refine((val) => {
+        if (val === null) return true;
+        const [year, month, day] = val.split("-").map(Number);
+        const date = new Date(Date.UTC(year, month - 1, day));
+        return (
+          date.getUTCFullYear() === year &&
+          date.getUTCMonth() === month - 1 &&
+          date.getUTCDate() === day
+        );
+      }, "Invalid date"),
   });
 
 export const documentSyncSchema = z

@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -16,7 +22,6 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import * as SecureStore from "expo-secure-store";
 
-// If your alias fails, you can also change this to a relative path like "../../constants/documentTypes"
 import { DOCUMENTS_BY_CATEGORY } from "../../constants/documentTypes";
 import { Card, Input, Button } from "@/components/ui";
 import { COLORS } from "@/constants";
@@ -28,7 +33,15 @@ import {
 } from "@/services/localDatabase";
 import { api, API_BASE_URL } from "@/services/api";
 import { documentUpdateSchema, validateSchema } from "@/shared/validation";
-import { feedbackService, useFeedbackService } from "@/services/feedbackService";
+import {
+  scheduleRemindersForDocument,
+  cancelDocumentNotifications,
+} from "@/services/notificationScheduler";
+import { LocalDocument } from "@/types/offline";
+import {
+  feedbackService,
+  useFeedbackService,
+} from "@/services/feedbackService";
 
 /* =========================================================
    TYPES
@@ -61,17 +74,13 @@ type EditDocumentValues = {
   issuer: string;
   documentNumber: string;
   issueDate: string;
-  expiryDate: string;
+  expiryDate: string | null;
   notes: string;
   enableAlerts: boolean;
-
   status: string;
   processingStatus: string;
-  // Null means no detector has assessed this document. It must not be
-  // defaulted to 0/"Low", which would read as "assessed and safe".
   riskScore: number | null;
   riskLevel: string | null;
-
   fileUrl: string | null;
   fileType: string | null;
   s3Key: string | null;
@@ -211,10 +220,6 @@ function formatCategoryForBackend(
       return BACKEND_CATEGORIES.FINANCIAL;
     case "education":
       return BACKEND_CATEGORIES.ACADEMIC;
-    case "civil":
-    case "employment":
-    case "personal":
-    case "other":
     default:
       return BACKEND_CATEGORIES.OTHER;
   }
@@ -224,6 +229,7 @@ function normalizeDate(value?: string | null): string {
   if (!value) {
     return "";
   }
+
   return String(value).split("T")[0];
 }
 
@@ -231,8 +237,10 @@ function isValidDate(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     return false;
   }
+
   const [year, month, day] = value.split("-").map(Number);
   const date = new Date(year, month - 1, day);
+
   return (
     date.getFullYear() === year &&
     date.getMonth() === month - 1 &&
@@ -240,10 +248,11 @@ function isValidDate(value: string): boolean {
   );
 }
 
-function getDaysUntilExpiry(expiryDate: string): number | null {
+function getDaysUntilExpiry(expiryDate: string | null): number | null {
   if (!expiryDate || !isValidDate(expiryDate)) {
     return null;
   }
+
   const [year, month, day] = expiryDate.split("-").map(Number);
   const expiry = new Date(year, month - 1, day);
   const today = new Date();
@@ -260,23 +269,30 @@ function getExpiryMessage(expiryDate: string): string {
   if (!expiryDate) {
     return "No expiration date entered.";
   }
+
   if (!isValidDate(expiryDate)) {
     return "Enter a valid date using YYYY-MM-DD.";
   }
+
   const days = getDaysUntilExpiry(expiryDate);
+
   if (days === null) {
     return "Enter a valid expiration date.";
   }
+
   if (days < 0) {
     const amount = Math.abs(days);
     return `Expired ${amount} day${amount === 1 ? "" : "s"} ago.`;
   }
+
   if (days === 0) {
     return "Expires today.";
   }
+
   if (days <= 30) {
     return `Expires in ${days} day${days === 1 ? "" : "s"}.`;
   }
+
   return `Valid for approximately ${days} more days.`;
 }
 
@@ -288,14 +304,11 @@ function findDocumentTypeById(id: string): {
     return null;
   }
 
-  for (const [groupKey, items] of Object.entries(DOCUMENTS_BY_CATEGORY) as [
+  for (const [group, items] of Object.entries(DOCUMENTS_BY_CATEGORY) as [
     DocumentGroup,
     SpecificDocumentItem[],
   ][]) {
-    const group = groupKey;
-    const item = items.find(
-      (document: SpecificDocumentItem) => document.id === id,
-    );
+    const item = items.find((document) => document.id === id);
 
     if (item) {
       return { group, item };
@@ -310,18 +323,17 @@ function findDocumentTypeByTitle(title: string): {
   item: SpecificDocumentItem;
 } | null {
   const normalized = title.trim().toLowerCase();
+
   if (!normalized) {
     return null;
   }
 
-  for (const [groupKey, items] of Object.entries(DOCUMENTS_BY_CATEGORY) as [
+  for (const [group, items] of Object.entries(DOCUMENTS_BY_CATEGORY) as [
     DocumentGroup,
     SpecificDocumentItem[],
   ][]) {
-    const group = groupKey;
     const item = items.find(
-      (document: SpecificDocumentItem) =>
-        document.title.trim().toLowerCase() === normalized,
+      (document) => document.title.trim().toLowerCase() === normalized,
     );
 
     if (item) {
@@ -360,17 +372,21 @@ export default function EditDocumentScreen() {
 
   const router = useRouter();
   useFeedbackService();
+
   const documentId = Array.isArray(params.id) ? params.id[0] : params.id;
 
+  const [noExpirationDate, setNoExpirationDate] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [useLocalData, setUseLocalData] = useState(false);
-  // Backend id for this document. The local row id is NOT valid against the API.
   const [cloudId, setCloudId] = useState<number | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<DocumentGroup>("other");
   const [typeSearch, setTypeSearch] = useState("");
   const [showAllTypes, setShowAllTypes] = useState(false);
+
+  // Synchronous guard against rapid repeated save taps.
+  const saveInProgress = useRef(false);
 
   const [touched, setTouched] = useState<
     Partial<Record<keyof EditDocumentValues, boolean>>
@@ -389,12 +405,11 @@ export default function EditDocumentScreen() {
       issuer: "",
       documentNumber: "",
       issueDate: "",
-      expiryDate: "",
+      expiryDate: null,
       notes: "",
       enableAlerts: true,
       status: "active",
       processingStatus: "completed",
-      // Unassessed, not "Low".
       riskScore: null,
       riskLevel: null,
       fileUrl: null,
@@ -417,11 +432,12 @@ export default function EditDocumentScreen() {
     const types =
       (DOCUMENTS_BY_CATEGORY[selectedGroup] as SpecificDocumentItem[]) || [];
     const query = typeSearch.trim().toLowerCase();
+
     let filtered = types;
 
     if (query) {
       filtered = types.filter(
-        (item: SpecificDocumentItem) =>
+        (item) =>
           item.title.toLowerCase().includes(query) ||
           item.description.toLowerCase().includes(query),
       );
@@ -518,6 +534,7 @@ export default function EditDocumentScreen() {
       }
 
       const numericId = Number(documentId);
+
       if (!Number.isInteger(numericId) || numericId <= 0) {
         throw new Error("Invalid document ID.");
       }
@@ -555,15 +572,20 @@ export default function EditDocumentScreen() {
 
         setValues(loadedValues);
         setInitialData(loadedValues);
+        setNoExpirationDate(!loadedValues.expiryDate);
         setSelectedGroup(group);
         setUseLocalData(true);
         setCloudId(
-          typeof localDocument.cloudId === "number" ? localDocument.cloudId : null,
+          typeof localDocument.cloudId === "number"
+            ? localDocument.cloudId
+            : null,
         );
+
         return;
       }
 
       const token = await SecureStore.getItemAsync("userToken");
+
       if (!token) {
         throw new Error("You are not authenticated.");
       }
@@ -582,6 +604,7 @@ export default function EditDocumentScreen() {
 
       const result = await response.json();
       const data = result?.document || result?.data || result;
+
       setCloudId(typeof data?.id === "number" ? data.id : null);
 
       const title = data?.title || "";
@@ -612,87 +635,123 @@ export default function EditDocumentScreen() {
 
       setValues(loadedValues);
       setInitialData(loadedValues);
+      setNoExpirationDate(!loadedValues.expiryDate);
       setSelectedGroup(group);
       setUseLocalData(false);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Failed to load document:", error);
-      setLoadError(error?.message || "Could not load document details.");
+      setLoadError(
+        error instanceof Error
+          ? error.message
+          : "Could not load document details.",
+      );
     } finally {
       setIsLoading(false);
     }
   }, [documentId]);
 
   useEffect(() => {
-    fetchDocumentData();
+    void fetchDocumentData();
   }, [fetchDocumentData]);
 
   const validateForm = useCallback(() => {
     const nextErrors: Partial<Record<keyof EditDocumentValues, string>> = {};
-    const title = values.title.trim();
-    const issuer = values.issuer.trim();
-    const documentNumber = values.documentNumber.trim();
 
-    if (!title) {
-      nextErrors.title = "Document title is required.";
+    const changed = <K extends keyof EditDocumentValues>(field: K) =>
+      values[field] !== initialData[field];
+
+    if (changed("title") && !values.title.trim()) {
+      nextErrors.title = "Document title cannot be empty.";
     }
-    if (!values.documentTypeId) {
-      nextErrors.category = "Please select a specific document type.";
+
+    if (changed("issuer") && !values.issuer.trim()) {
+      nextErrors.issuer = "Issuer cannot be empty.";
     }
-    if (!issuer) {
-      nextErrors.issuer = "Issuer or organization is required.";
+
+    if (changed("documentNumber") && !values.documentNumber.trim()) {
+      nextErrors.documentNumber = "Document number cannot be empty.";
     }
-    if (!documentNumber) {
-      nextErrors.documentNumber = "Document number is required.";
+
+    if (changed("issueDate")) {
+      if (!values.issueDate || !isValidDate(values.issueDate)) {
+        nextErrors.issueDate = "Enter a valid issue date using YYYY-MM-DD.";
+      }
     }
-    if (!values.issueDate) {
-      nextErrors.issueDate = "Issue date is required.";
-    } else if (!isValidDate(values.issueDate)) {
-      nextErrors.issueDate = "Use YYYY-MM-DD format.";
+
+    // Expiry is optional. Validate its format only when it is provided.
+    const expiryDate = values.expiryDate;
+    if (changed("expiryDate") && expiryDate && expiryDate.trim()) {
+      if (!isValidDate(expiryDate)) {
+        nextErrors.expiryDate = "Enter a valid expiry date using YYYY-MM-DD.";
+      }
     }
-    if (!values.expiryDate) {
-      nextErrors.expiryDate = "Expiry date is required.";
-    } else if (!isValidDate(values.expiryDate)) {
-      nextErrors.expiryDate = "Use YYYY-MM-DD format.";
-    }
+
+    const issueDateValid = !!values.issueDate && isValidDate(values.issueDate);
+    const expiryDateValid = !!expiryDate && isValidDate(expiryDate);
+
     if (
-      !nextErrors.issueDate &&
-      !nextErrors.expiryDate &&
-      values.issueDate > values.expiryDate
+      issueDateValid &&
+      expiryDateValid &&
+      expiryDate &&
+      values.issueDate > expiryDate &&
+      (changed("issueDate") || changed("expiryDate"))
     ) {
       nextErrors.expiryDate = "Expiry date cannot be earlier than issue date.";
     }
 
+    if (values.notes.length > 1000) {
+      nextErrors.notes = "Notes cannot exceed 1000 characters.";
+    }
+
     const numericId = Number(documentId);
+
     if (Number.isInteger(numericId) && numericId > 0) {
-      const schemaPayload = {
+      const schemaPayload: Record<string, unknown> = {
         id: numericId,
-        title,
-        category: values.category,
-        issuer,
-        documentNumber: documentNumber.toUpperCase(),
-        issueDate: values.issueDate,
-        expiryDate: values.expiryDate,
-        notes: values.notes.trim(),
-        enableAlerts: values.enableAlerts,
-        status: values.status,
-        processingStatus: values.processingStatus,
-        riskScore: values.riskScore,
-        riskLevel: values.riskLevel,
-        fileUrl: values.fileUrl,
-        fileType: values.fileType,
-        s3Key: values.s3Key,
       };
+
+      if (changed("title")) {
+        schemaPayload.title = values.title.trim();
+      }
+
+      if (changed("category")) {
+        schemaPayload.category = values.category;
+      }
+
+      if (changed("issuer")) {
+        schemaPayload.issuer = values.issuer.trim();
+      }
+
+      if (changed("documentNumber")) {
+        schemaPayload.documentNumber = values.documentNumber
+          .trim()
+          .toUpperCase();
+      }
+
+      if (changed("issueDate")) {
+        schemaPayload.issueDate = values.issueDate;
+      }
+
+      if (changed("expiryDate") && values.expiryDate && values.expiryDate.trim()) {
+        schemaPayload.expiryDate = values.expiryDate;
+      }
+
+      if (changed("notes")) {
+        schemaPayload.notes = values.notes.trim();
+      }
+
+      if (changed("enableAlerts")) {
+        schemaPayload.enableAlerts = values.enableAlerts;
+      }
 
       try {
         const result = validateSchema(documentUpdateSchema, schemaPayload);
+
         if (!result.success && result.errors) {
           Object.assign(nextErrors, result.errors);
         }
-      } catch (schemaError) {
-        console.warn(
-          "Shared document validation could not be applied:",
-          schemaError,
-        );
+      } catch (error) {
+        console.warn("Document validation failed:", error);
       }
     }
 
@@ -708,10 +767,10 @@ export default function EditDocumentScreen() {
     });
 
     return Object.keys(nextErrors).length === 0;
-  }, [documentId, values]);
+  }, [documentId, values, initialData]);
 
   const handleSave = useCallback(async () => {
-    if (isSaving) {
+    if (saveInProgress.current || isSaving) {
       return;
     }
 
@@ -725,6 +784,7 @@ export default function EditDocumentScreen() {
     }
 
     const numericId = Number(documentId);
+
     if (!Number.isInteger(numericId) || numericId <= 0) {
       await feedbackService.alert({
         title: "Error",
@@ -734,17 +794,68 @@ export default function EditDocumentScreen() {
       return;
     }
 
+    type UpdatePayload = Partial<
+      Pick<
+        EditDocumentValues,
+        | "title"
+        | "category"
+        | "issuer"
+        | "documentNumber"
+        | "issueDate"
+        | "expiryDate"
+        | "notes"
+        | "enableAlerts"
+      >
+    >;
+
+    const payload: UpdatePayload = {};
+
+    if (values.title !== initialData.title) {
+      payload.title = values.title.trim();
+    }
+
+    if (values.category !== initialData.category) {
+      payload.category = values.category;
+    }
+
+    if (values.issuer !== initialData.issuer) {
+      payload.issuer = values.issuer.trim();
+    }
+
+    if (values.documentNumber !== initialData.documentNumber) {
+      payload.documentNumber = values.documentNumber.trim().toUpperCase();
+    }
+
+    if (values.issueDate !== initialData.issueDate) {
+      payload.issueDate = values.issueDate;
+    }
+
+    if (values.expiryDate !== initialData.expiryDate) {
+      // Empty string means the user cleared the expiry date.
+      // Send null so both local DB and backend store SQL NULL.
+      payload.expiryDate = values.expiryDate === "" ? null : values.expiryDate;
+    }
+
+    if (values.notes !== initialData.notes) {
+      payload.notes = values.notes.trim();
+    }
+
+    if (values.enableAlerts !== initialData.enableAlerts) {
+      payload.enableAlerts = values.enableAlerts;
+    }
+
+    // Check before setting the saving state so it cannot become stuck.
+    if (Object.keys(payload).length === 0) {
+      await feedbackService.alert({
+        title: "No Changes",
+        message: "There are no changes to save.",
+        type: "info",
+      });
+      return;
+    }
+
+    saveInProgress.current = true;
     setIsSaving(true);
-    const payload = {
-      title: values.title.trim(),
-      category: values.category,
-      issuer: values.issuer.trim(),
-      documentNumber: values.documentNumber.trim().toUpperCase(),
-      issueDate: values.issueDate,
-      expiryDate: values.expiryDate,
-      notes: values.notes.trim(),
-      enableAlerts: values.enableAlerts,
-    };
 
     let localSaveSuccessful = false;
     let cloudSaveSuccessful = false;
@@ -755,39 +866,31 @@ export default function EditDocumentScreen() {
 
       if (!useLocalData) {
         const token = await SecureStore.getItemAsync("userToken");
+
         if (!token) {
           throw new Error(
             "Changes were saved locally, but cloud synchronization could not start because you are not authenticated.",
           );
         }
 
-        // The API addresses documents by their backend id. Without one there is
-        // nothing to PUT; updateDocument already queued the change (needs_sync=1)
-        // for syncToCloud to push on the next pass.
         if (cloudId) {
           await api.documents.update(cloudId, payload);
-          // updateDocument() flagged the row needs_sync=1; the cloud write above
-          // satisfied it, so clear the flag instead of leaving it pending forever.
+
           await markDocumentSynced(numericId);
           await updateDocumentSyncStatus(numericId, "synced");
+
           cloudSaveSuccessful = true;
         }
       }
 
       const savedValues: EditDocumentValues = {
         ...values,
-        title: payload.title,
-        category: payload.category,
-        issuer: payload.issuer,
-        documentNumber: payload.documentNumber,
-        issueDate: payload.issueDate,
-        expiryDate: payload.expiryDate,
-        notes: payload.notes,
-        enableAlerts: payload.enableAlerts,
+        ...payload,
       };
 
       setValues(savedValues);
       setInitialData(savedValues);
+      setNoExpirationDate(!savedValues.expiryDate);
       setErrors({});
       setTouched({});
 
@@ -799,6 +902,7 @@ export default function EditDocumentScreen() {
             : "Your document was updated successfully.",
           confirmText: "OK",
           onConfirm: () => router.back(),
+          onCancel: () => {},
         });
       } else if (localSaveSuccessful) {
         await feedbackService.confirm({
@@ -806,30 +910,70 @@ export default function EditDocumentScreen() {
           message: "Your changes were saved on this device.",
           confirmText: "OK",
           onConfirm: () => router.back(),
+          onCancel: () => {},
         });
       }
-    } catch (error: any) {
+
+      // Reschedule expiration reminders after a successful document save.
+      // Runs in its own try/catch so notification failures do not incorrectly
+      // surface as document-save or cloud-sync failures.
+      if (payload.expiryDate !== undefined && (cloudSaveSuccessful || useLocalData || localSaveSuccessful)) {
+        try {
+          await scheduleRemindersForDocument({
+            id: numericId,
+            title: values.title,
+            expiryDate: payload.expiryDate || undefined,
+            enableAlerts: values.enableAlerts,
+          } as LocalDocument);
+        } catch (reminderError: unknown) {
+          console.warn("Reminder rescheduling failed:", reminderError);
+
+          await feedbackService.alert({
+            title: "Reminder Update Failed",
+            message:
+              "Your document was saved, but expiration reminders could not be updated. " +
+              "You can set them again from the document details screen.",
+            type: "warning",
+          });
+        }
+      }
+    } catch (error: unknown) {
       console.error("Document update failed:", error);
+
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Please try again when you have an internet connection.";
+
       if (localSaveSuccessful) {
         await feedbackService.alert({
           title: "Saved Locally",
-          message: `Your changes were saved on this device, but cloud synchronization failed.\n\n${
-            error?.message ||
-            "Please try again when you have an internet connection."
-          }`,
+          message:
+            "Your changes were saved on this device, but cloud synchronization failed.\n\n" +
+            message,
           type: "warning",
         });
       } else {
         await feedbackService.alert({
           title: "Save Failed",
-          message: error?.message || "Could not save your changes.",
+          message,
           type: "error",
         });
       }
     } finally {
+      saveInProgress.current = false;
       setIsSaving(false);
     }
-  }, [cloudId, documentId, isSaving, router, useLocalData, validateForm, values]);
+  }, [
+    cloudId,
+    documentId,
+    initialData,
+    isSaving,
+    router,
+    useLocalData,
+    validateForm,
+    values,
+  ]);
 
   const handleReset = useCallback(async () => {
     if (!hasChanges) {
@@ -844,12 +988,14 @@ export default function EditDocumentScreen() {
       destructive: true,
       onConfirm: () => {
         setValues(initialData);
+        setNoExpirationDate(!initialData.expiryDate);
         setSelectedGroup(initialData.documentGroup);
         setErrors({});
         setTouched({});
         setTypeSearch("");
         setShowAllTypes(false);
       },
+      onCancel: () => {},
     });
   }, [hasChanges, initialData]);
 
@@ -866,6 +1012,7 @@ export default function EditDocumentScreen() {
       cancelText: "Stay",
       destructive: true,
       onConfirm: () => router.back(),
+      onCancel: () => {},
     });
   }, [hasChanges, router]);
 
@@ -891,13 +1038,17 @@ export default function EditDocumentScreen() {
               color={COLORS.danger}
             />
           </View>
+
           <Text style={styles.errorTitle}>Could not load document</Text>
           <Text style={styles.errorMessage}>{loadError}</Text>
+
           <View style={styles.errorActions}>
             <Button title="Try Again" onPress={fetchDocumentData} />
+
             <TouchableOpacity
               onPress={() => router.back()}
               style={styles.secondaryButton}
+              accessibilityRole="button"
             >
               <Text style={styles.secondaryButtonText}>Go Back</Text>
             </TouchableOpacity>
@@ -925,6 +1076,7 @@ export default function EditDocumentScreen() {
 
           <View style={styles.headerCenter}>
             <Text style={styles.headerTitle}>Edit Document</Text>
+
             {hasChanges && (
               <View style={styles.unsavedBadge}>
                 <View style={styles.unsavedDot} />
@@ -965,6 +1117,7 @@ export default function EditDocumentScreen() {
                   color={COLORS.primary}
                 />
               </View>
+
               <View style={styles.sectionHeaderText}>
                 <Text style={styles.sectionTitle}>Document Type</Text>
                 <Text style={styles.sectionSubtitle}>
@@ -985,6 +1138,7 @@ export default function EditDocumentScreen() {
             >
               {groups.map((group) => {
                 const active = selectedGroup === group;
+
                 return (
                   <TouchableOpacity
                     key={group}
@@ -1002,6 +1156,7 @@ export default function EditDocumentScreen() {
                       size={17}
                       color={active ? "#FFFFFF" : COLORS.textSecondary}
                     />
+
                     <Text
                       style={[
                         styles.groupChipText,
@@ -1021,6 +1176,7 @@ export default function EditDocumentScreen() {
                 size={19}
                 color={COLORS.textSecondary}
               />
+
               <TextInput
                 value={typeSearch}
                 onChangeText={setTypeSearch}
@@ -1030,6 +1186,7 @@ export default function EditDocumentScreen() {
                 autoCapitalize="none"
                 autoCorrect={false}
               />
+
               {typeSearch.length > 0 && (
                 <TouchableOpacity
                   onPress={() => setTypeSearch("")}
@@ -1065,6 +1222,7 @@ export default function EditDocumentScreen() {
               ) : (
                 availableTypes.map((item: SpecificDocumentItem) => {
                   const active = values.documentTypeId === item.id;
+
                   return (
                     <TouchableOpacity
                       key={item.id}
@@ -1090,6 +1248,7 @@ export default function EditDocumentScreen() {
                           color={active ? "#FFFFFF" : COLORS.primary}
                         />
                       </View>
+
                       <View style={styles.documentTypeContent}>
                         <Text
                           style={[
@@ -1099,6 +1258,7 @@ export default function EditDocumentScreen() {
                         >
                           {item.title}
                         </Text>
+
                         <Text
                           style={styles.documentTypeDescription}
                           numberOfLines={2}
@@ -1106,6 +1266,7 @@ export default function EditDocumentScreen() {
                           {item.description}
                         </Text>
                       </View>
+
                       <Ionicons
                         name={active ? "checkmark-circle" : "chevron-forward"}
                         size={active ? 23 : 20}
@@ -1138,6 +1299,7 @@ export default function EditDocumentScreen() {
                           ).length
                         } Types`}
                   </Text>
+
                   <Ionicons
                     name={showAllTypes ? "chevron-up" : "chevron-down"}
                     size={17}
@@ -1161,6 +1323,7 @@ export default function EditDocumentScreen() {
                     color={COLORS.primary}
                   />
                 </View>
+
                 <View style={styles.selectedSummaryContent}>
                   <Text style={styles.selectedSummaryLabel}>
                     SELECTED DOCUMENT TYPE
@@ -1181,6 +1344,7 @@ export default function EditDocumentScreen() {
                     {GROUP_LABELS[selectedDocumentType.group]}
                   </Text>
                 </View>
+
                 <View style={styles.metadataItem}>
                   <Text style={styles.metadataLabel}>CATEGORY</Text>
                   <Text style={styles.metadataValue}>{values.category}</Text>
@@ -1198,6 +1362,7 @@ export default function EditDocumentScreen() {
                   color={COLORS.primary}
                 />
               </View>
+
               <View style={styles.sectionHeaderText}>
                 <Text style={styles.sectionTitle}>Document Information</Text>
                 <Text style={styles.sectionSubtitle}>
@@ -1206,7 +1371,6 @@ export default function EditDocumentScreen() {
               </View>
             </View>
 
-            {/* Using type assertions (as any) here allows custom input props without editing global InputProps */}
             {React.createElement(Input as any, {
               label: "Document Title",
               placeholder: "Document title",
@@ -1257,7 +1421,10 @@ export default function EditDocumentScreen() {
               onChangeText: (text: string) =>
                 updateValue("documentNumber", text.toUpperCase()),
               onBlur: () =>
-                setTouched((current) => ({ ...current, documentNumber: true })),
+                setTouched((current) => ({
+                  ...current,
+                  documentNumber: true,
+                })),
               error: touched.documentNumber ? errors.documentNumber : undefined,
               autoCapitalize: "characters",
               maxLength: 100,
@@ -1278,6 +1445,7 @@ export default function EditDocumentScreen() {
                   color={COLORS.primary}
                 />
               </View>
+
               <View style={styles.sectionHeaderText}>
                 <Text style={styles.sectionTitle}>Important Dates</Text>
                 <Text style={styles.sectionSubtitle}>
@@ -1296,29 +1464,84 @@ export default function EditDocumentScreen() {
                   text.replace(/[^0-9-]/g, "").slice(0, 10),
                 ),
               onBlur: () =>
-                setTouched((current) => ({ ...current, issueDate: true })),
+                setTouched((current) => ({
+                  ...current,
+                  issueDate: true,
+                })),
               error: touched.issueDate ? errors.issueDate : undefined,
               keyboardType: "numbers-and-punctuation",
               maxLength: 10,
               accessibilityLabel: "Issue date",
             })}
 
-            {React.createElement(Input as any, {
-              label: "Expiry Date",
-              placeholder: "YYYY-MM-DD",
-              value: values.expiryDate,
-              onChangeText: (text: string) =>
-                updateValue(
-                  "expiryDate",
-                  text.replace(/[^0-9-]/g, "").slice(0, 10),
-                ),
-              onBlur: () =>
-                setTouched((current) => ({ ...current, expiryDate: true })),
-              error: touched.expiryDate ? errors.expiryDate : undefined,
-              keyboardType: "numbers-and-punctuation",
-              maxLength: 10,
-              accessibilityLabel: "Expiry date",
-            })}
+            <View style={styles.noExpiryContainer}>
+              <TouchableOpacity
+                style={[
+                  styles.noExpiryOption,
+                  noExpirationDate && styles.noExpiryOptionActive,
+                ]}
+                onPress={() => {
+                  const nextValue = !noExpirationDate;
+
+                  setNoExpirationDate(nextValue);
+
+                  if (nextValue) {
+                    updateValue("expiryDate", "");
+                  } else {
+                    setErrors((current) => {
+                      const next = { ...current };
+                      delete next.expiryDate;
+                      return next;
+                    });
+                  }
+                }}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: noExpirationDate }}
+                accessibilityLabel="No expiration date"
+              >
+                <Ionicons
+                  name={
+                    noExpirationDate ? "checkmark-circle" : "ellipse-outline"
+                  }
+                  size={21}
+                  color={
+                    noExpirationDate ? COLORS.primary : COLORS.textSecondary
+                  }
+                />
+
+                <View style={styles.noExpiryTextContainer}>
+                  <Text style={styles.noExpiryTitle}>No expiration date</Text>
+                  <Text style={styles.noExpiryDescription}>
+                    This document does not expire.
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+
+            {!noExpirationDate && (
+              <View>
+                {React.createElement(Input as any, {
+                  label: "Expiry Date (Optional)",
+                  placeholder: "YYYY-MM-DD",
+                  value: values.expiryDate,
+                  onChangeText: (text: string) => {
+                    updateValue(
+                      "expiryDate",
+                      text.replace(/[^0-9-]/g, "").slice(0, 10),
+                    );
+                  },
+                  onBlur: () =>
+                    setTouched((current) => ({
+                      ...current,
+                      expiryDate: true,
+                    })),
+                  error: touched.expiryDate ? errors.expiryDate : undefined,
+                  keyboardType: "numbers-and-punctuation",
+                  maxLength: 10,
+                  accessibilityLabel: "Optional expiry date",
+                })}
+              </View>
+            )}
 
             <View
               style={[
@@ -1349,10 +1572,11 @@ export default function EditDocumentScreen() {
                       : COLORS.primary
                 }
               />
+
               <View style={styles.expiryPreviewContent}>
                 <Text style={styles.expiryPreviewTitle}>Expiration Status</Text>
                 <Text style={styles.expiryPreviewMessage}>
-                  {getExpiryMessage(values.expiryDate)}
+                  {getExpiryMessage(values.expiryDate || "")}
                 </Text>
               </View>
             </View>
@@ -1367,12 +1591,14 @@ export default function EditDocumentScreen() {
                   color={COLORS.primary}
                 />
               </View>
+
               <View style={styles.settingContent}>
                 <Text style={styles.settingTitle}>Expiration Alerts</Text>
                 <Text style={styles.settingDescription}>
                   Receive reminders before this document expires.
                 </Text>
               </View>
+
               <Switch
                 value={values.enableAlerts}
                 onValueChange={(value) => updateValue("enableAlerts", value)}
@@ -1395,6 +1621,7 @@ export default function EditDocumentScreen() {
                   color={COLORS.primary}
                 />
               </View>
+
               <View style={styles.sectionHeaderText}>
                 <Text style={styles.sectionTitle}>Notes</Text>
                 <Text style={styles.sectionSubtitle}>
@@ -1407,7 +1634,10 @@ export default function EditDocumentScreen() {
               value={values.notes}
               onChangeText={(text) => updateValue("notes", text)}
               onBlur={() =>
-                setTouched((current) => ({ ...current, notes: true }))
+                setTouched((current) => ({
+                  ...current,
+                  notes: true,
+                }))
               }
               placeholder="Add additional notes..."
               placeholderTextColor={COLORS.textSecondary}
@@ -1418,6 +1648,10 @@ export default function EditDocumentScreen() {
               style={styles.notesInput}
               accessibilityLabel="Document notes"
             />
+
+            {touched.notes && errors.notes && (
+              <Text style={styles.errorText}>{errors.notes}</Text>
+            )}
 
             <View style={styles.characterCounter}>
               <Text style={styles.characterCounterText}>
@@ -1435,6 +1669,7 @@ export default function EditDocumentScreen() {
                   color={COLORS.primary}
                 />
               </View>
+
               <View style={styles.sectionHeaderText}>
                 <Text style={styles.sectionTitle}>Document Status</Text>
                 <Text style={styles.sectionSubtitle}>
@@ -1448,12 +1683,14 @@ export default function EditDocumentScreen() {
                 <Text style={styles.statusLabel}>STATUS</Text>
                 <Text style={styles.statusValue}>{values.status}</Text>
               </View>
+
               <View style={styles.statusItem}>
                 <Text style={styles.statusLabel}>PROCESSING</Text>
                 <Text style={styles.statusValue}>
                   {values.processingStatus}
                 </Text>
               </View>
+
               <View style={styles.statusItem}>
                 <Text style={styles.statusLabel}>RISK</Text>
                 <Text style={styles.statusValue}>
@@ -1495,6 +1732,7 @@ export default function EditDocumentScreen() {
               size={16}
               color={COLORS.textSecondary}
             />
+
             <Text style={styles.dataSourceText}>
               {useLocalData
                 ? "Editing local document data"
@@ -1517,6 +1755,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
   keyboardContainer: { flex: 1 },
   content: { padding: 16, paddingBottom: 40 },
+
   loadingContainer: {
     flex: 1,
     alignItems: "center",
@@ -1524,6 +1763,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   loadingText: { fontSize: 14, color: COLORS.textSecondary },
+
   errorContainer: {
     flex: 1,
     alignItems: "center",
@@ -1553,7 +1793,12 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     textAlign: "center",
   },
-  errorActions: { width: "100%", maxWidth: 320, marginTop: 24, gap: 12 },
+  errorActions: {
+    width: "100%",
+    maxWidth: 320,
+    marginTop: 24,
+    gap: 12,
+  },
   secondaryButton: {
     height: 48,
     borderWidth: 1,
@@ -1563,7 +1808,12 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: "#FFFFFF",
   },
-  secondaryButtonText: { fontSize: 15, fontWeight: "600", color: COLORS.text },
+  secondaryButtonText: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: COLORS.text,
+  },
+
   header: {
     minHeight: 64,
     flexDirection: "row",
@@ -1580,8 +1830,16 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  headerCenter: { flex: 1, alignItems: "center", justifyContent: "center" },
-  headerTitle: { fontSize: 18, fontWeight: "700", color: COLORS.text },
+  headerCenter: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: COLORS.text,
+  },
   unsavedBadge: {
     flexDirection: "row",
     alignItems: "center",
@@ -1594,7 +1852,11 @@ const styles = StyleSheet.create({
     borderRadius: 3,
     backgroundColor: "#D97706",
   },
-  unsavedText: { fontSize: 11, fontWeight: "600", color: "#D97706" },
+  unsavedText: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#D97706",
+  },
   resetButton: {
     width: 44,
     height: 44,
@@ -1602,6 +1864,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   resetButtonDisabled: { opacity: 0.45 },
+
   sectionHeader: {
     flexDirection: "row",
     alignItems: "flex-start",
@@ -1617,7 +1880,11 @@ const styles = StyleSheet.create({
     marginRight: 11,
   },
   sectionHeaderText: { flex: 1 },
-  sectionTitle: { fontSize: 16, fontWeight: "700", color: COLORS.text },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: COLORS.text,
+  },
   sectionSubtitle: {
     fontSize: 12,
     lineHeight: 18,
@@ -1631,6 +1898,7 @@ const styles = StyleSheet.create({
     marginBottom: 9,
   },
   required: { color: COLORS.danger },
+
   groupList: { gap: 8, paddingBottom: 5 },
   groupChip: {
     minHeight: 40,
@@ -1653,6 +1921,7 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
   },
   groupChipTextActive: { color: "#FFFFFF" },
+
   searchContainer: {
     height: 46,
     marginTop: 15,
@@ -1672,6 +1941,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: COLORS.text,
   },
+
   documentTypeList: { gap: 9 },
   documentTypeCard: {
     flexDirection: "row",
@@ -1714,7 +1984,11 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingVertical: 24,
   },
-  emptyTypesText: { fontSize: 13, color: COLORS.textSecondary, marginTop: 8 },
+  emptyTypesText: {
+    fontSize: 13,
+    color: COLORS.textSecondary,
+    marginTop: 8,
+  },
   showMoreButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -1722,14 +1996,22 @@ const styles = StyleSheet.create({
     gap: 5,
     paddingVertical: 13,
   },
-  showMoreText: { fontSize: 13, fontWeight: "600", color: COLORS.primary },
+  showMoreText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: COLORS.primary,
+  },
   errorText: {
     fontSize: 12,
     lineHeight: 17,
     color: COLORS.danger,
     marginTop: 7,
   },
-  selectedSummary: { flexDirection: "row", alignItems: "flex-start" },
+
+  selectedSummary: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+  },
   selectedSummaryIcon: {
     width: 48,
     height: 48,
@@ -1780,12 +2062,16 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     textTransform: "capitalize",
   },
+
   characterCounter: {
     alignItems: "flex-end",
     marginTop: -10,
     marginBottom: 12,
   },
-  characterCounterText: { fontSize: 10, color: COLORS.textSecondary },
+  characterCounterText: {
+    fontSize: 10,
+    color: COLORS.textSecondary,
+  },
   defaultIssuerHint: {
     flexDirection: "row",
     alignItems: "center",
@@ -1805,6 +2091,39 @@ const styles = StyleSheet.create({
     marginTop: -7,
     marginBottom: 11,
   },
+
+  noExpiryContainer: {
+    marginBottom: 14,
+  },
+  noExpiryOption: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 13,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 11,
+    backgroundColor: "#FFFFFF",
+  },
+  noExpiryOptionActive: {
+    borderColor: COLORS.primary,
+    backgroundColor: "rgba(37, 99, 235, 0.06)",
+  },
+  noExpiryTextContainer: {
+    flex: 1,
+    marginLeft: 10,
+  },
+  noExpiryTitle: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: COLORS.text,
+  },
+  noExpiryDescription: {
+    fontSize: 12,
+    lineHeight: 17,
+    color: COLORS.textSecondary,
+    marginTop: 3,
+  },
+
   expiryPreview: {
     flexDirection: "row",
     alignItems: "center",
@@ -1813,8 +2132,12 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(37, 99, 235, 0.06)",
     marginTop: 3,
   },
-  expiryPreviewWarning: { backgroundColor: "rgba(217, 119, 6, 0.08)" },
-  expiryPreviewExpired: { backgroundColor: "rgba(220, 38, 38, 0.08)" },
+  expiryPreviewWarning: {
+    backgroundColor: "rgba(217, 119, 6, 0.08)",
+  },
+  expiryPreviewExpired: {
+    backgroundColor: "rgba(220, 38, 38, 0.08)",
+  },
   expiryPreviewContent: { flex: 1, marginLeft: 9 },
   expiryPreviewTitle: {
     fontSize: 12,
@@ -1822,8 +2145,15 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     marginBottom: 2,
   },
-  expiryPreviewMessage: { fontSize: 12, color: COLORS.textSecondary },
-  settingRow: { flexDirection: "row", alignItems: "center" },
+  expiryPreviewMessage: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+  },
+
+  settingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
   settingIcon: {
     width: 40,
     height: 40,
@@ -1833,14 +2163,22 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(37, 99, 235, 0.08)",
     marginRight: 11,
   },
-  settingContent: { flex: 1, marginRight: 10 },
-  settingTitle: { fontSize: 14, fontWeight: "700", color: COLORS.text },
+  settingContent: {
+    flex: 1,
+    marginRight: 10,
+  },
+  settingTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: COLORS.text,
+  },
   settingDescription: {
     fontSize: 12,
     lineHeight: 17,
     color: COLORS.textSecondary,
     marginTop: 2,
   },
+
   notesInput: {
     minHeight: 125,
     paddingHorizontal: 13,
@@ -1853,7 +2191,11 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     color: COLORS.text,
   },
-  statusGrid: { flexDirection: "row", gap: 8 },
+
+  statusGrid: {
+    flexDirection: "row",
+    gap: 8,
+  },
   statusItem: {
     flex: 1,
     padding: 10,
@@ -1873,6 +2215,7 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     textTransform: "capitalize",
   },
+
   saveSection: { marginTop: 5 },
   noChangesMessage: {
     flexDirection: "row",
@@ -1881,7 +2224,10 @@ const styles = StyleSheet.create({
     gap: 5,
     marginTop: 10,
   },
-  noChangesText: { fontSize: 12, color: COLORS.textSecondary },
+  noChangesText: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+  },
   saveHint: {
     fontSize: 11,
     color: COLORS.textSecondary,
@@ -1895,6 +2241,9 @@ const styles = StyleSheet.create({
     gap: 5,
     marginTop: 18,
   },
-  dataSourceText: { fontSize: 11, color: COLORS.textSecondary },
+  dataSourceText: {
+    fontSize: 11,
+    color: COLORS.textSecondary,
+  },
   bottomSpacing: { height: 20 },
 });

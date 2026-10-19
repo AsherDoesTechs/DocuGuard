@@ -116,7 +116,8 @@ exports.processDocument = async (req, res) => {
         status: "error",
         code: ErrorCodes.VALIDATION_ERROR,
         errorCode: "VALIDATION_ERROR",
-        error: validation.error,
+        error: Object.values(validation.errors || {}).join(", "),
+        details: validation.errors,
       });
     }
 

@@ -114,6 +114,7 @@ const fetchDocumentDetails = useCallback(async () => {
           feedbackService.error("Could not delete document.");
         }
       },
+      onCancel: () => {},
     });
   };
 

@@ -34,9 +34,6 @@ const MAX_PAGES = 10;
 const MIN_WIDTH = 800;
 const MIN_HEIGHT = 600;
 
-const MAX_PAGE_DISPLAY_WIDTH = 1200;
-const MAX_PAGE_DISPLAY_HEIGHT = 1600;
-
 const REVIEW_THUMBNAIL_SIZE = 90;
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
@@ -54,9 +51,7 @@ export interface ScannedImageItem {
 interface DocumentScannerProps {
   visible: boolean;
   onClose: () => void;
-  onScanSuccess: (data: {
-    images: ScannedImageItem[];
-  }) => void;
+  onScanSuccess: (data: { images: ScannedImageItem[] }) => void;
 }
 
 type ScannerPhase =
@@ -92,18 +87,7 @@ function isValidImageUri(uri: unknown): uri is string {
   );
 }
 
-function filterValidImageUris(scannedImages: unknown): string[] {
-  if (!Array.isArray(scannedImages)) {
-    return [];
-  }
-
-  return scannedImages.filter(isValidImageUri);
-}
-
-function getQualityStatus(
-  width: number,
-  height: number
-): QualityStatus {
+function getQualityStatus(width: number, height: number): QualityStatus {
   if (!width || !height) {
     return "unknown";
   }
@@ -123,28 +107,6 @@ function getQualityStatus(
   return "good";
 }
 
-/**
- * Prevents the same URI from being inserted multiple times.
- */
-function mergeUniqueImages(
-  existing: ScannedImageItem[],
-  incoming: ScannedImageItem[]
-): ScannedImageItem[] {
-  const result = [...existing];
-
-  for (const image of incoming) {
-    const alreadyExists = result.some(
-      (existingImage) => existingImage.uri === image.uri
-    );
-
-    if (!alreadyExists && result.length < MAX_PAGES) {
-      result.push(image);
-    }
-  }
-
-  return result;
-}
-
 /* -------------------------------------------------------------------------- */
 /*                           MAIN SCANNER COMPONENT                           */
 /* -------------------------------------------------------------------------- */
@@ -155,42 +117,23 @@ export const DocumentScannerComponent = ({
   onScanSuccess,
 }: DocumentScannerProps) => {
   const [visibleState, setVisibleState] = useState(false);
-
-  const [phase, setPhase] =
-    useState<ScannerPhase>("preparing");
-
+  const [phase, setPhase] = useState<ScannerPhase>("preparing");
   const [scanning, setScanning] = useState(false);
-
-  const [scannedImages, setScannedImages] = useState<
-    ScannedImageItem[]
-  >([]);
-
-  // Mirrors scannedImages so callbacks can read the current list without
-  // taking scannedImages as a dependency.
+  const [scannedImages, setScannedImages] = useState<ScannedImageItem[]>([]);
   const scannedImagesRef = useRef<ScannedImageItem[]>([]);
-
   const [selectedPage, setSelectedPage] = useState(0);
-
   const [scanAttempt, setScanAttempt] = useState(0);
 
-  const slideAnim = useRef(
-    new Animated.Value(100)
-  ).current;
+  const slideAnim = useRef(new Animated.Value(100)).current;
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const timeoutRef =
-    useRef<ReturnType<typeof setTimeout> | null>(null);
-
+  // Synchronous concurrency locks and mount tracking flags
   const closedRef = useRef(false);
-
   const mountedRef = useRef(true);
-
   const submittingRef = useRef(false);
+  const isCapturingRef = useRef(false);
 
-  // captureDocument and processScannedImages call each other (retry buttons and
-  // the processing step). A ref breaks the cycle without stale closures.
-  const captureDocumentRef = useRef<() => Promise<void>>(
-    async () => {}
-  );
+  const captureDocumentRef = useRef<() => Promise<void>>(async () => {});
 
   /* ------------------------------------------------------------------------ */
   /*                              TIMER CLEANUP                               */
@@ -213,7 +156,7 @@ export const DocumentScannerComponent = ({
     return () => {
       mountedRef.current = false;
       closedRef.current = true;
-
+      isCapturingRef.current = false;
       clearTimers();
     };
   }, [clearTimers]);
@@ -229,6 +172,7 @@ export const DocumentScannerComponent = ({
 
     closedRef.current = false;
     submittingRef.current = false;
+    isCapturingRef.current = false;
 
     setVisibleState(true);
     setScanning(false);
@@ -249,118 +193,90 @@ export const DocumentScannerComponent = ({
   }, [slideAnim]);
 
   /* ------------------------------------------------------------------------ */
-  /*                         PROCESS SCANNED IMAGES                           */
+  /*                         PROCESS SCANNED IMAGE                            */
   /* ------------------------------------------------------------------------ */
 
-  const processScannedImages = useCallback(
-    async (imageUris: string[]) => {
-      if (
-        closedRef.current ||
-        !mountedRef.current
-      ) {
-        return;
-      }
+  const processSingleImage = useCallback(async (imageUri: string) => {
+    if (closedRef.current || !mountedRef.current) {
+      return;
+    }
 
-      setPhase("processing");
-      feedbackService.showScanProgress({
-        stage: "processing",
-        message: "Processing scan...",
-        progress: 25,
-      });
+    setPhase("processing");
+    feedbackService.showScanProgress({
+      stage: "processing",
+      message: "Processing scan...",
+      progress: 50,
+    });
 
-      const processedImages: ScannedImageItem[] = [];
+    await new Promise<void>((resolve) => {
+      Image.getSize(
+        imageUri,
+        (width, height) => {
+          if (closedRef.current || !mountedRef.current) {
+            resolve();
+            return;
+          }
 
-      for (let i = 0; i < imageUris.length; i++) {
-        const imageUri = imageUris[i];
-        if (
-          closedRef.current ||
-          !mountedRef.current
-        ) {
-          return;
-        }
+          if (width < MIN_WIDTH || height < MIN_HEIGHT) {
+            setScanning(false);
+            setPhase("error");
+            feedbackService.showScanProgress({
+              stage: "error",
+              message: `The captured document does not meet the minimum resolution requirement of ${MIN_WIDTH} × ${MIN_HEIGHT} pixels. Please hold the device steady and try again.`,
+              onRetry: () => captureDocumentRef.current(),
+            });
+            resolve();
+            return;
+          }
 
-        feedbackService.showScanProgress({
-          stage: "processing",
-          message: `Processing image ${i + 1} of ${imageUris.length}...`,
-          progress: 25 + Math.round((i / imageUris.length) * 50),
-        });
+          const newPage: ScannedImageItem = { uri: imageUri, width, height };
+          const merged = [...scannedImagesRef.current, newPage];
 
-        await new Promise<void>((resolve) => {
-          Image.getSize(
-            imageUri,
-            (width, height) => {
-              if (
-                width >= MIN_WIDTH &&
-                height >= MIN_HEIGHT
-              ) {
-                processedImages.push({
-                  uri: imageUri,
-                  width,
-                  height,
-                });
-              }
+          if (merged.length > MAX_PAGES) {
+            resolve();
+            return;
+          }
 
-              resolve();
-            },
-            () => {
-              resolve();
-            }
-          );
-        });
-      }
+          scannedImagesRef.current = merged;
+          setScannedImages(merged);
+          setSelectedPage(merged.length - 1);
 
-      if (
-        closedRef.current ||
-        !mountedRef.current
-      ) {
-        return;
-      }
+          feedbackService.showScanProgress({
+            stage: "complete",
+            message: `${merged.length} page(s) scanned successfully`,
+            progress: 100,
+          });
 
-      if (processedImages.length === 0) {
-        setScanning(false);
-        setPhase("error");
-
-        feedbackService.showScanProgress({
-          stage: "error",
-          message: `The captured document does not meet the minimum resolution requirement of ${MIN_WIDTH} × ${MIN_HEIGHT} pixels. Please hold the device steady and try again.`,
-          onRetry: () => captureDocumentRef.current(),
-        });
-
-        return;
-      }
-
-      // Merge eagerly against a ref mirror so the new selection can be derived from
-      // the real merged length. mergeUniqueImages drops duplicates and enforces
-      // MAX_PAGES, so the count cannot be inferred from processedImages.length.
-      const merged = mergeUniqueImages(
-        scannedImagesRef.current,
-        processedImages
+          setScanning(false);
+          setPhase("review");
+          resolve();
+        },
+        () => {
+          if (!closedRef.current && mountedRef.current) {
+            setScanning(false);
+            setPhase("error");
+            feedbackService.showScanProgress({
+              stage: "error",
+              message:
+                "Could not read the scanned image file. Please try again.",
+              onRetry: () => captureDocumentRef.current(),
+            });
+          }
+          resolve();
+        },
       );
-
-      scannedImagesRef.current = merged;
-
-      setScannedImages(merged);
-      setSelectedPage(Math.max(0, Math.min(selectedPage, merged.length - 1)));
-
-      feedbackService.showScanProgress({
-        stage: "complete",
-        message: `${merged.length} page(s) scanned successfully`,
-        progress: 100,
-      });
-
-      setScanning(false);
-      setPhase("review");
-    },
-    [alert, onClose]
-  );
+    });
+  }, []);
 
   /* ------------------------------------------------------------------------ */
   /*                              CAPTURE                                     */
   /* ------------------------------------------------------------------------ */
 
   const captureDocument = useCallback(async () => {
+    // Prevent overlapping capture runs synchronously via refs
     if (
       scanning ||
+      isCapturingRef.current ||
       closedRef.current ||
       !mountedRef.current
     ) {
@@ -368,148 +284,126 @@ export const DocumentScannerComponent = ({
     }
 
     const currentCount = scannedImagesRef.current.length;
-
     if (currentCount >= MAX_PAGES) {
       feedbackService.warning(
-        `You can scan a maximum of ${MAX_PAGES} pages in one document.`
+        `You can scan a maximum of ${MAX_PAGES} pages in one document.`,
       );
-
       return;
     }
 
+    isCapturingRef.current = true;
     setPhase("preparing");
     setScanning(true);
+    setScanAttempt((prev) => prev + 1);
+
     feedbackService.showScanProgress({
       stage: "preparing",
-      message: "Preparing scanner...",
+      message: "Checking permissions...",
       progress: 10,
     });
 
-    setScanAttempt((previous) => previous + 1);
-
     try {
-      /* -------------------------------------------------------------------- */
-      /*                        CAMERA PERMISSION                              */
-      /* -------------------------------------------------------------------- */
-
-      const { status } =
-        await Camera.requestCameraPermissionsAsync();
+      const { status } = await Camera.requestCameraPermissionsAsync();
 
       if (status !== "granted") {
-        if (!mountedRef.current) {
-          return;
-        }
+        isCapturingRef.current = false;
+        if (!mountedRef.current || closedRef.current) return;
 
         setScanning(false);
         setPhase("error");
-
         feedbackService.showScanProgress({
           stage: "error",
-          message: "Camera access is required to scan documents. Please enable camera access in your device settings.",
+          message:
+            "Camera access is required to scan documents. Please enable camera access in your device settings.",
           onRetry: onClose,
         });
-
         return;
       }
 
-      if (
-        closedRef.current ||
-        !mountedRef.current
-      ) {
+      if (closedRef.current || !mountedRef.current) {
+        isCapturingRef.current = false;
         return;
       }
-
-      /* -------------------------------------------------------------------- */
-      /*                              CAPTURE                                  */
-      /* -------------------------------------------------------------------- */
 
       setPhase("capturing");
       feedbackService.showScanProgress({
         stage: "capturing",
         message: "Scanning document...",
-        progress: 20,
+        progress: 30,
       });
 
       const scanner = ScannerPlugin?.default;
 
       if (!scanner?.scanDocument) {
+        isCapturingRef.current = false;
+        if (!mountedRef.current || closedRef.current) return;
+
         setScanning(false);
         setPhase("error");
-
         feedbackService.showScanProgress({
           stage: "error",
-          message: "The native document scanner is not available in this build. Please use a development client or a production build that includes the document scanner module.",
+          message:
+            "The native document scanner is not available in this build. Please use a development client or production build with the document scanner module.",
         });
-
         return;
       }
 
       const result = await scanner.scanDocument();
 
-      if (
-        closedRef.current ||
-        !mountedRef.current
-      ) {
+      if (closedRef.current || !mountedRef.current) {
+        isCapturingRef.current = false;
         return;
       }
 
-      const remainingSlots = MAX_PAGES - scannedImagesRef.current.length;
-
-      const validImages =
-        filterValidImageUris(
-          result?.scannedImages
-        ).slice(0, remainingSlots);
-
-      if (validImages.length === 0) {
-        setScanning(false);
-        setPhase("error");
-
-        feedbackService.showScanProgress({
-          stage: "error",
-          message: "The document scan was cancelled or no valid image was captured.",
-          onRetry: () => captureDocumentRef.current(),
-        });
-
-        return;
-      }
-
-      /* -------------------------------------------------------------------- */
-      /*                            PROCESS                                    */
-      /* -------------------------------------------------------------------- */
-
-      await processScannedImages(validImages);
-    } catch (error: any) {
-      if (
-        closedRef.current ||
-        !mountedRef.current
-      ) {
-        return;
-      }
-
-      console.error(
-        "Document scanner error:",
-        error
+      // Diagnostic logging for development inspection
+      const rawUris = result?.scannedImages;
+      console.log(
+        "[DocScanner] Native scan result count:",
+        Array.isArray(rawUris) ? rawUris.length : 0,
       );
 
+      const validUris = Array.isArray(rawUris)
+        ? rawUris.filter(isValidImageUri)
+        : [];
+
+      if (validUris.length === 0) {
+        isCapturingRef.current = false;
+        if (!mountedRef.current || closedRef.current) return;
+
+        setScanning(false);
+        setPhase("error");
+        feedbackService.showScanProgress({
+          stage: "error",
+          message:
+            "The document scan was cancelled or no valid image was captured.",
+          onRetry: () => captureDocumentRef.current(),
+        });
+        return;
+      }
+
+      // Enforce predictable single-page capture per invocation
+      const selectedUri = validUris[0];
+      isCapturingRef.current = false;
+
+      await processSingleImage(selectedUri);
+    } catch (error: any) {
+      isCapturingRef.current = false;
+      if (closedRef.current || !mountedRef.current) {
+        return;
+      }
+
+      console.error("Document scanner error:", error);
       setScanning(false);
       setPhase("error");
-
       feedbackService.showScanProgress({
         stage: "error",
-        message: "Something went wrong while capturing the document. Please try again.",
+        message:
+          "Something went wrong while capturing the document. Please try again.",
         onRetry: () => captureDocumentRef.current(),
       });
     }
-  }, [
-    alert,
-    onClose,
-    processScannedImages,
-    scannedImages.length,
-    scanning,
-  ]);
+  }, [scanning, onClose, processSingleImage]);
 
-  // Keep the ref pointing at the latest captureDocument so the retry buttons in
-  // processScannedImages always invoke the current implementation.
   useEffect(() => {
     captureDocumentRef.current = captureDocument;
   }, [captureDocument]);
@@ -521,17 +415,14 @@ export const DocumentScannerComponent = ({
   useEffect(() => {
     if (visible) {
       open();
-
       clearTimers();
 
+      // Initiate scan immediately upon opening without artificial delays
       timeoutRef.current = setTimeout(() => {
-        if (
-          !closedRef.current &&
-          mountedRef.current
-        ) {
+        if (!closedRef.current && mountedRef.current) {
           captureDocumentRef.current();
         }
-      }, 500);
+      }, 100);
 
       return () => {
         closedRef.current = true;
@@ -540,25 +431,17 @@ export const DocumentScannerComponent = ({
     }
 
     closedRef.current = true;
+    isCapturingRef.current = false;
     clearTimers();
 
     if (mountedRef.current) {
       setVisibleState(false);
       setScanning(false);
       setPhase("preparing");
-
       slideAnim.stopAnimation();
       slideAnim.setValue(100);
     }
-    // captureDocument is intentionally read through the ref: including it here
-    // would re-run this effect after every scan, resetting pages and reopening
-    // the camera.
-  }, [
-    visible,
-    open,
-    clearTimers,
-    slideAnim,
-  ]);
+  }, [visible, open, clearTimers, slideAnim]);
 
   /* ------------------------------------------------------------------------ */
   /*                                  CLOSE                                   */
@@ -570,7 +453,7 @@ export const DocumentScannerComponent = ({
     }
 
     closedRef.current = true;
-
+    isCapturingRef.current = false;
     clearTimers();
 
     if (!mountedRef.current) {
@@ -597,12 +480,7 @@ export const DocumentScannerComponent = ({
 
       onClose();
     });
-  }, [
-    clearTimers,
-    onClose,
-    scanning,
-    slideAnim,
-  ]);
+  }, [clearTimers, onClose, scanning, slideAnim]);
 
   /* ------------------------------------------------------------------------ */
   /*                         RETAKE CURRENT PAGE                              */
@@ -611,6 +489,7 @@ export const DocumentScannerComponent = ({
   const handleRetakeCurrentPage = useCallback(() => {
     if (
       scanning ||
+      isCapturingRef.current ||
       scannedImages.length === 0 ||
       selectedPage < 0 ||
       selectedPage >= scannedImages.length
@@ -619,24 +498,19 @@ export const DocumentScannerComponent = ({
     }
 
     const remaining = scannedImagesRef.current.filter(
-      (_, index) => index !== selectedPage
+      (_, index) => index !== selectedPage,
     );
 
     scannedImagesRef.current = remaining;
     setScannedImages(remaining);
-
-    setSelectedPage((previous) =>
-      Math.max(0, previous - 1)
-    );
+    setSelectedPage((prev) => Math.max(0, prev - 1));
 
     timeoutRef.current = setTimeout(() => {
-      captureDocumentRef.current();
+      if (!closedRef.current && mountedRef.current) {
+        captureDocumentRef.current();
+      }
     }, 150);
-  }, [
-    scanning,
-    scannedImages.length,
-    selectedPage,
-  ]);
+  }, [scanning, scannedImages.length, selectedPage]);
 
   /* ------------------------------------------------------------------------ */
   /*                           DELETE PAGE                                    */
@@ -644,14 +518,7 @@ export const DocumentScannerComponent = ({
 
   const handleDeletePage = useCallback(
     (index: number) => {
-      if (scanning) {
-        return;
-      }
-
-      if (
-        index < 0 ||
-        index >= scannedImages.length
-      ) {
+      if (scanning || index < 0 || index >= scannedImages.length) {
         return;
       }
 
@@ -669,38 +536,26 @@ export const DocumentScannerComponent = ({
             setScanAttempt(0);
             setPhase("preparing");
           },
+          onCancel: () => {},
         });
-
         return;
       }
 
       const remaining = scannedImagesRef.current.filter(
-        (_, pageIndex) => pageIndex !== index
+        (_, pageIndex) => pageIndex !== index,
       );
 
       scannedImagesRef.current = remaining;
       setScannedImages(remaining);
-
-      setSelectedPage((previous) => {
-        if (index < previous) {
-          return previous - 1;
+      setSelectedPage((prev) => {
+        if (index < prev) return prev - 1;
+        if (index === prev && prev >= scannedImages.length - 1) {
+          return Math.max(0, prev - 1);
         }
-
-        if (
-          index === previous &&
-          previous >= scannedImages.length - 1
-        ) {
-          return Math.max(0, previous - 1);
-        }
-
-        return previous;
+        return prev;
       });
     },
-    [
-      alert,
-      scanning,
-      scannedImages.length,
-    ]
+    [scanning, scannedImages.length],
   );
 
   /* ------------------------------------------------------------------------ */
@@ -709,11 +564,8 @@ export const DocumentScannerComponent = ({
 
   const movePage = useCallback(
     (fromIndex: number, toIndex: number) => {
-      if (scanning) {
-        return;
-      }
-
       if (
+        scanning ||
         fromIndex < 0 ||
         fromIndex >= scannedImages.length ||
         toIndex < 0 ||
@@ -723,17 +575,14 @@ export const DocumentScannerComponent = ({
       }
 
       const updated = [...scannedImagesRef.current];
-
       const [moved] = updated.splice(fromIndex, 1);
-
       updated.splice(toIndex, 0, moved);
 
       scannedImagesRef.current = updated;
       setScannedImages(updated);
-
       setSelectedPage(toIndex);
     },
-    [scanning]
+    [scanning, scannedImages.length],
   );
 
   /* ------------------------------------------------------------------------ */
@@ -752,16 +601,11 @@ export const DocumentScannerComponent = ({
     }
 
     submittingRef.current = true;
-
     setPhase("success");
-
     clearTimers();
 
     timeoutRef.current = setTimeout(() => {
-      if (
-        closedRef.current ||
-        !mountedRef.current
-      ) {
+      if (closedRef.current || !mountedRef.current) {
         submittingRef.current = false;
         return;
       }
@@ -771,13 +615,8 @@ export const DocumentScannerComponent = ({
       });
 
       submittingRef.current = false;
-    }, 700);
-  }, [
-    clearTimers,
-    onScanSuccess,
-    scannedImages,
-    scanning,
-  ]);
+    }, 400);
+  }, [clearTimers, onScanSuccess, scannedImages, scanning]);
 
   /* ------------------------------------------------------------------------ */
   /*                         SWIPE TO CLOSE                                   */
@@ -785,133 +624,75 @@ export const DocumentScannerComponent = ({
 
   const panResponder = useRef(
     PanResponder.create({
-      onMoveShouldSetPanResponder: (
-        _,
-        gestureState
-      ) => {
-        if (scanning) {
-          return false;
-        }
-
+      onMoveShouldSetPanResponder: (_, gestureState) => {
+        if (scanning) return false;
         return (
-          Math.abs(gestureState.dy) >
-            Math.abs(gestureState.dx) &&
+          Math.abs(gestureState.dy) > Math.abs(gestureState.dx) &&
           gestureState.dy > 10
         );
       },
-
-      onPanResponderMove: (
-        _,
-        gestureState
-      ) => {
-        if (scanning) {
-          return;
-        }
-
-        const nextY = Math.max(
-          0,
-          gestureState.dy
-        );
-
+      onPanResponderMove: (_, gestureState) => {
+        if (scanning) return;
+        const nextY = Math.max(0, gestureState.dy);
         slideAnim.setValue(nextY);
       },
-
-      onPanResponderRelease: (
-        _,
-        gestureState
-      ) => {
-        if (scanning) {
-          return;
-        }
-
+      onPanResponderRelease: (_, gestureState) => {
+        if (scanning) return;
         if (gestureState.dy > 100) {
           handleClose();
           return;
         }
-
         Animated.spring(slideAnim, {
           toValue: 0,
           useNativeDriver: true,
         }).start();
       },
-
       onPanResponderTerminate: () => {
-        if (scanning) {
-          return;
-        }
-
+        if (scanning) return;
         Animated.spring(slideAnim, {
           toValue: 0,
           useNativeDriver: true,
         }).start();
       },
-    })
+    }),
   ).current;
 
   /* ------------------------------------------------------------------------ */
-  /*                         REVIEW PAGE                                      */
+  /*                         REVIEW PAGE UI                                   */
   /* ------------------------------------------------------------------------ */
 
   const renderReview = () => {
-    const currentImage =
-      scannedImages[selectedPage];
+    const currentImage = scannedImages[selectedPage];
 
     if (!currentImage) {
       return (
         <View style={styles.emptyReview}>
-          <Ionicons
-            name="document-outline"
-            size={56}
-            color="#CBD5E1"
-          />
-
-          <Text style={styles.emptyTitle}>
-            No pages scanned
-          </Text>
-
-          <Text style={styles.emptySubtitle}>
-            Scan a document to continue.
-          </Text>
-
+          <Ionicons name="document-outline" size={56} color="#CBD5E1" />
+          <Text style={styles.emptyTitle}>No pages scanned</Text>
+          <Text style={styles.emptySubtitle}>Scan a document to continue.</Text>
           <TouchableOpacity
             style={styles.primaryButton}
             onPress={captureDocument}
             accessibilityRole="button"
             accessibilityLabel="Scan document"
           >
-            <Ionicons
-              name="scan-outline"
-              size={22}
-              color="#fff"
-            />
-
-            <Text style={styles.primaryButtonText}>
-              Scan Document
-            </Text>
+            <Ionicons name="scan-outline" size={22} color="#fff" />
+            <Text style={styles.primaryButtonText}>Scan Document</Text>
           </TouchableOpacity>
         </View>
       );
     }
 
-    const quality = getQualityStatus(
-      currentImage.width,
-      currentImage.height
-    );
+    const quality = getQualityStatus(currentImage.width, currentImage.height);
 
     return (
       <View style={styles.reviewContainer}>
         <View style={styles.reviewHeader}>
           <View>
-            <Text style={styles.reviewTitle}>
-              Review Scan
-            </Text>
-
+            <Text style={styles.reviewTitle}>Review Scan</Text>
             <Text style={styles.reviewSubtitle}>
               {scannedImages.length}{" "}
-              {scannedImages.length === 1
-                ? "page"
-                : "pages"}{" "}
-              scanned
+              {scannedImages.length === 1 ? "page" : "pages"} scanned
             </Text>
           </View>
 
@@ -921,11 +702,7 @@ export const DocumentScannerComponent = ({
             accessibilityRole="button"
             accessibilityLabel="Close scanner"
           >
-            <Ionicons
-              name="close"
-              size={25}
-              color="#fff"
-            />
+            <Ionicons name="close" size={25} color="#fff" />
           </TouchableOpacity>
         </View>
 
@@ -934,15 +711,12 @@ export const DocumentScannerComponent = ({
             source={{ uri: currentImage.uri }}
             style={styles.previewImage}
             resizeMode="contain"
-            accessibilityLabel={`Scanned page ${
-              selectedPage + 1
-            }`}
+            accessibilityLabel={`Scanned page ${selectedPage + 1}`}
           />
 
           <View style={styles.pageIndicator}>
             <Text style={styles.pageIndicatorText}>
-              Page {selectedPage + 1} of{" "}
-              {scannedImages.length}
+              Page {selectedPage + 1} of {scannedImages.length}
             </Text>
           </View>
 
@@ -954,18 +728,12 @@ export const DocumentScannerComponent = ({
                   : "checkmark-circle-outline"
               }
               size={17}
-              color={
-                quality === "low-resolution"
-                  ? "#FBBF24"
-                  : "#86EFAC"
-              }
+              color={quality === "low-resolution" ? "#FBBF24" : "#86EFAC"}
             />
-
             <Text
               style={[
                 styles.qualityText,
-                quality === "low-resolution" &&
-                  styles.qualityWarningText,
+                quality === "low-resolution" && styles.qualityWarningText,
               ]}
             >
               {quality === "low-resolution"
@@ -977,82 +745,43 @@ export const DocumentScannerComponent = ({
 
         <View style={styles.thumbnailSection}>
           <View style={styles.thumbnailHeader}>
-            <Text style={styles.thumbnailTitle}>
-              Pages
-            </Text>
-
-            <Text style={styles.thumbnailHint}>
-              Tap a page to preview
-            </Text>
+            <Text style={styles.thumbnailTitle}>Pages</Text>
+            <Text style={styles.thumbnailHint}>Tap a page to preview</Text>
           </View>
 
           <FlatList
             horizontal
             data={scannedImages}
-            keyExtractor={(item, index) =>
-              `${item.uri}-${index}`
-            }
+            keyExtractor={(item, index) => `${item.uri}-${index}`}
             showsHorizontalScrollIndicator={false}
-            contentContainerStyle={
-              styles.thumbnailList
-            }
-            renderItem={({
-              item,
-              index,
-            }) => {
-              const isSelected =
-                selectedPage === index;
-
+            contentContainerStyle={styles.thumbnailList}
+            renderItem={({ item, index }) => {
+              const isSelected = selectedPage === index;
               return (
                 <TouchableOpacity
                   style={[
                     styles.thumbnailWrapper,
-                    isSelected &&
-                      styles.thumbnailSelected,
+                    isSelected && styles.thumbnailSelected,
                   ]}
-                  onPress={() =>
-                    setSelectedPage(index)
-                  }
+                  onPress={() => setSelectedPage(index)}
                   accessibilityRole="button"
-                  accessibilityLabel={`Page ${
-                    index + 1
-                  }`}
+                  accessibilityLabel={`Page ${index + 1}`}
                 >
                   <Image
-                    source={{
-                      uri: item.uri,
-                    }}
+                    source={{ uri: item.uri }}
                     style={styles.thumbnailImage}
                     resizeMode="cover"
                   />
-
-                  <View
-                    style={styles.thumbnailNumber}
-                  >
-                    <Text
-                      style={
-                        styles.thumbnailNumberText
-                      }
-                    >
-                      {index + 1}
-                    </Text>
+                  <View style={styles.thumbnailNumber}>
+                    <Text style={styles.thumbnailNumberText}>{index + 1}</Text>
                   </View>
-
                   <TouchableOpacity
                     style={styles.thumbnailDelete}
-                    onPress={() =>
-                      handleDeletePage(index)
-                    }
+                    onPress={() => handleDeletePage(index)}
                     accessibilityRole="button"
-                    accessibilityLabel={`Delete page ${
-                      index + 1
-                    }`}
+                    accessibilityLabel={`Delete page ${index + 1}`}
                   >
-                    <Ionicons
-                      name="close"
-                      size={14}
-                      color="#fff"
-                    />
+                    <Ionicons name="close" size={14} color="#fff" />
                   </TouchableOpacity>
                 </TouchableOpacity>
               );
@@ -1067,77 +796,41 @@ export const DocumentScannerComponent = ({
             accessibilityRole="button"
             accessibilityLabel="Retake current page"
           >
-            <Ionicons
-              name="camera-reverse-outline"
-              size={21}
-              color="#fff"
-            />
-
-            <Text style={styles.secondaryButtonText}>
-              Retake
-            </Text>
+            <Ionicons name="camera-reverse-outline" size={21} color="#fff" />
+            <Text style={styles.secondaryButtonText}>Retake</Text>
           </TouchableOpacity>
 
           {selectedPage > 0 && (
             <TouchableOpacity
               style={styles.iconActionButton}
-              onPress={() =>
-                movePage(
-                  selectedPage,
-                  selectedPage - 1
-                )
-              }
+              onPress={() => movePage(selectedPage, selectedPage - 1)}
               accessibilityRole="button"
               accessibilityLabel="Move page left"
             >
-              <Ionicons
-                name="chevron-back"
-                size={22}
-                color="#fff"
-              />
+              <Ionicons name="chevron-back" size={22} color="#fff" />
             </TouchableOpacity>
           )}
 
-          {selectedPage <
-            scannedImages.length - 1 && (
+          {selectedPage < scannedImages.length - 1 && (
             <TouchableOpacity
               style={styles.iconActionButton}
-              onPress={() =>
-                movePage(
-                  selectedPage,
-                  selectedPage + 1
-                )
-              }
+              onPress={() => movePage(selectedPage, selectedPage + 1)}
               accessibilityRole="button"
               accessibilityLabel="Move page right"
             >
-              <Ionicons
-                name="chevron-forward"
-                size={22}
-                color="#fff"
-              />
+              <Ionicons name="chevron-forward" size={22} color="#fff" />
             </TouchableOpacity>
           )}
 
-          {scannedImages.length <
-            MAX_PAGES && (
+          {scannedImages.length < MAX_PAGES && (
             <TouchableOpacity
               style={styles.secondaryButton}
               onPress={captureDocument}
               accessibilityRole="button"
               accessibilityLabel="Add another page"
             >
-              <Ionicons
-                name="add"
-                size={21}
-                color="#fff"
-              />
-
-              <Text
-                style={styles.secondaryButtonText}
-              >
-                Add Page
-              </Text>
+              <Ionicons name="add" size={21} color="#fff" />
+              <Text style={styles.secondaryButtonText}>Add Page</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -1148,147 +841,47 @@ export const DocumentScannerComponent = ({
           accessibilityRole="button"
           accessibilityLabel="Use scanned document"
         >
-          <Ionicons
-            name="checkmark-circle-outline"
-            size={22}
-            color="#fff"
-          />
-
-          <Text style={styles.primaryButtonText}>
-            Use Scan
-          </Text>
+          <Ionicons name="checkmark-circle-outline" size={22} color="#fff" />
+          <Text style={styles.primaryButtonText}>Use Scan</Text>
         </TouchableOpacity>
 
         <Text style={styles.reviewFooter}>
-          Review all pages before continuing to OCR
-          and document autofill.
+          Review all pages before continuing to OCR and document autofill.
         </Text>
       </View>
     );
   };
 
   /* ------------------------------------------------------------------------ */
-  /*                        SCANNING UI                                       */
+  /*                        SCANNING STATE UI                                 */
   /* ------------------------------------------------------------------------ */
 
   const renderScanningState = () => {
-    let icon:
-      | "scan-outline"
-      | "camera-outline"
-      | "sync-outline" =
+    let icon: "scan-outline" | "camera-outline" | "sync-outline" =
       "scan-outline";
-
     let title = "Preparing scanner...";
-    let subtitle =
-      "Get your document ready";
+    let subtitle = "Get your document ready";
 
     if (phase === "capturing") {
       icon = "camera-outline";
       title = "Scanning document...";
-      subtitle =
-        "Hold your device steady and keep all document edges visible";
+      subtitle = "Hold your device steady and keep all document edges visible";
     }
 
     if (phase === "processing") {
       icon = "sync-outline";
       title = "Processing scan...";
-      subtitle =
-        "Checking image quality and resolution";
+      subtitle = "Checking image quality and resolution";
     }
 
     return (
-      <View
-        style={styles.stabilizationContent}
-      >
+      <View style={styles.stabilizationContent}>
         <View style={styles.guidanceBox}>
           <View style={styles.scannerIconCircle}>
-            <Ionicons
-              name={icon}
-              size={40}
-              color="#fff"
-            />
+            <Ionicons name={icon} size={40} color="#fff" />
           </View>
-
-          <Text style={styles.instructionTitle}>
-            {title}
-          </Text>
-
-          <Text style={styles.instructionSubtitle}>
-            {subtitle}
-          </Text>
-
-          {phase === "capturing" && (
-            <>
-              <View style={styles.holdSteadyBadge}>
-                <Ionicons
-                  name="hand-left-outline"
-                  size={18}
-                  color="#fff"
-                />
-
-                <Text
-                  style={
-                    styles.holdSteadyText
-                  }
-                >
-                  Hold steady
-                </Text>
-              </View>
-
-              <View
-                style={styles.scanTipsContainer}
-              >
-                <View
-                  style={styles.tipRow}
-                >
-                  <Ionicons
-                    name="checkmark-circle-outline"
-                    size={18}
-                    color="#86EFAC"
-                  />
-
-                  <Text
-                    style={styles.tipText}
-                  >
-                    Keep all edges visible
-                  </Text>
-                </View>
-
-                <View
-                  style={styles.tipRow}
-                >
-                  <Ionicons
-                    name="sunny-outline"
-                    size={18}
-                    color="#FDE68A"
-                  />
-
-                  <Text
-                    style={styles.tipText}
-                  >
-                    Avoid glare and shadows
-                  </Text>
-                </View>
-
-                <View
-                  style={styles.tipRow}
-                >
-                  <Ionicons
-                    name="resize-outline"
-                    size={18}
-                    color="#93C5FD"
-                  />
-
-                  <Text
-                    style={styles.tipText}
-                  >
-                    Fill the frame
-                  </Text>
-                </View>
-              </View>
-            </>
-          )}
-
+          <Text style={styles.instructionTitle}>{title}</Text>
+          <Text style={styles.instructionSubtitle}>{subtitle}</Text>
           <ActivityIndicator
             color="#fff"
             size="small"
@@ -1297,12 +890,6 @@ export const DocumentScannerComponent = ({
         </View>
 
         <View style={styles.scanProgressContainer}>
-          <View style={styles.scanProgressTrack}>
-            <Animated.View
-              style={styles.scanProgressBar}
-            />
-          </View>
-
           <Text style={styles.scanProgressText}>
             Scan attempt {scanAttempt || 1}
           </Text>
@@ -1319,25 +906,13 @@ export const DocumentScannerComponent = ({
     <View style={styles.stabilizationContent}>
       <View style={styles.successBox}>
         <View style={styles.successIconCircle}>
-          <Ionicons
-            name="checkmark"
-            size={48}
-            color="#fff"
-          />
+          <Ionicons name="checkmark" size={48} color="#fff" />
         </View>
-
-        <Text style={styles.instructionTitle}>
-          Scan Successful
-        </Text>
-
+        <Text style={styles.instructionTitle}>Scan Successful</Text>
         <Text style={styles.instructionSubtitle}>
-          {scannedImages.length}{" "}
-          {scannedImages.length === 1
-            ? "page"
-            : "pages"}{" "}
+          {scannedImages.length} {scannedImages.length === 1 ? "page" : "pages"}{" "}
           captured successfully
         </Text>
-
         <ActivityIndicator
           color="#fff"
           size="small"
@@ -1367,11 +942,7 @@ export const DocumentScannerComponent = ({
         style={[
           styles.modalOverlay,
           {
-            transform: [
-              {
-                translateY: slideAnim,
-              },
-            ],
+            transform: [{ translateY: slideAnim }],
           },
         ]}
         {...panResponder.panHandlers}
@@ -1379,43 +950,29 @@ export const DocumentScannerComponent = ({
         {phase === "review"
           ? renderReview()
           : phase === "success"
-          ? renderSuccess()
-          : renderScanningState()}
+            ? renderSuccess()
+            : renderScanningState()}
 
-        {phase !== "review" &&
-          phase !== "success" && (
-            <TouchableOpacity
-              style={styles.closeButton}
-              onPress={handleClose}
-              disabled={scanning}
-              hitSlop={{
-                top: 20,
-                bottom: 20,
-                left: 20,
-                right: 20,
-              }}
-              accessibilityRole="button"
-              accessibilityLabel="Close scanner"
+        {phase !== "review" && phase !== "success" && (
+          <TouchableOpacity
+            style={styles.closeButton}
+            onPress={handleClose}
+            disabled={scanning}
+            hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
+            accessibilityRole="button"
+            accessibilityLabel="Close scanner"
+          >
+            <View
+              style={[
+                styles.closeButtonInner,
+                scanning && styles.closeButtonDisabled,
+              ]}
             >
-              <View
-                style={[
-                  styles.closeButtonInner,
-                  scanning &&
-                    styles.closeButtonDisabled,
-                ]}
-              >
-                <Ionicons
-                  name="close"
-                  size={28}
-                  color="#fff"
-                />
-
-                <Text style={styles.closeLabel}>
-                  Cancel
-                </Text>
-              </View>
-            </TouchableOpacity>
-          )}
+              <Ionicons name="close" size={28} color="#fff" />
+              <Text style={styles.closeLabel}>Cancel</Text>
+            </View>
+          </TouchableOpacity>
+        )}
       </Animated.View>
     </Modal>
   );
@@ -1431,16 +988,12 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0, 0, 0, 0.94)",
     justifyContent: "flex-end",
   },
-
-  /* ------------------------------ SCANNING -------------------------------- */
-
   stabilizationContent: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
     paddingHorizontal: 20,
   },
-
   guidanceBox: {
     width: "100%",
     maxWidth: 420,
@@ -1452,7 +1005,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(255, 255, 255, 0.14)",
   },
-
   scannerIconCircle: {
     width: 76,
     height: 76,
@@ -1463,7 +1015,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(255, 255, 255, 0.2)",
   },
-
   instructionTitle: {
     color: "#fff",
     fontSize: 21,
@@ -1471,7 +1022,6 @@ const styles = StyleSheet.create({
     marginTop: 16,
     textAlign: "center",
   },
-
   instructionSubtitle: {
     color: "#CBD5E1",
     fontSize: 15,
@@ -1480,105 +1030,42 @@ const styles = StyleSheet.create({
     marginTop: 8,
     textAlign: "center",
   },
-
-  holdSteadyBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginTop: 20,
-    paddingHorizontal: 16,
-    paddingVertical: 9,
-    borderRadius: 20,
-    backgroundColor: "rgba(255, 255, 255, 0.12)",
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.16)",
-  },
-
-  holdSteadyText: {
-    color: "#fff",
-    fontSize: 14,
-    fontWeight: "700",
-  },
-
-  scanTipsContainer: {
-    width: "100%",
-    marginTop: 22,
-    gap: 10,
-  },
-
-  tipRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-
-  tipText: {
-    color: "#E2E8F0",
-    fontSize: 14,
-    fontWeight: "500",
-    flex: 1,
-  },
-
   activityIndicator: {
     marginTop: 22,
   },
-
   scanProgressContainer: {
     width: "100%",
     maxWidth: 420,
     marginTop: 20,
     alignItems: "center",
   },
-
-  scanProgressTrack: {
-    width: "80%",
-    height: 4,
-    borderRadius: 4,
-    backgroundColor: "rgba(255, 255, 255, 0.12)",
-    overflow: "hidden",
-  },
-
-  scanProgressBar: {
-    width: "55%",
-    height: "100%",
-    borderRadius: 4,
-    backgroundColor: "#fff",
-  },
-
   scanProgressText: {
     color: "#94A3B8",
     fontSize: 12,
     marginTop: 8,
   },
-
-  /* ------------------------------- REVIEW -------------------------------- */
-
   reviewContainer: {
     flex: 1,
     paddingTop: 54,
     paddingHorizontal: 16,
     paddingBottom: 24,
   },
-
   reviewHeader: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     marginBottom: 16,
   },
-
   reviewTitle: {
     color: "#fff",
     fontSize: 24,
     fontWeight: "800",
   },
-
   reviewSubtitle: {
     color: "#94A3B8",
     fontSize: 14,
     marginTop: 3,
   },
-
   headerCloseButton: {
     width: 42,
     height: 42,
@@ -1587,7 +1074,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: "rgba(255, 255, 255, 0.1)",
   },
-
   previewContainer: {
     flex: 1,
     minHeight: 300,
@@ -1601,12 +1087,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-
   previewImage: {
     width: "100%",
     height: "100%",
   },
-
   pageIndicator: {
     position: "absolute",
     top: 12,
@@ -1616,13 +1100,11 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
     borderRadius: 16,
   },
-
   pageIndicatorText: {
     color: "#fff",
     fontSize: 12,
     fontWeight: "700",
   },
-
   qualityBadge: {
     position: "absolute",
     right: 12,
@@ -1635,44 +1117,36 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
     borderRadius: 16,
   },
-
   qualityText: {
     color: "#86EFAC",
     fontSize: 11,
     fontWeight: "700",
   },
-
   qualityWarningText: {
     color: "#FBBF24",
   },
-
   thumbnailSection: {
     marginTop: 14,
   },
-
   thumbnailHeader: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     marginBottom: 8,
   },
-
   thumbnailTitle: {
     color: "#fff",
     fontSize: 15,
     fontWeight: "700",
   },
-
   thumbnailHint: {
     color: "#64748B",
     fontSize: 12,
   },
-
   thumbnailList: {
     gap: 10,
     paddingVertical: 4,
   },
-
   thumbnailWrapper: {
     width: REVIEW_THUMBNAIL_SIZE,
     height: REVIEW_THUMBNAIL_SIZE,
@@ -1683,16 +1157,13 @@ const styles = StyleSheet.create({
     backgroundColor: "#1E293B",
     position: "relative",
   },
-
   thumbnailSelected: {
     borderColor: "#fff",
   },
-
   thumbnailImage: {
     width: "100%",
     height: "100%",
   },
-
   thumbnailNumber: {
     position: "absolute",
     left: 5,
@@ -1704,13 +1175,11 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: "rgba(0, 0, 0, 0.72)",
   },
-
   thumbnailNumberText: {
     color: "#fff",
     fontSize: 11,
     fontWeight: "800",
   },
-
   thumbnailDelete: {
     position: "absolute",
     top: 4,
@@ -1722,7 +1191,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: "rgba(220, 38, 38, 0.9)",
   },
-
   actionRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -1730,7 +1198,6 @@ const styles = StyleSheet.create({
     gap: 8,
     marginTop: 12,
   },
-
   secondaryButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -1743,13 +1210,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(255, 255, 255, 0.16)",
   },
-
   secondaryButtonText: {
     color: "#fff",
     fontSize: 13,
     fontWeight: "700",
   },
-
   iconActionButton: {
     width: 44,
     height: 44,
@@ -1760,7 +1225,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(255, 255, 255, 0.16)",
   },
-
   primaryButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -1772,13 +1236,11 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.primary || "#2563EB",
     paddingHorizontal: 20,
   },
-
   primaryButtonText: {
     color: "#fff",
     fontSize: 16,
     fontWeight: "800",
   },
-
   reviewFooter: {
     color: "#64748B",
     fontSize: 11,
@@ -1786,21 +1248,18 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: 8,
   },
-
   emptyReview: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 30,
   },
-
   emptyTitle: {
     color: "#fff",
     fontSize: 20,
     fontWeight: "800",
     marginTop: 16,
   },
-
   emptySubtitle: {
     color: "#94A3B8",
     fontSize: 14,
@@ -1808,9 +1267,6 @@ const styles = StyleSheet.create({
     marginTop: 8,
     marginBottom: 20,
   },
-
-  /* ------------------------------- SUCCESS ------------------------------- */
-
   successBox: {
     width: "100%",
     maxWidth: 400,
@@ -1822,7 +1278,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(134, 239, 172, 0.22)",
   },
-
   successIconCircle: {
     width: 82,
     height: 82,
@@ -1831,15 +1286,11 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: COLORS.success || "#16A34A",
   },
-
-  /* ------------------------------- CLOSE --------------------------------- */
-
   closeButton: {
     alignSelf: "center",
     marginBottom: 38,
     padding: 10,
   },
-
   closeButtonInner: {
     flexDirection: "row",
     alignItems: "center",
@@ -1851,11 +1302,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(255, 255, 255, 0.18)",
   },
-
   closeButtonDisabled: {
     opacity: 0.5,
   },
-
   closeLabel: {
     color: "#fff",
     fontSize: 16,
