@@ -378,8 +378,8 @@ export async function switchLocalUser(
  * Clears all local state at sign-out. Safe to call when already signed out.
  */
 export async function clearLocalSession(): Promise<void> {
-  const userId = await getLocalUserId();
-  await purgeLocalDataForUser(userId);
+  // Clear authentication/user context only. Saved documents remain keyed by
+  // user_id so the same account restores them on next sign-in.
   await setLocalUserId(null);
 }
 
