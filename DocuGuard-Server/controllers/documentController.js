@@ -372,8 +372,8 @@ exports.processDocument = async (req, res) => {
           THEN COALESCE($2, category) ELSE category END,
         issuer = COALESCE(NULLIF(trim(issuer), ''), $3, issuer),
         document_number = COALESCE(NULLIF(trim(document_number), ''), $4, document_number),
-        issue_date = COALESCE(issue_date, $5, issue_date),
-        expiry_date = COALESCE(NULLIF($6, ''), expiry_date),
+        issue_date = COALESCE(issue_date, NULLIF($5, '')::date, issue_date),
+        expiry_date = COALESCE(NULLIF($6, '')::date, expiry_date),
         risk_score = COALESCE(risk_score, $7),
         risk_level = CASE WHEN risk_level IS NULL OR risk_level = ''
           THEN COALESCE($8, risk_level) ELSE risk_level END,
