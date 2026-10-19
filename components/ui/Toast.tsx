@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useCallback, useState } from "react";
+import React, { useEffect, useRef, useCallback } from "react";
 import {
   View,
   Text,
@@ -16,24 +16,11 @@ import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withTiming,
+  cancelAnimation,
 } from "react-native-reanimated";
-import { COLORS } from "@/constants";
+import { useColors } from "@/context/ThemeContext";
 
 export type ToastType = "success" | "error" | "info" | "warning";
-
-const TOAST_CONFIG: Record<
-  ToastType,
-  { icon: keyof typeof Ionicons.glyphMap; color: string; bg: string }
-> = {
-  success: { icon: "checkmark-circle", color: "#FFFFFF", bg: COLORS.success },
-  error: { icon: "alert-circle", color: "#FFFFFF", bg: COLORS.danger },
-  info: { icon: "information-circle", color: "#FFFFFF", bg: COLORS.primary },
-  warning: {
-    icon: "warning",
-    color: "#FFFFFF",
-    bg: COLORS.warning,
-  },
-};
 
 const DEFAULT_DURATION = 5000;
 const DISMISS_THRESHOLD = 100;
@@ -53,20 +40,60 @@ export const Toast: React.FC<ToastProps> = ({
   duration = DEFAULT_DURATION,
   onDismiss,
 }) => {
-  const safeMessage = typeof message === "string" && message.trim() ? message : "";
+  const colors = useColors();
+  const insets = useSafeAreaInsets();
+
+  const safeMessage =
+    typeof message === "string" && message.trim() ? message : "";
+
   const safeDuration =
     typeof duration === "number" && duration > 0 ? duration : DEFAULT_DURATION;
-  const safeType: ToastType =
-    TOAST_CONFIG[type as ToastType] ? (type as ToastType) : "success";
 
-  const insets = useSafeAreaInsets();
+  const safeType: ToastType =
+    type === "success" ||
+    type === "error" ||
+    type === "info" ||
+    type === "warning"
+      ? type
+      : "success";
+
+  const config = {
+    success: {
+      icon: "checkmark-circle" as const,
+      color: colors.success,
+      background: colors.successLight,
+    },
+    error: {
+      icon: "alert-circle" as const,
+      color: colors.error,
+      background: colors.errorLight,
+    },
+    info: {
+      icon: "information-circle" as const,
+      color: colors.primary,
+      background: colors.primaryLight,
+    },
+    warning: {
+      icon: "warning" as const,
+      color: colors.warning,
+      background: colors.warningLight,
+    },
+  }[safeType];
+
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [paused, setPaused] = useState(false);
-  const pauseStartRef = useRef<number>(0);
-  const elapsedBeforePauseRef = useRef<number>(0);
+  const remainingRef = useRef(safeDuration);
+  const startedAtRef = useRef(0);
+  const dismissRef = useRef(onDismiss);
+  const durationRef = useRef(safeDuration);
   const dismissProgress = useSharedValue(0);
 
-  const config = TOAST_CONFIG[safeType];
+  useEffect(() => {
+    dismissRef.current = onDismiss;
+  }, [onDismiss]);
+
+  useEffect(() => {
+    durationRef.current = safeDuration;
+  }, [safeDuration]);
 
   const clearTimer = useCallback(() => {
     if (timeoutRef.current) {
@@ -75,75 +102,181 @@ export const Toast: React.FC<ToastProps> = ({
     }
   }, []);
 
-  const startTimer = useCallback(() => {
+  const dismiss = useCallback(() => {
     clearTimer();
-    dismissProgress.value = 0;
-    const remaining = safeDuration - elapsedBeforePauseRef.current;
-    if (remaining <= 0) {
-      onDismiss?.();
-      return;
-    }
-    timeoutRef.current = setTimeout(() => {
-      onDismiss?.();
-    }, remaining);
-  }, [safeDuration, onDismiss, clearTimer]);
+    cancelAnimation(dismissProgress);
+    dismissRef.current?.();
+  }, [clearTimer, dismissProgress]);
+
+  const startTimer = useCallback(
+    (reset = false) => {
+      clearTimer();
+
+      if (reset) {
+        remainingRef.current = durationRef.current;
+        dismissProgress.value = 0;
+      }
+
+      const remaining = Math.max(0, remainingRef.current);
+
+      if (remaining <= 0) {
+        dismiss();
+        return;
+      }
+
+      startedAtRef.current = Date.now();
+
+      dismissProgress.value = withTiming(1, {
+        duration: remaining,
+      });
+
+      timeoutRef.current = setTimeout(() => {
+        remainingRef.current = 0;
+        dismiss();
+      }, remaining);
+    },
+    [clearTimer, dismiss, dismissProgress],
+  );
 
   useEffect(() => {
     if (visible && safeMessage) {
-      elapsedBeforePauseRef.current = 0;
-      dismissProgress.value = withTiming(1, { duration: safeDuration });
-      startTimer();
+      startTimer(true);
     } else {
       clearTimer();
+      cancelAnimation(dismissProgress);
+      dismissProgress.value = 0;
     }
+
     return () => {
       clearTimer();
+      cancelAnimation(dismissProgress);
     };
-  }, [visible, safeDuration, onDismiss, startTimer, clearTimer, dismissProgress, safeMessage]);
+  }, [
+    visible,
+    safeMessage,
+    safeDuration,
+    startTimer,
+    clearTimer,
+    dismissProgress,
+  ]);
+
+  const pauseTimer = useCallback(() => {
+    if (!timeoutRef.current) return;
+
+    const elapsed = Date.now() - startedAtRef.current;
+
+    remainingRef.current = Math.max(0, remainingRef.current - elapsed);
+
+    clearTimer();
+    cancelAnimation(dismissProgress);
+  }, [clearTimer, dismissProgress]);
+
+  const resumeTimer = useCallback(() => {
+    if (visible && safeMessage) {
+      startTimer(false);
+    }
+  }, [visible, safeMessage, startTimer]);
 
   const panResponder = useRef(
     PanResponder.create({
-      onMoveShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_, gestureState) =>
+        gestureState.dx < -8 &&
+        Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.2,
+
       onPanResponderMove: (_, gestureState) => {
         if (gestureState.dx < 0) {
-          dismissProgress.value = Math.abs(gestureState.dx) / DISMISS_THRESHOLD;
+          dismissProgress.value = Math.min(
+            1,
+            Math.abs(gestureState.dx) / DISMISS_THRESHOLD,
+          );
         }
       },
+
       onPanResponderRelease: (_, gestureState) => {
         if (gestureState.dx < -DISMISS_THRESHOLD) {
-          clearTimer();
-          onDismiss?.();
+          dismiss();
         } else {
-          dismissProgress.value = withTiming(0, { duration: 200 });
+          dismissProgress.value = withTiming(0, {
+            duration: 180,
+          });
         }
+      },
+
+      onPanResponderTerminate: () => {
+        dismissProgress.value = withTiming(0, {
+          duration: 180,
+        });
       },
     }),
   ).current;
 
   const handleClose = useCallback(() => {
-    clearTimer();
-    onDismiss?.();
-  }, [onDismiss, clearTimer]);
-
-  const handlePressIn = useCallback(() => {
-    setPaused(true);
-    pauseStartRef.current = Date.now();
-    clearTimer();
-  }, [clearTimer]);
-
-  const handlePressOut = useCallback(() => {
-    setPaused(false);
-    const pausedDuration = Date.now() - pauseStartRef.current;
-    elapsedBeforePauseRef.current += pausedDuration;
-    startTimer();
-  }, [startTimer]);
+    dismiss();
+  }, [dismiss]);
 
   const progressAnimatedStyle = useAnimatedStyle(() => ({
-    height: 3,
-    backgroundColor: config.color,
-    opacity: 0.7,
     transform: [{ scaleX: dismissProgress.value }],
   }));
+
+  const styles = StyleSheet.create({
+    container: {
+      position: "absolute",
+      top: Platform.OS === "ios" ? insets.top + 12 : insets.top + 8,
+      left: 20,
+      right: 20,
+      zIndex: 9999,
+      elevation: 6,
+    } as ViewStyle,
+
+    toast: {
+      backgroundColor: config.background,
+      borderColor: colors.border,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderRadius: 14,
+      shadowColor: colors.shadow,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.12,
+      shadowRadius: 10,
+      elevation: 4,
+      overflow: "hidden",
+    } as ViewStyle,
+
+    toastContent: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+      paddingHorizontal: 16,
+      paddingVertical: 14,
+    },
+
+    text: {
+      flex: 1,
+      color: colors.text,
+      fontSize: 14,
+      fontWeight: "600",
+      lineHeight: 20,
+    },
+
+    closeButton: {
+      padding: 6,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+
+    progressTrack: {
+      height: 3,
+      width: "100%",
+      backgroundColor: colors.borderLight,
+      overflow: "hidden",
+    },
+
+    progressFill: {
+      height: 3,
+      width: "100%",
+      backgroundColor: config.color,
+      opacity: 0.85,
+    },
+  });
 
   if (!visible || !safeMessage) return null;
 
@@ -151,78 +284,43 @@ export const Toast: React.FC<ToastProps> = ({
     <Animated.View
       entering={FadeInUp.springify().damping(20).stiffness(300)}
       exiting={FadeOutUp.duration(250)}
-      style={[
-        styles.container,
-        { top: Platform.OS === "ios" ? insets.top + 12 : insets.top + 8 },
-      ]}
+      style={styles.container}
       pointerEvents="box-none"
     >
-      <TouchableOpacity
-        style={[styles.toast, { backgroundColor: config.bg }]}
-        onPressIn={handlePressIn}
-        onPressOut={handlePressOut}
-        activeOpacity={0.9}
-        {...panResponder.panHandlers}
-      >
-        <View style={styles.toastContent}>
-          <Ionicons name={config.icon} size={22} color={config.color} />
-          <Text style={styles.text} numberOfLines={3}>
-            {safeMessage}
-          </Text>
-          <TouchableOpacity
-            onPress={handleClose}
-            hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
-            accessibilityLabel="Dismiss notification"
-            accessibilityRole="button"
-            style={styles.closeButton}
-          >
-            <Ionicons name="close" size={22} color={config.color} />
-          </TouchableOpacity>
+      <Animated.View style={styles.toast} {...panResponder.panHandlers}>
+        <View
+          onTouchStart={pauseTimer}
+          onTouchEnd={resumeTimer}
+          onTouchCancel={resumeTimer}
+        >
+          <View style={styles.toastContent}>
+            <Ionicons name={config.icon} size={22} color={config.color} />
+
+            <Text
+              style={styles.text}
+              numberOfLines={3}
+              accessibilityRole="alert"
+              accessibilityLiveRegion="polite"
+            >
+              {safeMessage}
+            </Text>
+
+            <TouchableOpacity
+              onPress={handleClose}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              accessibilityLabel="Dismiss notification"
+              accessibilityRole="button"
+              style={styles.closeButton}
+            >
+              <Ionicons name="close" size={21} color={colors.textSecondary} />
+            </TouchableOpacity>
+          </View>
         </View>
-        <Animated.View
-          style={[styles.progressBar, progressAnimatedStyle]}
-        />
-      </TouchableOpacity>
+
+        <View style={styles.progressTrack}>
+          <Animated.View style={[styles.progressFill, progressAnimatedStyle]} />
+        </View>
+      </Animated.View>
     </Animated.View>
   );
 };
-
-const styles = StyleSheet.create({
-  container: {
-    position: "absolute",
-    left: 20,
-    right: 20,
-    zIndex: 9999,
-    elevation: 6,
-  } as ViewStyle,
-  toast: {
-    borderRadius: 14,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-    elevation: 5,
-    overflow: "hidden",
-  } as ViewStyle,
-  toastContent: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    paddingHorizontal: 18,
-    paddingVertical: 14,
-  },
-  text: {
-    flex: 1,
-    color: "#FFFFFF",
-    fontSize: 15,
-    fontWeight: "600",
-    lineHeight: 20,
-  },
-  closeButton: {
-    padding: 6,
-  },
-  progressBar: {
-    width: "100%",
-    overflow: "hidden",
-  },
-});

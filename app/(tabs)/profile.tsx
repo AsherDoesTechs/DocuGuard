@@ -10,6 +10,7 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  Modal,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
@@ -26,7 +27,12 @@ import {
   clearLocalSession,
 } from "../../services/localDatabase";
 import * as LocalAuthentication from "expo-local-authentication";
-import { feedbackService, useFeedbackService } from "../../services/feedbackService";
+import {
+  feedbackService,
+  useFeedbackService,
+} from "../../services/feedbackService";
+import { useTheme } from "@/context/ThemeContext";
+import type { ThemeMode } from "@/constants/colors";
 
 type SettingsTab =
   | "none"
@@ -129,6 +135,8 @@ const SettingRow = ({
   </TouchableOpacity>
 );
 
+const { themeMode, setThemeMode, colors, isDark } = useTheme();
+
 const UniqueAvatar = ({ name }: { name: string }) => {
   const getInitials = (str: string) => {
     if (!str) return "??";
@@ -162,7 +170,6 @@ export default function ProfileScreen() {
   const [, setLoading] = useState(true);
   const [user, setUser] = useState<UserProfile | null>(null);
 
-  // Initialize feedback service
   useFeedbackService();
 
   const [passwords, setPasswords] = useState({
@@ -192,12 +199,15 @@ export default function ProfileScreen() {
   const [notifyEmail, setNotifyEmail] = useState(true);
   const [notifyPush, setNotifyPush] = useState(false);
   const [notifyExpiry, setNotifyExpiry] = useState(true);
+  const [expiryLeadDays, setExpiryLeadDays] = useState("30");
 
   const [personalInfo, setPersonalInfo] = useState({
     name: "",
     email: "",
+    phone: "",
   });
   const [savingPersonal, setSavingPersonal] = useState(false);
+  const [maskPersonalData, setMaskPersonalData] = useState(true);
 
   const [loginSessions, setLoginSessions] = useState<LoginSession[]>([]);
   const [loadingSessions, setLoadingSessions] = useState(false);
@@ -212,10 +222,34 @@ export default function ProfileScreen() {
   });
 
   const [appearance, setAppearance] = useState({
-    theme: "system",
+    theme: "system", // system, light, dark
     fontSize: "medium",
     reducedMotion: false,
   });
+
+  // Account Deletion States
+  const [deleteModalVisible, setDeleteModalVisible] = useState(false);
+  const [deleteStep, setDeleteStep] = useState<1 | 2>(1);
+  const [countdown, setCountdown] = useState(10);
+  const [deletePassword, setDeletePassword] = useState("");
+  const [deletingAccount, setDeletingAccount] = useState(false);
+
+  // Countdown timer for account deletion step 1
+  useEffect(() => {
+    let timer: ReturnType<typeof setInterval> | undefined;
+
+    if (deleteModalVisible && deleteStep === 1 && countdown > 0) {
+      timer = setInterval(() => {
+        setCountdown((c) => c - 1);
+      }, 1000);
+    }
+
+    return () => {
+      if (timer !== undefined) {
+        clearInterval(timer);
+      }
+    };
+  }, [deleteModalVisible, deleteStep, countdown]);
 
   const checkBiometrics = useCallback(async () => {
     try {
@@ -296,6 +330,7 @@ export default function ProfileScreen() {
         setPersonalInfo({
           name: localProfile.name || "",
           email: localProfile.email || "",
+          phone: localProfile.phone || "",
         });
         setTwoFactor(localProfile.twoFactor ?? false);
         setNotifyEmail(localProfile.notifyEmail ?? true);
@@ -325,6 +360,7 @@ export default function ProfileScreen() {
           setPersonalInfo({
             name: res.data.name || "",
             email: res.data.email || "",
+            phone: res.data.phone || "",
           });
           if (res.data.twoFactor !== undefined)
             setTwoFactor(res.data.twoFactor);
@@ -346,10 +382,10 @@ export default function ProfileScreen() {
     checkBiometrics();
   }, [fetchProfile, checkBiometrics]);
 
-  // Check storage and show warning at >= 80%
   useEffect(() => {
     if (user?.subscription?.storageUsed && user?.subscription?.storageTotal) {
-      const percentage = (user.subscription.storageUsed / user.subscription.storageTotal) * 100;
+      const percentage =
+        (user.subscription.storageUsed / user.subscription.storageTotal) * 100;
       if (percentage >= 80) {
         feedbackService.showStorageWarning({
           used: user.subscription.storageUsed,
@@ -377,7 +413,9 @@ export default function ProfileScreen() {
       });
       feedbackService.info("Scan the QR code with your authenticator app");
     } catch (error) {
-      feedbackService.error(getApiErrorMessage(error, "Unable to start 2FA setup."));
+      feedbackService.error(
+        getApiErrorMessage(error, "Unable to start 2FA setup."),
+      );
     } finally {
       setSettingUp2FA(false);
     }
@@ -403,9 +441,13 @@ export default function ProfileScreen() {
       setTwoFactor(true);
       setTwoFactorSetup(null);
       setTwoFactorCode("");
-      feedbackService.success("Two-factor authentication enabled successfully.");
+      feedbackService.success(
+        "Two-factor authentication enabled successfully.",
+      );
     } catch (error) {
-      feedbackService.error(getApiErrorMessage(error, "Invalid verification code."));
+      feedbackService.error(
+        getApiErrorMessage(error, "Invalid verification code."),
+      );
     } finally {
       setVerifying2FA(false);
     }
@@ -433,7 +475,9 @@ export default function ProfileScreen() {
     try {
       await SecureStore.setItemAsync("biometricEnabled", String(value));
       setBiometric((prev) => ({ ...prev, enabled: value }));
-      feedbackService.success(value ? "Biometrics enabled" : "Biometrics disabled");
+      feedbackService.success(
+        value ? "Biometrics enabled" : "Biometrics disabled",
+      );
     } catch {
       feedbackService.error("Failed to update biometric preference");
     }
@@ -443,7 +487,8 @@ export default function ProfileScreen() {
     if (value && (!biometric.available || !biometric.enrolled)) {
       feedbackService.alert({
         title: "Error",
-        message: "App lock requires device biometrics or passcode to be configured.",
+        message:
+          "App lock requires device biometrics or passcode to be configured.",
         type: "error",
       });
       return;
@@ -454,7 +499,9 @@ export default function ProfileScreen() {
         String(value),
       );
       setAppLockEnabled(value);
-      feedbackService.success(value ? "App Lock enabled successfully" : "App Lock disabled");
+      feedbackService.success(
+        value ? "App Lock enabled successfully" : "App Lock disabled",
+      );
     } catch {
       feedbackService.error("Failed to update App Lock preference");
     }
@@ -494,7 +541,9 @@ export default function ProfileScreen() {
       feedbackService.success("Security settings updated successfully");
       setPasswords({ current: "", new: "", confirm: "" });
     } catch (err: any) {
-      feedbackService.error(getApiErrorMessage(err, "Failed to update security settings."));
+      feedbackService.error(
+        getApiErrorMessage(err, "Failed to update security settings."),
+      );
     } finally {
       setSavingSecurity(false);
     }
@@ -512,9 +561,11 @@ export default function ProfileScreen() {
         headers: { Authorization: `Bearer ${token}` },
       });
       setUser((prev) => (prev ? { ...prev, ...personalInfo } : null));
-      feedbackService.success("Personal information updated");
+      feedbackService.success("Personal information updated securely.");
     } catch (err: any) {
-      feedbackService.error(getApiErrorMessage(err, "Failed to update profile"));
+      feedbackService.error(
+        getApiErrorMessage(err, "Failed to update profile"),
+      );
     } finally {
       setSavingPersonal(false);
     }
@@ -547,7 +598,43 @@ export default function ProfileScreen() {
       feedbackService.success("Session revoked");
       fetchLoginSessions();
     } catch (err: any) {
-      feedbackService.error(getApiErrorMessage(err, "Failed to revoke session"));
+      feedbackService.error(
+        getApiErrorMessage(err, "Failed to revoke session"),
+      );
+    }
+  };
+
+  const handleConfirmAccountDeletion = async () => {
+    if (!deletePassword) {
+      feedbackService.error(
+        "Please enter your account password to confirm deletion.",
+      );
+      return;
+    }
+
+    try {
+      setDeletingAccount(true);
+      const token = await SecureStore.getItemAsync("userToken");
+      await api.client.post(
+        "/profile/delete-account",
+        { password: deletePassword },
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+
+      await clearLocalSession();
+      await SecureStore.deleteItemAsync("userToken");
+      setDeleteModalVisible(false);
+      feedbackService.success("Account permanently deleted.");
+      router.replace("/(auth)/login" as any);
+    } catch (err: any) {
+      feedbackService.error(
+        getApiErrorMessage(
+          err,
+          "Failed to delete account. Password may be incorrect.",
+        ),
+      );
+    } finally {
+      setDeletingAccount(false);
     }
   };
 
@@ -560,9 +647,6 @@ export default function ProfileScreen() {
       destructive: true,
       onConfirm: async () => {
         try {
-          // Purge the local vault, not just the token. Previously the
-          // document database was left intact, so the next person to sign
-          // in on this device saw the previous account's documents.
           await clearLocalSession();
           await SecureStore.deleteItemAsync("userToken");
           await SecureStore.deleteItemAsync("biometricEnabled");
@@ -572,7 +656,18 @@ export default function ProfileScreen() {
           feedbackService.error("Failed to sign out cleanly");
         }
       },
+      onCancel: () => {},
     });
+  };
+
+  const maskEmail = (email: string) => {
+    if (!email || !maskPersonalData) return email;
+    const parts = email.split("@");
+    if (parts.length !== 2) return email;
+    const namePart = parts[0];
+    const maskedName =
+      namePart.length > 2 ? namePart.substring(0, 2) + "***" : "***";
+    return `${maskedName}@${parts[1]}`;
   };
 
   return (
@@ -593,13 +688,15 @@ export default function ProfileScreen() {
                 <Text style={styles.userName}>
                   {user?.name || "Loading..."}
                 </Text>
-                <Text style={styles.userEmail}>{user?.email}</Text>
+                <Text style={styles.userEmail}>
+                  {maskEmail(user?.email || "user@example.com")}
+                </Text>
                 <View style={styles.badgeContainer}>
                   <Text style={styles.badgeText}>
-                    Plan: {user?.subscription.planName}
+                    Plan: {user?.subscription.planName || "Free"}
                   </Text>
                   <Text style={styles.serialText}>
-                    ID: {user?.serialNumber}
+                    ID: {user?.serialNumber || "DG-USER-0000"}
                   </Text>
                 </View>
               </View>
@@ -616,9 +713,9 @@ export default function ProfileScreen() {
                 <Text style={styles.storageTitle}>Vault Storage Usage</Text>
               </View>
               <Text style={styles.storageDetails}>
-                {user?.subscription.storageUsed.toFixed(1)} MB /{" "}
-                {user?.subscription.storageTotal} MB ({user?.documentCount}{" "}
-                documents)
+                {(user?.subscription.storageUsed || 0).toFixed(1)} MB /{" "}
+                {user?.subscription.storageTotal || 50} MB (
+                {user?.documentCount || 0} documents)
               </Text>
               <View style={styles.progressBarBackground}>
                 <View
@@ -634,10 +731,11 @@ export default function ProfileScreen() {
 
             {/* Settings Navigation Sections */}
             <View style={styles.sectionsContainer}>
+              {/* Personal Information */}
               <SettingRow
                 icon="person-outline"
                 title="Personal Information"
-                subtitle="Update your name, email, and contact details"
+                subtitle="Anti-theft masking, update name and contact details"
                 isActive={activeTab === "personal"}
                 onPress={() =>
                   setActiveTab(activeTab === "personal" ? "none" : "personal")
@@ -645,9 +743,18 @@ export default function ProfileScreen() {
               />
               {activeTab === "personal" && (
                 <View style={styles.expandedSection}>
+                  <View style={styles.rowBetween}>
+                    <Text style={styles.label}>Mask Sensitive On Screen</Text>
+                    <Switch
+                      value={maskPersonalData}
+                      onValueChange={setMaskPersonalData}
+                    />
+                  </View>
                   <Text style={styles.inputLabel}>Full Name</Text>
                   <TextInput
                     style={styles.input}
+                    placeholder="Enter your full name"
+                    placeholderTextColor="#9CA3AF"
                     value={personalInfo.name}
                     onChangeText={(text) =>
                       setPersonalInfo({ ...personalInfo, name: text })
@@ -656,11 +763,24 @@ export default function ProfileScreen() {
                   <Text style={styles.inputLabel}>Email Address</Text>
                   <TextInput
                     style={styles.input}
+                    placeholder="Enter your email address"
+                    placeholderTextColor="#9CA3AF"
                     value={personalInfo.email}
                     autoCapitalize="none"
                     keyboardType="email-address"
                     onChangeText={(text) =>
                       setPersonalInfo({ ...personalInfo, email: text })
+                    }
+                  />
+                  <Text style={styles.inputLabel}>Phone Number (Optional)</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="+63 900 000 0000"
+                    placeholderTextColor="#9CA3AF"
+                    keyboardType="phone-pad"
+                    value={personalInfo.phone}
+                    onChangeText={(text) =>
+                      setPersonalInfo({ ...personalInfo, phone: text })
                     }
                   />
                   <TouchableOpacity
@@ -679,10 +799,11 @@ export default function ProfileScreen() {
                 </View>
               )}
 
+              {/* Security & Authentication */}
               <SettingRow
                 icon="shield-checkmark-outline"
                 title="Security & Authentication"
-                subtitle="Password, 2FA setup, and biometrics"
+                subtitle="Password, 2FA setup, biometrics and app lock"
                 isActive={activeTab === "security"}
                 onPress={() => {
                   setActiveTab(activeTab === "security" ? "none" : "security");
@@ -695,6 +816,7 @@ export default function ProfileScreen() {
                   <TextInput
                     style={styles.input}
                     placeholder="Current Password"
+                    placeholderTextColor="#9CA3AF"
                     secureTextEntry
                     value={passwords.current}
                     onChangeText={(t) =>
@@ -704,6 +826,7 @@ export default function ProfileScreen() {
                   <TextInput
                     style={styles.input}
                     placeholder="New Password (min 12 chars)"
+                    placeholderTextColor="#9CA3AF"
                     secureTextEntry
                     value={passwords.new}
                     onChangeText={(t) => setPasswords({ ...passwords, new: t })}
@@ -711,6 +834,7 @@ export default function ProfileScreen() {
                   <TextInput
                     style={styles.input}
                     placeholder="Confirm New Password"
+                    placeholderTextColor="#9CA3AF"
                     secureTextEntry
                     value={passwords.confirm}
                     onChangeText={(t) =>
@@ -743,6 +867,7 @@ export default function ProfileScreen() {
                       <TextInput
                         style={styles.input}
                         placeholder="Enter 6-digit code to verify"
+                        placeholderTextColor="#9CA3AF"
                         keyboardType="number-pad"
                         maxLength={6}
                         value={twoFactorCode}
@@ -778,7 +903,6 @@ export default function ProfileScreen() {
                     />
                   </View>
 
-                  {/* App Lock Section Added Below */}
                   <Text style={[styles.sectionSubtitle, { marginTop: 15 }]}>
                     App Protection
                   </Text>
@@ -795,7 +919,7 @@ export default function ProfileScreen() {
 
                   {!biometric.enrolled && (
                     <Text style={styles.warningText}>
-                      Biometrics not enrolled on this device settings.
+                      Biometrics not enrolled on device settings.
                     </Text>
                   )}
 
@@ -818,15 +942,21 @@ export default function ProfileScreen() {
                   </Text>
                   {loadingSessions ? (
                     <ActivityIndicator color={COLORS.primary} />
+                  ) : loginSessions.length === 0 ? (
+                    <Text style={styles.emptySessionText}>
+                      No active sessions found.
+                    </Text>
                   ) : (
                     loginSessions.map((session) => (
                       <View key={session.id} style={styles.sessionRow}>
                         <View>
                           <Text style={styles.sessionDevice}>
-                            {session.device} ({session.browser})
+                            {session.device || "Unknown Device"} (
+                            {session.browser || "Browser"})
                           </Text>
                           <Text style={styles.sessionMeta}>
-                            {session.location} · {session.lastActive}
+                            {session.location || "Unknown Location"} ·{" "}
+                            {session.lastActive || "Recently"}
                           </Text>
                         </View>
                         {!session.current && (
@@ -842,10 +972,11 @@ export default function ProfileScreen() {
                 </View>
               )}
 
+              {/* Notifications */}
               <SettingRow
                 icon="notifications-outline"
                 title="Notifications"
-                subtitle="Manage push alerts and reminders"
+                subtitle="Manage push alerts, email digests, and lead times"
                 isActive={activeTab === "notifications"}
                 onPress={() =>
                   setActiveTab(
@@ -873,13 +1004,25 @@ export default function ProfileScreen() {
                       onValueChange={setNotifyExpiry}
                     />
                   </View>
+                  <Text style={styles.inputLabel}>
+                    Alert Lead Time (Days Before Expiry)
+                  </Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="30"
+                    placeholderTextColor="#9CA3AF"
+                    keyboardType="numeric"
+                    value={expiryLeadDays}
+                    onChangeText={setExpiryLeadDays}
+                  />
                 </View>
               )}
 
+              {/* Document Preferences */}
               <SettingRow
                 icon="document-text-outline"
                 title="Document Preferences"
-                subtitle="Sort options, auto-categorize, and default views"
+                subtitle="Auto-scan settings, sorting preferences, defaults"
                 isActive={activeTab === "documents"}
                 onPress={() =>
                   setActiveTab(activeTab === "documents" ? "none" : "documents")
@@ -887,11 +1030,36 @@ export default function ProfileScreen() {
               />
               {activeTab === "documents" && (
                 <View style={styles.expandedSection}>
+                  <View style={styles.rowBetween}>
+                    <Text style={styles.label}>Auto-Scan Document Edges</Text>
+                    <Switch
+                      value={docPreferences.autoScan}
+                      onValueChange={(val) =>
+                        setDocPreferences({ ...docPreferences, autoScan: val })
+                      }
+                    />
+                  </View>
+                  <View style={styles.rowBetween}>
+                    <Text style={styles.label}>
+                      AI Auto-Categorize Documents
+                    </Text>
+                    <Switch
+                      value={docPreferences.autoCategorize}
+                      onValueChange={(val) =>
+                        setDocPreferences({
+                          ...docPreferences,
+                          autoCategorize: val,
+                        })
+                      }
+                    />
+                  </View>
                   <Text style={styles.inputLabel}>
-                    Expiry Reminder Buffer (Days)
+                    Default Expiry Buffer (Days)
                   </Text>
                   <TextInput
                     style={styles.input}
+                    placeholder="30"
+                    placeholderTextColor="#9CA3AF"
                     keyboardType="number-pad"
                     value={String(docPreferences.expiryReminderDays)}
                     onChangeText={(val) =>
@@ -904,10 +1072,11 @@ export default function ProfileScreen() {
                 </View>
               )}
 
+              {/* Appearance */}
               <SettingRow
                 icon="color-palette-outline"
                 title="Appearance"
-                subtitle="Theme options and font scales"
+                subtitle={`Theme selection (${themeMode === "system" ? "System" : themeMode === "light" ? "Light" : "Dark"})`}
                 isActive={activeTab === "appearance"}
                 onPress={() =>
                   setActiveTab(
@@ -915,41 +1084,60 @@ export default function ProfileScreen() {
                   )
                 }
               />
+
               {activeTab === "appearance" && (
                 <View style={styles.expandedSection}>
                   <Text style={styles.inputLabel}>Theme Selector</Text>
+
                   <View style={styles.selectorRow}>
-                    {["system", "light", "dark"].map((themeOption) => (
-                      <TouchableOpacity
-                        key={themeOption}
-                        style={[
-                          styles.selectorChip,
-                          appearance.theme === themeOption &&
-                            styles.selectorChipActive,
-                        ]}
-                        onPress={() =>
-                          setAppearance({ ...appearance, theme: themeOption })
-                        }
-                      >
-                        <Text
-                          style={[
-                            styles.selectorChipText,
-                            appearance.theme === themeOption &&
-                              styles.selectorChipTextActive,
-                          ]}
-                        >
-                          {themeOption.toUpperCase()}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
+                    {(["system", "light", "dark"] as ThemeMode[]).map(
+                      (themeOption) => {
+                        const selected = themeMode === themeOption;
+
+                        return (
+                          <TouchableOpacity
+                            key={themeOption}
+                            accessibilityRole="button"
+                            accessibilityState={{ selected }}
+                            style={[
+                              styles.selectorChip,
+                              selected && styles.selectorChipActive,
+                            ]}
+                            onPress={async () => {
+                              try {
+                                await setThemeMode(themeOption);
+
+                                feedbackService.success(
+                                  `Theme updated to ${themeOption.toUpperCase()}`,
+                                );
+                              } catch {
+                                feedbackService.error(
+                                  "Unable to update theme. Please try again.",
+                                );
+                              }
+                            }}
+                          >
+                            <Text
+                              style={[
+                                styles.selectorChipText,
+                                selected && styles.selectorChipTextActive,
+                              ]}
+                            >
+                              {themeOption.toUpperCase()}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      },
+                    )}
                   </View>
                 </View>
               )}
 
+              {/* Subscription & Plan */}
               <SettingRow
                 icon="card-outline"
                 title="Subscription & Plan"
-                subtitle="Manage billing status and features"
+                subtitle="Manage billing status and storage upgrades"
                 isActive={activeTab === "subscription"}
                 onPress={() =>
                   setActiveTab(
@@ -975,17 +1163,119 @@ export default function ProfileScreen() {
                 subtitle="Log out safely from your account session"
                 isActive={false}
                 onPress={handleSignOut}
+                isDestructive={false}
+              />
+
+              {/* Delete Account Row */}
+              <SettingRow
+                icon="trash-outline"
+                title="Delete Account"
+                subtitle="Permanently erase your vault and data records"
+                isActive={false}
+                onPress={() => {
+                  setCountdown(10);
+                  setDeleteStep(1);
+                  setDeletePassword("");
+                  setDeleteModalVisible(true);
+                }}
                 isDestructive={true}
               />
             </View>
           </ScrollView>
         </RefreshableContainer>
       </KeyboardAvoidingView>
+
+      {/* Account Deletion Modal (2 Layers) */}
+      <Modal
+        visible={deleteModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setDeleteModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            <Text style={styles.modalTitle}>
+              {deleteStep === 1
+                ? "⚠️ Permanent Account Deletion"
+                : "🔒 Verify Your Password"}
+            </Text>
+
+            {deleteStep === 1 ? (
+              <>
+                <Text style={styles.modalBody}>
+                  This action is irreversible. All of your scanned documents,
+                  personal vaults, and reminders will be permanently purged from
+                  the servers.
+                </Text>
+                <Text style={styles.countdownText}>
+                  {countdown > 0
+                    ? `Please wait (${countdown}s) before confirming...`
+                    : "You can now proceed."}
+                </Text>
+                <View style={styles.modalButtonRow}>
+                  <TouchableOpacity
+                    style={[styles.modalBtn, styles.cancelBtn]}
+                    onPress={() => setDeleteModalVisible(false)}
+                  >
+                    <Text style={styles.cancelBtnText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.modalBtn,
+                      styles.dangerBtn,
+                      countdown > 0 && { opacity: 0.5 },
+                    ]}
+                    disabled={countdown > 0}
+                    onPress={() => setDeleteStep(2)}
+                  >
+                    <Text style={styles.dangerBtnText}>I Understand</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : (
+              <>
+                <Text style={styles.modalBody}>
+                  Enter your current account password to authorize final
+                  deletion:
+                </Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Account Password"
+                  placeholderTextColor="#9CA3AF"
+                  secureTextEntry
+                  value={deletePassword}
+                  onChangeText={setDeletePassword}
+                />
+                <View style={styles.modalButtonRow}>
+                  <TouchableOpacity
+                    style={[styles.modalBtn, styles.cancelBtn]}
+                    onPress={() => setDeleteModalVisible(false)}
+                  >
+                    <Text style={styles.cancelBtnText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.modalBtn, styles.dangerBtn]}
+                    onPress={handleConfirmAccountDeletion}
+                    disabled={deletingAccount}
+                  >
+                    {deletingAccount ? (
+                      <ActivityIndicator color="#fff" />
+                    ) : (
+                      <Text style={styles.dangerBtnText}>
+                        Delete Permanently
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
 
-// Ensure you keep your existing stylesheets or definitions below
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
   scrollContent: { padding: 16 },
@@ -1149,6 +1439,12 @@ const styles = StyleSheet.create({
   },
   sessionDevice: { fontSize: 14, fontWeight: "500", color: COLORS.text },
   sessionMeta: { fontSize: 12, color: COLORS.textSecondary },
+  emptySessionText: {
+    fontSize: 13,
+    color: COLORS.textSecondary,
+    fontStyle: "italic",
+    marginVertical: 6,
+  },
   revokeText: { fontSize: 13, color: COLORS.danger, fontWeight: "600" },
   selectorRow: { flexDirection: "row", gap: 10, marginTop: 6 },
   selectorChip: {
@@ -1165,4 +1461,44 @@ const styles = StyleSheet.create({
   },
   selectorChipText: { fontSize: 12, fontWeight: "600", color: COLORS.text },
   selectorChipTextActive: { color: "#fff" },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+  },
+  modalContainer: {
+    width: "100%",
+    maxWidth: 380,
+    backgroundColor: COLORS.surface,
+    borderRadius: 16,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: COLORS.text,
+    marginBottom: 10,
+  },
+  modalBody: {
+    fontSize: 14,
+    color: COLORS.textSecondary,
+    lineHeight: 20,
+    marginBottom: 15,
+  },
+  countdownText: {
+    fontSize: 13,
+    color: COLORS.danger,
+    fontWeight: "600",
+    marginBottom: 15,
+  },
+  modalButtonRow: { flexDirection: "row", gap: 10, justifyContent: "flex-end" },
+  modalBtn: { paddingVertical: 10, paddingHorizontal: 16, borderRadius: 8 },
+  cancelBtn: { backgroundColor: COLORS.border },
+  cancelBtnText: { color: COLORS.text, fontWeight: "600" },
+  dangerBtn: { backgroundColor: COLORS.danger },
+  dangerBtnText: { color: "#fff", fontWeight: "600" },
 });

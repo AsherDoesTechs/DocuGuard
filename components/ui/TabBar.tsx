@@ -1,4 +1,4 @@
-import React, { useCallback, useRef } from "react";
+import React, { useCallback, useEffect, useMemo, useRef } from "react";
 import {
   View,
   Text,
@@ -15,7 +15,7 @@ export interface TabItem {
   icon: keyof typeof Ionicons.glyphMap;
   label?: string;
   badge?: number;
-  isCenterAction?: boolean; // Highlights this tab as a prominent main button
+  isCenterAction?: boolean;
 }
 
 interface TabBarProps {
@@ -27,75 +27,127 @@ interface TabBarProps {
 
 export const TabBar: React.FC<TabBarProps> = React.memo(
   ({ tabs, activeTab, onTabPress, disabled = false }) => {
-  const insets = useSafeAreaInsets();
-  const colors = useColors();
-  if (!tabs || tabs.length === 0) return null;
+    const insets = useSafeAreaInsets();
+    const colors = useColors();
 
-    const safeActiveTab = tabs.some((t) => t.name === activeTab)
-      ? activeTab
-      : tabs[0].name;
+    const scaleValues = useRef<Record<string, RNAnimated.Value>>({});
+    const animations = useRef<Record<string, RNAnimated.CompositeAnimation>>(
+      {},
+    );
 
-    const scaleValues = useRef<Record<string, RNAnimated.Value>>({}).current;
-
+    // Keep an animated value for each tab without changing hook order.
     tabs.forEach((tab) => {
-      if (!scaleValues[tab.name]) {
-        scaleValues[tab.name] = new RNAnimated.Value(1);
+      if (!scaleValues.current[tab.name]) {
+        scaleValues.current[tab.name] = new RNAnimated.Value(1);
       }
     });
+
+    useEffect(() => {
+      return () => {
+        Object.values(animations.current).forEach((animation) => {
+          animation.stop();
+        });
+
+        Object.values(scaleValues.current).forEach((value) => {
+          value.stopAnimation();
+        });
+      };
+    }, []);
+
+    const safeActiveTab = useMemo(() => {
+      if (tabs.some((tab) => tab.name === activeTab)) {
+        return activeTab;
+      }
+
+      return tabs[0]?.name ?? "";
+    }, [tabs, activeTab]);
 
     const handlePress = useCallback(
       (tab: TabItem) => {
         if (disabled) return;
-        // For action buttons, we might want to allow pressing even if it's the "active" tab
-        if (!tab.isCenterAction && tab.name === safeActiveTab) return;
 
-        const currentAnim = scaleValues[tab.name];
-        const prevAnim = scaleValues[safeActiveTab];
+        if (!tab.isCenterAction && tab.name === safeActiveTab) {
+          return;
+        }
+
+        const currentAnim = scaleValues.current[tab.name];
+        const previousAnim = scaleValues.current[safeActiveTab];
+
+        // Stop any previous animation for this tab before starting another.
+        animations.current[tab.name]?.stop();
 
         if (currentAnim) {
-          RNAnimated.sequence([
+          const animation = RNAnimated.sequence([
             RNAnimated.timing(currentAnim, {
-              toValue: tab.isCenterAction ? 1.12 : 1.08,
-              duration: 150,
+              toValue: tab.isCenterAction ? 1.1 : 1.06,
+              duration: 120,
               useNativeDriver: true,
             }),
             RNAnimated.spring(currentAnim, {
               toValue: 1,
-              friction: 5,
-              tension: 100,
+              friction: 6,
+              tension: 110,
               useNativeDriver: true,
             }),
-          ]).start();
+          ]);
+
+          animations.current[tab.name] = animation;
+          animation.start(({ finished }) => {
+            if (finished) {
+              delete animations.current[tab.name];
+            }
+          });
         }
 
-        if (prevAnim && prevAnim !== currentAnim && !tab.isCenterAction) {
-          RNAnimated.timing(prevAnim, {
+        if (
+          previousAnim &&
+          previousAnim !== currentAnim &&
+          !tab.isCenterAction
+        ) {
+          animations.current[safeActiveTab]?.stop();
+
+          const resetAnimation = RNAnimated.timing(previousAnim, {
             toValue: 1,
-            duration: 150,
+            duration: 120,
             useNativeDriver: true,
-          }).start();
+          });
+
+          animations.current[safeActiveTab] = resetAnimation;
+          resetAnimation.start(({ finished }) => {
+            if (finished) {
+              delete animations.current[safeActiveTab];
+            }
+          });
         }
 
         onTabPress(tab.name);
       },
-      [disabled, safeActiveTab, scaleValues, onTabPress],
+      [disabled, safeActiveTab, onTabPress],
     );
 
     const bottomPadding = Math.max(insets.bottom, 8);
     const containerHeight = 56 + bottomPadding;
 
+    if (!tabs || tabs.length === 0) {
+      return null;
+    }
+
     return (
       <View
         style={[
           styles.container,
-        { backgroundColor: colors.tabBarBackground, borderTopColor: colors.tabBarBorder },
-        { height: containerHeight, paddingBottom: bottomPadding },
+          {
+            backgroundColor: colors.tabBarBackground,
+            borderTopColor: colors.tabBarBorder,
+            height: containerHeight,
+            paddingBottom: bottomPadding,
+          },
         ]}
         accessibilityRole="tablist"
       >
         {tabs.map((tab) => {
           const isActive = safeActiveTab === tab.name;
-          const tabScale = scaleValues[tab.name] || new RNAnimated.Value(1);
+          const tabScale = scaleValues.current[tab.name];
 
           if (tab.isCenterAction) {
             return (
@@ -111,8 +163,11 @@ export const TabBar: React.FC<TabBarProps> = React.memo(
                 <Pressable
                   style={({ pressed }) => [
                     styles.centerButton,
-                    { backgroundColor: colors.primary },
-                    pressed && { opacity: 0.85 },
+                    {
+                      backgroundColor: colors.primary,
+                      shadowColor: colors.shadow,
+                    },
+                    pressed && styles.centerButtonPressed,
                   ]}
                   onPress={() => handlePress(tab)}
                   disabled={disabled}
@@ -121,11 +176,20 @@ export const TabBar: React.FC<TabBarProps> = React.memo(
                   accessibilityLabel={tab.label || tab.name}
                   accessibilityHint={`Activate ${tab.label || tab.name}`}
                 >
-                  <Ionicons name={tab.icon} size={28} color="#FFFFFF" />
+                  <Ionicons
+                    name={tab.icon}
+                    size={28}
+                    color={colors.buttonPrimaryText}
+                  />
                 </Pressable>
               </RNAnimated.View>
             );
           }
+
+          const badgeCount =
+            typeof tab.badge === "number" && Number.isFinite(tab.badge)
+              ? Math.max(0, Math.floor(tab.badge))
+              : 0;
 
           return (
             <RNAnimated.View
@@ -145,7 +209,10 @@ export const TabBar: React.FC<TabBarProps> = React.memo(
                 onPress={() => handlePress(tab)}
                 disabled={disabled}
                 accessibilityRole="tab"
-                accessibilityState={{ selected: isActive, disabled }}
+                accessibilityState={{
+                  selected: isActive,
+                  disabled,
+                }}
                 accessibilityLabel={tab.label || tab.name}
                 accessibilityHint={
                   isActive
@@ -159,10 +226,18 @@ export const TabBar: React.FC<TabBarProps> = React.memo(
                     size={isActive ? 24 : 22}
                     color={isActive ? colors.primary : colors.textSecondary}
                   />
-                  {typeof tab.badge === "number" && tab.badge > 0 && (
-                    <View style={[styles.badge, { backgroundColor: colors.error }]}>
-                      <Text style={styles.badgeText}>
-                        {tab.badge > 99 ? "99+" : tab.badge}
+
+                  {badgeCount > 0 && (
+                    <View
+                      style={[styles.badge, { backgroundColor: colors.error }]}
+                    >
+                      <Text
+                        style={[
+                          styles.badgeText,
+                          { color: colors.buttonDangerText },
+                        ]}
+                      >
+                        {badgeCount > 99 ? "99+" : badgeCount}
                       </Text>
                     </View>
                   )}
@@ -172,16 +247,26 @@ export const TabBar: React.FC<TabBarProps> = React.memo(
                   <Text
                     style={[
                       styles.label,
-                      { color: isActive ? colors.primary : colors.textSecondary },
+                      {
+                        color: isActive ? colors.primary : colors.textSecondary,
+                      },
                       isActive && styles.labelActive,
                     ]}
                     numberOfLines={1}
+                    ellipsizeMode="tail"
                   >
                     {tab.label}
                   </Text>
                 ) : null}
 
-                {isActive && <View style={[styles.activeDot, { backgroundColor: colors.primary }]} />}
+                {isActive && (
+                  <View
+                    style={[
+                      styles.activeDot,
+                      { backgroundColor: colors.primary },
+                    ]}
+                  />
+                )}
               </Pressable>
             </RNAnimated.View>
           );
@@ -191,10 +276,12 @@ export const TabBar: React.FC<TabBarProps> = React.memo(
   },
 );
 
+TabBar.displayName = "TabBar";
+
 const styles = StyleSheet.create({
   container: {
     flexDirection: "row",
-    borderTopWidth: 1,
+    borderTopWidth: StyleSheet.hairlineWidth,
     position: "relative",
     width: "100%",
   },
@@ -202,6 +289,7 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
+    minWidth: 0,
   },
   tabInner: {
     alignItems: "center",
@@ -217,7 +305,7 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    marginTop: -16, // Elevates the main action button above the tab bar line
+    marginTop: -16,
   },
   centerButton: {
     width: 52,
@@ -225,11 +313,13 @@ const styles = StyleSheet.create({
     borderRadius: 26,
     alignItems: "center",
     justifyContent: "center",
-    shadowColor: "#000",
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
+    shadowOpacity: 0.2,
     shadowRadius: 4,
-    elevation: 5, // Android shadow
+    elevation: 5,
+  },
+  centerButtonPressed: {
+    opacity: 0.85,
   },
   iconContainer: {
     position: "relative",
@@ -239,6 +329,7 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 10,
     fontWeight: "600",
+    textAlign: "center",
   },
   labelActive: {
     fontWeight: "700",
@@ -262,7 +353,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   badgeText: {
-    color: "#FFFFFF",
     fontSize: 9,
     fontWeight: "700",
   },

@@ -1,7 +1,20 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from "react";
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  ReactNode,
+} from "react";
 import { Appearance, ColorSchemeName } from "react-native";
 import * as SecureStore from "expo-secure-store";
-import { LightColors, DarkColors, ColorScheme, ThemeMode } from "@/constants/colors";
+import {
+  LightColors,
+  DarkColors,
+  ColorScheme,
+  ThemeMode,
+} from "@/constants/colors";
 
 interface ThemeContextType {
   colors: ColorScheme;
@@ -16,62 +29,86 @@ const THEME_STORAGE_KEY = "docuguard.theme.mode";
 
 const ThemeContext = createContext<ThemeContextType | null>(null);
 
+function isValidThemeMode(value: string | null): value is ThemeMode {
+  return value === "system" || value === "light" || value === "dark";
+}
+
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [themeMode, setThemeModeState] = useState<ThemeMode>("system");
-  const [colors, setColors] = useState<ColorScheme>(LightColors);
+  const [systemColorScheme, setSystemColorScheme] =
+    useState<ColorSchemeName | null>(Appearance.getColorScheme() ?? null);
   const [mounted, setMounted] = useState(false);
 
-  const isDark = themeMode === "dark" || (themeMode === "system" && Appearance.getColorScheme() === "dark");
+  // Keep track of Android/iOS system appearance changes.
+  useEffect(() => {
+    const subscription = Appearance.addChangeListener(({ colorScheme }) => {
+      setSystemColorScheme(colorScheme);
+    });
 
-  const applyTheme = useCallback((mode: ThemeMode) => {
-    setThemeModeState(mode);
-    const effectiveDark = mode === "dark" || (mode === "system" && Appearance.getColorScheme() === "dark");
-    setColors(effectiveDark ? DarkColors : LightColors);
+    return () => subscription.remove();
   }, []);
 
+  // Restore the user's saved preference when the provider mounts.
   useEffect(() => {
+    let active = true;
+
     const loadTheme = async () => {
       try {
         const stored = await SecureStore.getItemAsync(THEME_STORAGE_KEY);
-        if (stored) {
-          applyTheme(stored as ThemeMode);
-        } else {
-          applyTheme("system");
+
+        if (active && isValidThemeMode(stored)) {
+          setThemeModeState(stored);
         }
-      } catch {
-        applyTheme("system");
+      } catch (error) {
+        console.warn("Failed to load theme preference:", error);
       } finally {
-        setMounted(true);
+        if (active) {
+          setMounted(true);
+        }
       }
     };
-    loadTheme();
-  }, [applyTheme]);
 
-  useEffect(() => {
-    if (themeMode === "system") {
-      const subscription = Appearance.addChangeListener(({ colorScheme }) => {
-        const effectiveDark = colorScheme === "dark";
-        setColors(effectiveDark ? DarkColors : LightColors);
-      });
-      return () => subscription?.remove();
-    }
-  }, [themeMode]);
+    void loadTheme();
 
-  const setThemeMode = async (mode: ThemeMode) => {
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // Resolve the selected mode into the actual color palette.
+  const isDark =
+    themeMode === "dark" ||
+    (themeMode === "system" && systemColorScheme === "dark");
+
+  const colors: ColorScheme = isDark ? DarkColors : LightColors;
+
+  // Update the UI immediately, then persist the preference.
+  const setThemeMode = useCallback(async (mode: ThemeMode) => {
+    setThemeModeState(mode);
+
     try {
       await SecureStore.setItemAsync(THEME_STORAGE_KEY, mode);
-      applyTheme(mode);
     } catch (error) {
       console.warn("Failed to save theme preference:", error);
     }
-  };
+  }, []);
 
-  const toggleTheme = async () => {
-    const newMode: ThemeMode = isDark ? "light" : "dark";
-    await setThemeMode(newMode);
-  };
+  const toggleTheme = useCallback(async () => {
+    const nextMode: ThemeMode = isDark ? "light" : "dark";
+    await setThemeMode(nextMode);
+  }, [isDark, setThemeMode]);
 
-  const contextValue = { colors, themeMode, setThemeMode, isDark, toggleTheme, mounted };
+  const contextValue = useMemo(
+    () => ({
+      colors,
+      themeMode,
+      setThemeMode,
+      isDark,
+      toggleTheme,
+      mounted,
+    }),
+    [colors, themeMode, setThemeMode, isDark, toggleTheme, mounted],
+  );
 
   return (
     <ThemeContext.Provider value={contextValue}>
@@ -80,31 +117,41 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   );
 }
 
-export function useTheme() {
+export function useTheme(): ThemeContextType {
   const context = useContext(ThemeContext);
+
   if (!context) {
     throw new Error("useTheme must be used within a ThemeProvider");
   }
+
   return context;
 }
 
 export function useColors(): ColorScheme {
   const { colors, mounted } = useTheme();
+
   if (!mounted) {
     return LightColors;
   }
+
   return colors;
 }
 
-export function useThemeMode(): { themeMode: ThemeMode; setThemeMode: (mode: ThemeMode) => Promise<void> } {
+export function useThemeMode(): {
+  themeMode: ThemeMode;
+  setThemeMode: (mode: ThemeMode) => Promise<void>;
+} {
   const { themeMode, setThemeMode } = useTheme();
+
   return { themeMode, setThemeMode };
 }
 
 export function useIsDark(): boolean {
   const { isDark, mounted } = useTheme();
+
   if (!mounted) {
     return false;
   }
+
   return isDark;
 }

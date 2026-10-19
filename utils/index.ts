@@ -1,43 +1,13 @@
-/**
- * Parses a `YYYY-MM-DD` date as local midnight.
- *
- * `new Date("2026-03-01")` is interpreted as UTC midnight. Anywhere west of
- * UTC that is the previous local day, so a document expiring "today" was
- * reported as already expired and its reminder fired a day early.
- */
-export function parseLocalDate(dateString: string): Date | null {
-  if (!dateString) return null;
+import { parseLocalDate, getDaysUntilExpiry } from "./dateHelpers";
 
-  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateString.trim());
-  if (match) {
-    const [, year, month, day] = match;
-    const parsed = new Date(Number(year), Number(month) - 1, Number(day));
-    return Number.isNaN(parsed.getTime()) ? null : parsed;
-  }
+export { parseLocalDate, getDaysUntilExpiry } from "./dateHelpers";
 
-  const parsed = new Date(dateString);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
-}
+export { classifyExpiration, getSyncStatusDisplay } from "./dateUtils";
+
+export type { ExpirationStatus, SyncStatusDisplay } from "./dateUtils";
 
 /**
- * Calculates how many days are left until a document expires.
- */
-export function getDaysUntilExpiry(dateString: string): number {
-  if (!dateString) return 9999; // Assume no expiry means infinite validity
-
-  const expiryDate = parseLocalDate(dateString);
-  if (!expiryDate) return 9999;
-  expiryDate.setHours(0, 0, 0, 0);
-
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  const differenceInTime = expiryDate.getTime() - today.getTime();
-  return Math.round(differenceInTime / (1000 * 60 * 60 * 24));
-}
-
-/**
- * Aggregates summary details for the home screen dashboard metric widgets
+ * Aggregates summary details for dashboard metric widgets.
  */
 export function calculateDashboardSummary(documents: any[] = []) {
   let validDocuments = 0;
@@ -51,7 +21,10 @@ export function calculateDashboardSummary(documents: any[] = []) {
     }
 
     const daysLeft = getDaysUntilExpiry(doc.expiryDate);
-    if (daysLeft < 0) {
+
+    if (daysLeft === 9999) {
+      validDocuments++;
+    } else if (daysLeft < 0) {
       expiredDocuments++;
     } else if (daysLeft <= 30) {
       expiringDocuments++;
@@ -60,8 +33,8 @@ export function calculateDashboardSummary(documents: any[] = []) {
     }
   });
 
-  // Dynamically calculate a safety score percentage based on your standing
   const total = documents.length;
+
   const safetyScore =
     total > 0
       ? Math.round(((validDocuments + expiringDocuments * 0.5) / total) * 100)
@@ -76,33 +49,30 @@ export function calculateDashboardSummary(documents: any[] = []) {
 }
 
 /**
- * Validates whether an email string follows a correct pattern syntax
+ * Checks whether an email has a basic valid address format.
  */
 export function isValidEmail(email: string): boolean {
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  return emailRegex.test(email);
+  return emailRegex.test(email.trim());
 }
 
 /**
- * Formats an ISO date string (YYYY-MM-DD) into a clean short readable text format
+ * Formats an ISO date into a short, readable local date.
  */
-export function formatShortDate(dateString: string): string {
-  if (!dateString) return "N/A";
-  try {
-    const date = new Date(dateString);
-    if (isNaN(date.getTime())) return dateString;
-    return date.toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
-  } catch {
+export function formatShortDate(dateString: string | null | undefined): string {
+  if (!dateString) {
+    return "N/A";
+  }
+
+  const date = parseLocalDate(dateString);
+
+  if (!date) {
     return dateString;
   }
-}
 
-export {
-  classifyExpiration,
-  getSyncStatusDisplay,
-} from "./dateUtils";
-export type { ExpirationStatus, SyncStatusDisplay } from "./dateUtils";
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}

@@ -1,5 +1,5 @@
 import React from "react";
-import { View, StyleSheet, ViewStyle, StyleProp } from "react-native";
+import { View, StyleSheet, ViewStyle, StyleProp, Platform } from "react-native";
 import { useColors } from "@/context/ThemeContext";
 import { SHADOWS, BORDER_RADIUS } from "@/constants";
 
@@ -10,7 +10,12 @@ interface CardProps {
   rounded?: "xs" | "sm" | "md" | "lg" | "xl" | "full";
 }
 
-const SHADOW_MAP = { sm: SHADOWS.sm, md: SHADOWS.md, lg: SHADOWS.lg };
+const SHADOW_MAP = {
+  sm: SHADOWS.sm,
+  md: SHADOWS.md,
+  lg: SHADOWS.lg,
+};
+
 const RADIUS_MAP = {
   xs: BORDER_RADIUS.xs,
   sm: BORDER_RADIUS.sm,
@@ -28,11 +33,25 @@ export default function Card({
 }: CardProps) {
   const colors = useColors();
 
+  const shadowStyle: ViewStyle =
+    colors.background === "#0B1220"
+      ? {
+          elevation: Platform.OS === "android" ? 0 : undefined,
+          shadowColor: colors.shadow,
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.12,
+          shadowRadius: 6,
+        }
+      : SHADOW_MAP[shadow];
+
   const flattenedStyle = StyleSheet.flatten([
     styles.card,
-    { backgroundColor: colors.surface },
-    { borderRadius: RADIUS_MAP[rounded] },
-    SHADOW_MAP[shadow],
+    {
+      backgroundColor: colors.surface,
+      borderColor: colors.borderLight,
+      borderRadius: RADIUS_MAP[rounded],
+    },
+    shadowStyle,
     style,
   ]);
 
@@ -41,9 +60,7 @@ export default function Card({
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
     padding: 16,
-    overflow: "hidden",
   },
 });

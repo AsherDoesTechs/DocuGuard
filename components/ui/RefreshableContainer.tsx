@@ -1,11 +1,16 @@
 import React, { useState, useCallback } from "react";
-import { ScrollView, RefreshControl } from "react-native";
+import {
+  ScrollView,
+  RefreshControl,
+  type StyleProp,
+  type ViewStyle,
+} from "react-native";
 import { useColors } from "@/context/ThemeContext";
 
 interface Props {
   children: React.ReactNode;
   onRefresh: () => Promise<void>;
-  contentContainerStyle?: any;
+  contentContainerStyle?: StyleProp<ViewStyle>;
 }
 
 export function RefreshableContainer({
@@ -14,31 +19,33 @@ export function RefreshableContainer({
   contentContainerStyle,
 }: Props) {
   const [refreshing, setRefreshing] = useState(false);
-
   const colors = useColors();
 
   const handleRefresh = useCallback(async () => {
+    if (refreshing) return;
+
     setRefreshing(true);
 
     try {
       await onRefresh();
-      setRefreshing(false);
     } catch (error) {
       console.error("Refresh failed:", error);
     } finally {
       setRefreshing(false);
     }
-  }, [onRefresh]);
+  }, [onRefresh, refreshing]);
 
   return (
     <ScrollView
-      contentContainerStyle={contentContainerStyle}
+      keyboardShouldPersistTaps="handled"
+      contentContainerStyle={[{ flexGrow: 1 }, contentContainerStyle]}
       refreshControl={
         <RefreshControl
           refreshing={refreshing}
           onRefresh={handleRefresh}
           tintColor={colors.primary}
           colors={[colors.primary]}
+          progressBackgroundColor={colors.surface}
           progressViewOffset={12}
         />
       }

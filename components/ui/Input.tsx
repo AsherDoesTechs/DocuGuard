@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import {
   View,
   TextInput,
@@ -7,7 +7,9 @@ import {
   KeyboardTypeOptions,
   StyleProp,
   TextStyle,
+  Pressable,
 } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { useColors } from "@/context/ThemeContext";
 import { Spacing } from "@/constants/spacing";
 
@@ -26,6 +28,10 @@ interface InputProps {
   maxLength?: number;
   autoFocus?: boolean;
   editable?: boolean;
+
+  // Optional trailing icon
+  rightIcon?: keyof typeof Ionicons.glyphMap;
+  onRightIconPress?: () => void;
 }
 
 export default function Input({
@@ -42,9 +48,13 @@ export default function Input({
   textContentType,
   maxLength,
   autoFocus,
-  editable,
+  editable = true,
+  rightIcon,
+  onRightIconPress,
 }: InputProps) {
   const colors = useColors();
+  const [isFocused, setIsFocused] = useState(false);
+
   const styles = useMemo(
     () =>
       StyleSheet.create({
@@ -60,23 +70,54 @@ export default function Input({
         labelContainer: {
           marginBottom: Spacing.xs,
         },
-        input: {
+        inputWrapper: {
+          flexDirection: "row",
+          alignItems: "center",
           borderWidth: 1,
           borderRadius: 12,
+          backgroundColor: colors.inputBackground,
+          borderColor: error
+            ? colors.error
+            : isFocused
+              ? colors.primary
+              : colors.inputBorder,
+          minHeight: 52,
+          opacity: editable ? 1 : 0.65,
+        },
+        input: {
+          flex: 1,
+          minWidth: 0,
           padding: Spacing.md,
           fontSize: 16,
+          color: colors.text,
         },
         inputError: {
-          borderWidth: 2,
+          borderWidth: 1.5,
+        },
+        iconButton: {
+          minWidth: 48,
+          minHeight: 48,
+          alignItems: "center",
+          justifyContent: "center",
         },
         errorText: {
           fontSize: 12,
           marginTop: 4,
           fontWeight: "500",
+          color: colors.error,
         },
       }),
-    [colors],
+    [colors, error, isFocused, editable],
   );
+
+  const handleFocus = () => {
+    setIsFocused(true);
+  };
+
+  const handleBlur = () => {
+    setIsFocused(false);
+    onBlur?.();
+  };
 
   return (
     <View style={styles.container}>
@@ -86,28 +127,57 @@ export default function Input({
         ) : (
           <View style={styles.labelContainer}>{label}</View>
         ))}
-      <TextInput
-        style={[
-          styles.input,
-          { backgroundColor: colors.inputBackground, borderColor: colors.inputBorder, color: colors.text },
-          error ? styles.inputError : null,
-          style,
-        ]}
-        placeholder={placeholder}
-        placeholderTextColor={colors.textMuted}
-        value={value}
-        onChangeText={onChangeText}
-        onBlur={onBlur}
-        secureTextEntry={secureTextEntry}
-        keyboardType={keyboardType}
-        autoCapitalize="none"
-        autoComplete={autoComplete as any}
-        textContentType={textContentType as any}
-        maxLength={maxLength}
-        autoFocus={autoFocus}
-        editable={editable}
-      />
-      {error && <Text style={[styles.errorText, { color: colors.error }]}>{error}</Text>}
+
+      <View style={[styles.inputWrapper, error ? styles.inputError : null]}>
+        <TextInput
+          style={[styles.input, style]}
+          placeholder={placeholder}
+          placeholderTextColor={colors.textMuted}
+          selectionColor={colors.primary}
+          cursorColor={colors.primary}
+          value={value}
+          onChangeText={onChangeText}
+          onFocus={handleFocus}
+          onBlur={handleBlur}
+          secureTextEntry={secureTextEntry}
+          keyboardType={keyboardType}
+          autoCapitalize="none"
+          autoComplete={autoComplete as any}
+          textContentType={textContentType as any}
+          maxLength={maxLength}
+          autoFocus={autoFocus}
+          editable={editable}
+          accessibilityLabel={typeof label === "string" ? label : placeholder}
+          accessibilityHint={error ? `Error: ${error}` : undefined}
+        />
+
+        {rightIcon && onRightIconPress && (
+          <Pressable
+            style={styles.iconButton}
+            onPress={onRightIconPress}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel={
+              secureTextEntry ? "Show password" : "Hide password"
+            }
+            accessibilityHint="Toggles password visibility"
+            accessibilityState={{ disabled: !editable }}
+            disabled={!editable}
+          >
+            <Ionicons name={rightIcon} size={21} color={colors.textSecondary} />
+          </Pressable>
+        )}
+      </View>
+
+      {error ? (
+        <Text
+          style={styles.errorText}
+          accessibilityRole="alert"
+          accessibilityLiveRegion="polite"
+        >
+          {error}
+        </Text>
+      ) : null}
     </View>
   );
 }

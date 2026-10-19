@@ -2,11 +2,12 @@ import React, {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
-// Removed NativeAlert import since we are forcing the custom modal
 import { AlertModal, type AlertButton, type AlertType } from "./AlertModal";
 
 export type { AlertType, AlertButton };
@@ -23,15 +24,21 @@ interface AlertContextValue {
 
 const AlertContext = createContext<AlertContextValue | null>(null);
 
-let globalAlert:
-  | ((title: string, message?: string, options?: AlertOptions) => void)
-  | null = null;
+type AlertFunction = (
+  title: string,
+  message?: string,
+  options?: AlertOptions,
+) => void;
+
+let globalAlert: AlertFunction | null = null;
 
 export function useAlert() {
   const ctx = useContext(AlertContext);
+
   if (!ctx) {
     throw new Error("useAlert must be used within an AlertProvider");
   }
+
   return ctx;
 }
 
@@ -45,7 +52,6 @@ export function showAlert(
     return;
   }
 
-  // Custom warning instead of falling back to the native black box
   console.warn(
     "showAlert was called before AlertProvider was mounted. Make sure your root layout wraps the app in <AlertProvider>.",
   );
@@ -58,41 +64,57 @@ export const AlertProvider: React.FC<{ children: ReactNode }> = ({
   const [title, setTitle] = useState("");
   const [message, setMessage] = useState<string | undefined>(undefined);
   const [type, setType] = useState<AlertType>("default");
-  const [buttons, setButtons] = useState<AlertButton[]>([]);
-  const [onDismiss, setOnDismiss] = useState<(() => void) | undefined>(
-    undefined,
-  );
+  const [buttons, setButtons] = useState<AlertButton[]>([{ text: "OK" }]);
 
-  const alert = useCallback(
-    (alertTitle: string, alertMessage?: string, options?: AlertOptions) => {
+  const onDismissRef = useRef<(() => void) | undefined>(undefined);
+  const mountedRef = useRef(true);
+
+  const alert = useCallback<AlertFunction>(
+    (alertTitle, alertMessage, options) => {
       setTitle(alertTitle);
       setMessage(alertMessage);
-      setType(options?.type || "default");
-      setButtons(options?.buttons || [{ text: "OK" }]);
-      setOnDismiss(() => options?.onDismiss);
+      setType(options?.type ?? "default");
+      setButtons(options?.buttons ?? [{ text: "OK" }]);
+      onDismissRef.current = options?.onDismiss;
       setOpen(true);
     },
     [],
   );
 
   const dismiss = useCallback(() => {
+    if (!open) return;
+
     setOpen(false);
-    onDismiss?.();
-  }, [onDismiss]);
 
-  const value = useMemo(() => ({ alert }), [alert]);
+    const callback = onDismissRef.current;
+    onDismissRef.current = undefined;
 
-  // Register the global alert function so non-hook callers can use it
-  React.useEffect(() => {
+    try {
+      callback?.();
+    } catch (error) {
+      console.error("Alert dismissal callback failed:", error);
+    }
+  }, [open]);
+
+  useEffect(() => {
+    mountedRef.current = true;
     globalAlert = alert;
+
     return () => {
-      globalAlert = null;
+      mountedRef.current = false;
+
+      if (globalAlert === alert) {
+        globalAlert = null;
+      }
     };
   }, [alert]);
+
+  const value = useMemo(() => ({ alert }), [alert]);
 
   return (
     <AlertContext.Provider value={value}>
       {children}
+
       <AlertModal
         visible={open}
         title={title}
@@ -108,12 +130,16 @@ export const AlertProvider: React.FC<{ children: ReactNode }> = ({
 export const alertHelpers = {
   success: (title: string, message?: string, buttons?: AlertButton[]) =>
     showAlert(title, message, { type: "success", buttons }),
+
   error: (title: string, message?: string, buttons?: AlertButton[]) =>
     showAlert(title, message, { type: "error", buttons }),
+
   warning: (title: string, message?: string, buttons?: AlertButton[]) =>
     showAlert(title, message, { type: "warning", buttons }),
+
   info: (title: string, message?: string, buttons?: AlertButton[]) =>
     showAlert(title, message, { type: "info", buttons }),
+
   confirm: (
     title: string,
     message: string,

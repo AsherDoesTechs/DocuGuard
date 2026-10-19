@@ -7,6 +7,8 @@ import Animated, {
   useAnimatedStyle,
   useSharedValue,
   withRepeat,
+  withSequence,
+  withSpring,
   withTiming,
 } from "react-native-reanimated";
 
@@ -15,25 +17,53 @@ interface Props {
   onComplete: () => void;
 }
 
-const MIN_SPLASH_DURATION = 3000;
-const FADE_DURATION = 300;
+const FADE_DURATION = 280;
 
 export default function SplashScreen({ isLoading, onComplete }: Props) {
   const opacity = useSharedValue(1);
+  const logoOpacity = useSharedValue(0);
+  const logoScale = useSharedValue(0.92);
   const progress = useSharedValue(0);
 
-  const startTime = useRef(Date.now());
   const completed = useRef(false);
+  const onCompleteRef = useRef(onComplete);
 
-  // Animate the loading indicator only while initialization is running.
   useEffect(() => {
+    onCompleteRef.current = onComplete;
+  }, [onComplete]);
+
+  // Soft entrance animation for the logo.
+  useEffect(() => {
+    logoOpacity.value = withTiming(1, {
+      duration: 500,
+      easing: Easing.out(Easing.cubic),
+    });
+
+    logoScale.value = withSpring(1, {
+      damping: 18,
+      stiffness: 150,
+      mass: 0.8,
+    });
+
+    return () => {
+      cancelAnimation(logoOpacity);
+      cancelAnimation(logoScale);
+    };
+  }, [logoOpacity, logoScale]);
+
+  // A subtle, continuous loading indicator.
+  useEffect(() => {
+    cancelAnimation(progress);
+
     if (isLoading) {
+      completed.current = false;
+      opacity.value = 1;
       progress.value = 0;
 
       progress.value = withRepeat(
         withTiming(1, {
-          duration: 1100,
-          easing: Easing.linear,
+          duration: 1200,
+          easing: Easing.inOut(Easing.ease),
         }),
         -1,
         false,
@@ -41,15 +71,17 @@ export default function SplashScreen({ isLoading, onComplete }: Props) {
     } else {
       cancelAnimation(progress);
       progress.value = withTiming(1, {
-        duration: 250,
+        duration: 180,
         easing: Easing.out(Easing.ease),
       });
     }
 
-    return () => cancelAnimation(progress);
-  }, [isLoading, progress]);
+    return () => {
+      cancelAnimation(progress);
+    };
+  }, [isLoading, opacity, progress]);
 
-  // Wait for initialization and the minimum splash duration.
+  // Fade away when real startup checks are complete.
   useEffect(() => {
     if (isLoading || completed.current) {
       return;
@@ -57,42 +89,31 @@ export default function SplashScreen({ isLoading, onComplete }: Props) {
 
     completed.current = true;
 
-    const elapsed = Date.now() - startTime.current;
-    const remaining = Math.max(0, MIN_SPLASH_DURATION - elapsed);
+    opacity.value = withTiming(0, {
+      duration: FADE_DURATION,
+      easing: Easing.out(Easing.cubic),
+    });
 
-    let finished = false;
+    const timer = setTimeout(() => {
+      onCompleteRef.current();
+    }, FADE_DURATION);
 
-    const fadeTimer = setTimeout(() => {
-      opacity.value = withTiming(0, {
-        duration: FADE_DURATION,
-        easing: Easing.out(Easing.ease),
-      });
-    }, remaining);
+    return () => clearTimeout(timer);
+  }, [isLoading, opacity]);
 
-    const completeTimer = setTimeout(() => {
-      finished = true;
-      onComplete();
-    }, remaining + FADE_DURATION);
-
-    return () => {
-      clearTimeout(fadeTimer);
-      clearTimeout(completeTimer);
-
-      // Allow another attempt if loading restarts before dismissal.
-      if (!finished) {
-        completed.current = false;
-      }
-    };
-  }, [isLoading, onComplete, opacity]);
-
-  const fadeStyle = useAnimatedStyle(() => ({
+  const containerStyle = useAnimatedStyle(() => ({
     opacity: opacity.value,
+  }));
+
+  const logoStyle = useAnimatedStyle(() => ({
+    opacity: logoOpacity.value,
+    transform: [{ scale: logoScale.value }],
   }));
 
   const progressStyle = useAnimatedStyle(() => ({
     transform: [
       {
-        translateX: -85 + progress.value * 250,
+        translateX: -72 + progress.value * 190,
       },
     ],
   }));
@@ -101,33 +122,33 @@ export default function SplashScreen({ isLoading, onComplete }: Props) {
     <Animated.View
       pointerEvents="auto"
       accessibilityViewIsModal
-      style={[styles.container, fadeStyle]}
+      style={[styles.container, containerStyle]}
     >
       <View style={styles.content}>
-        <View style={styles.logoContainer}>
+        <Animated.View style={[styles.logo, logoStyle]}>
           <MaterialCommunityIcons
-            name="shield-check-outline"
-            size={46}
-            color="#3984F5"
+            name="shield-check"
+            size={38}
+            color="#2563EB"
           />
-        </View>
+        </Animated.View>
 
-        <Text style={styles.appName}>DocuGuard</Text>
+        <Animated.View style={logoStyle}>
+          <Text style={styles.appName}>DocuGuard</Text>
+        </Animated.View>
 
-        <View style={styles.accentLine} />
+        <Animated.View style={logoStyle}>
+          <Text style={styles.tagline}>Your documents. Your control.</Text>
+        </Animated.View>
 
-        <Text style={styles.tagline}>Your documents, protected.</Text>
-
-        <View style={styles.loadingSection}>
+        <View style={styles.loadingContainer}>
           <View
             style={styles.progressTrack}
             accessibilityRole="progressbar"
             accessibilityLabel={
-              isLoading ? "Preparing DocuGuard" : "Loading complete"
+              isLoading ? "Preparing DocuGuard" : "DocuGuard ready"
             }
-            accessibilityState={{
-              busy: isLoading,
-            }}
+            accessibilityState={{ busy: isLoading }}
           >
             {isLoading ? (
               <Animated.View
@@ -137,34 +158,11 @@ export default function SplashScreen({ isLoading, onComplete }: Props) {
               <View style={styles.progressComplete} />
             )}
           </View>
-
-          <View style={styles.statusRow}>
-            {isLoading ? (
-              <MaterialCommunityIcons
-                name="shield-sync-outline"
-                size={15}
-                color="#3984F5"
-              />
-            ) : (
-              <MaterialCommunityIcons
-                name="check-circle-outline"
-                size={15}
-                color="#3984F5"
-              />
-            )}
-
-            <Text style={styles.statusText}>
-              {isLoading
-                ? "Preparing your secure workspace..."
-                : "Your workspace is ready"}
-            </Text>
-          </View>
         </View>
       </View>
 
       <View style={styles.footer}>
-        <View style={styles.footerDot} />
-        <Text style={styles.footerText}>PRIVATE. SECURE. ORGANIZED.</Text>
+        <Text style={styles.footerText}>SECURE DOCUMENT MANAGEMENT</Text>
       </View>
     </Animated.View>
   );
@@ -172,109 +170,78 @@ export default function SplashScreen({ isLoading, onComplete }: Props) {
 
 const styles = StyleSheet.create({
   container: {
-    position: "absolute",
-    top: 0,
-    right: 0,
-    bottom: 0,
-    left: 0,
-    backgroundColor: "#F8FBFF",
-    justifyContent: "center",
+    ...StyleSheet.absoluteFill,
+    backgroundColor: "#FFFFFF",
     alignItems: "center",
+    justifyContent: "center",
     zIndex: 10000,
     elevation: 10000,
   },
   content: {
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 24,
     width: "100%",
-  },
-  logoContainer: {
-    width: 88,
-    height: 88,
-    borderRadius: 26,
-    backgroundColor: "#E8F2FF",
-    borderWidth: 1,
-    borderColor: "#D7E8FF",
-    justifyContent: "center",
     alignItems: "center",
+    paddingHorizontal: 24,
+  },
+  logo: {
+    width: 72,
+    height: 72,
+    borderRadius: 22,
+    backgroundColor: "#EFF6FF",
+    borderWidth: 1,
+    borderColor: "#DBEAFE",
+    alignItems: "center",
+    justifyContent: "center",
     marginBottom: 22,
   },
   appName: {
+    color: "#172554",
     fontSize: 29,
     fontWeight: "700",
-    letterSpacing: -0.8,
-    color: "#17365D",
-  },
-  accentLine: {
-    width: 30,
-    height: 3,
-    borderRadius: 2,
-    backgroundColor: "#3984F5",
-    marginTop: 13,
+    letterSpacing: -0.9,
+    textAlign: "center",
   },
   tagline: {
-    fontSize: 14,
+    color: "#64748B",
+    fontSize: 13,
     fontWeight: "400",
-    color: "#71839B",
-    marginTop: 10,
-    letterSpacing: 0.15,
+    letterSpacing: 0.1,
+    textAlign: "center",
+    marginTop: 8,
   },
-  loadingSection: {
-    width: "100%",
-    maxWidth: 250,
+  loadingContainer: {
+    width: 136,
     marginTop: 42,
-    alignItems: "center",
   },
   progressTrack: {
+    height: 3,
     width: "100%",
-    height: 4,
-    borderRadius: 4,
-    backgroundColor: "#E3EDFA",
+    borderRadius: 3,
+    backgroundColor: "#EAF0F8",
     overflow: "hidden",
   },
   progressIndicator: {
-    width: 85,
-    height: 4,
-    borderRadius: 4,
-    backgroundColor: "#3984F5",
+    height: 3,
+    width: 54,
+    borderRadius: 3,
+    backgroundColor: "#2563EB",
   },
   progressComplete: {
+    height: 3,
     width: "100%",
-    height: 4,
-    borderRadius: 4,
-    backgroundColor: "#3984F5",
-  },
-  statusRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 7,
-    marginTop: 14,
-  },
-  statusText: {
-    fontSize: 11,
-    fontWeight: "500",
-    color: "#71839B",
-    textAlign: "center",
+    borderRadius: 3,
+    backgroundColor: "#2563EB",
   },
   footer: {
     position: "absolute",
-    bottom: 42,
-    flexDirection: "row",
+    bottom: 30,
     alignItems: "center",
-    gap: 8,
-  },
-  footerDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: "#3984F5",
+    paddingHorizontal: 16,
   },
   footerText: {
-    fontSize: 10,
+    color: "#94A3B8",
+    fontSize: 9,
     fontWeight: "600",
-    letterSpacing: 1.5,
-    color: "#8295AD",
+    letterSpacing: 1.4,
+    textAlign: "center",
   },
 });

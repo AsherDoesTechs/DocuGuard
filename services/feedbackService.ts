@@ -1,4 +1,9 @@
-import { showAlert, alertHelpers, type AlertType, type AlertButton } from "@/components/ui/AlertService";
+import {
+  showAlert,
+  alertHelpers,
+  type AlertType,
+  type AlertButton,
+} from "@/components/ui/AlertService";
 import { useToast, type ToastType } from "@/components/ui/ToastProvider";
 import { feedbackManager, type FeedbackType } from "@/hooks/useFeedback";
 import { COLORS } from "@/constants";
@@ -31,7 +36,14 @@ export interface LoadingOptions {
 }
 
 export interface ScanProgressOptions {
-  stage: "preparing" | "capturing" | "processing" | "ocr" | "saving" | "complete" | "error";
+  stage:
+    | "preparing"
+    | "capturing"
+    | "processing"
+    | "ocr"
+    | "saving"
+    | "complete"
+    | "error";
   message: string;
   progress?: number;
   onRetry?: () => void;
@@ -128,7 +140,7 @@ export class FeedbackService {
   async showDeleteConfirmation(
     itemName: string,
     onConfirm: () => void | Promise<void>,
-    onCancel?: () => void
+    onCancel?: () => void,
   ): Promise<void> {
     return this.confirm({
       title: "Delete Document",
@@ -147,27 +159,39 @@ export class FeedbackService {
       buttons.unshift({ text: "Retry", onPress: retry });
     }
 
-    showAlert("Connection Error", "Unable to connect to the server. Please check your internet connection and try again.", {
-      type: "error",
-      buttons,
-    });
+    showAlert(
+      "Connection Error",
+      "Unable to connect to the server. Please check your internet connection and try again.",
+      {
+        type: "error",
+        buttons,
+      },
+    );
   }
 
   async showServerError(message?: string): Promise<void> {
-    showAlert("Server Error", message || "Something went wrong on our servers. Please try again later.", {
-      type: "error",
-      buttons: [{ text: "OK" }],
-    });
+    showAlert(
+      "Server Error",
+      message || "Something went wrong on our servers. Please try again later.",
+      {
+        type: "error",
+        buttons: [{ text: "OK" }],
+      },
+    );
   }
 
   async showUnauthorized(onSignIn: () => void): Promise<void> {
-    showAlert("Session Expired", "Your session has expired. Please sign in again to continue.", {
-      type: "warning",
-      buttons: [
-        { text: "Cancel", style: "cancel" },
-        { text: "Sign In", onPress: onSignIn },
-      ],
-    });
+    showAlert(
+      "Session Expired",
+      "Your session has expired. Please sign in again to continue.",
+      {
+        type: "warning",
+        buttons: [
+          { text: "Cancel", style: "cancel" },
+          { text: "Sign In", onPress: onSignIn },
+        ],
+      },
+    );
   }
 
   async showStorageWarning(options: StorageWarningOptions): Promise<void> {
@@ -190,14 +214,17 @@ export class FeedbackService {
   }
 
   async showScanProgress(options: ScanProgressOptions): Promise<void> {
-    // This would typically update a modal or dedicated scan screen
-    // For now, we'll use toast for progress updates
     const { stage, message, progress, onRetry } = options;
 
-    const type: ToastType = stage === "error" ? "error" : stage === "complete" ? "success" : "info";
+    const type: ToastType =
+      stage === "error" ? "error" : stage === "complete" ? "success" : "info";
     const duration = stage === "complete" ? 3000 : 2000;
 
-    this.showToast(`${message}${progress !== undefined ? ` (${Math.round(progress)}%)` : ""}`, type, duration);
+    this.showToast(
+      `${message}${progress !== undefined ? ` (${Math.round(progress)}%)` : ""}`,
+      type,
+      duration,
+    );
 
     if (stage === "error") {
       await this.triggerFeedback("error");
@@ -216,7 +243,10 @@ export class FeedbackService {
     }
   }
 
-  async showEmailVerificationSent(email: string, onResend?: () => void): Promise<void> {
+  async showEmailVerificationSent(
+    email: string,
+    onResend?: () => void,
+  ): Promise<void> {
     const buttons: AlertButton[] = [{ text: "OK" }];
     if (onResend) {
       buttons.unshift({
@@ -226,14 +256,20 @@ export class FeedbackService {
       });
     }
 
-    showAlert("Verification Email Sent", `We've sent a verification link to ${email}. Please check your inbox (and spam folder).`, {
-      type: "info",
-      buttons,
-    });
+    showAlert(
+      "Verification Email Sent",
+      `We've sent a verification link to ${email}. Please check your inbox (and spam folder).`,
+      {
+        type: "info",
+        buttons,
+      },
+    );
   }
 
   async showResendCooldown(seconds: number): Promise<void> {
-    this.warning(`Please wait ${seconds} seconds before requesting another email.`);
+    this.warning(
+      `Please wait ${seconds} seconds before requesting another email.`,
+    );
   }
 
   async showReminderSaved(): Promise<void> {
@@ -302,7 +338,6 @@ export const feedbackService = FeedbackService.getInstance();
 export function useFeedbackService() {
   const toast = useToast();
 
-  // Initialize the feedback service with toast context
   if (typeof window !== "undefined" && !feedbackService["toastContext"]) {
     feedbackService.setToastContext(toast);
   }

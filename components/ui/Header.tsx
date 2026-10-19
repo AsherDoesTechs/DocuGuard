@@ -2,17 +2,44 @@ import { View, Text, StyleSheet } from "react-native";
 import { useColors } from "@/context/ThemeContext";
 import { Spacing } from "@/constants/spacing";
 
-export default function Header({ title }: { title: string }) {
+interface HeaderProps {
+  title: string;
+}
+
+export default function Header({ title }: HeaderProps) {
   const colors = useColors();
+
   return (
-    <View style={[styles.container, { backgroundColor: colors.headerBackground, borderBottomColor: colors.border }]}>
-      <Text style={[styles.title, { color: colors.text }]}>{title}</Text>
+    <View
+      style={[
+        styles.container,
+        {
+          backgroundColor: colors.headerBackground,
+          borderBottomColor: colors.border,
+        },
+      ]}
+    >
+      <Text
+        accessibilityRole="header"
+        numberOfLines={1}
+        ellipsizeMode="tail"
+        style={[
+          styles.title,
+          {
+            color: colors.text,
+          },
+        ]}
+      >
+        {title}
+      </Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
+    minHeight: 64,
+    justifyContent: "center",
     paddingHorizontal: Spacing.lg,
     paddingVertical: Spacing.md,
     borderBottomWidth: StyleSheet.hairlineWidth,
