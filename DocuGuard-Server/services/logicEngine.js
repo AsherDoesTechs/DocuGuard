@@ -458,7 +458,7 @@ async function analyzeDocument(fileUrl, contentType) {
       `Azure ${modelId} failed. Falling back to prebuilt-document:`,
       msg,
     );
-    if (/401|unauthorized|invalid.*key|access denied|authentication/i.test(msg)) {
+    if (/401|403|unauthorized|forbidden|invalid.*key|access denied|authentication/i.test(msg)) {
       throw firstError;
     }
     poller = await client.beginAnalyzeDocumentFromUrl(
