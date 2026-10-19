@@ -5,7 +5,7 @@ export interface LocalDocument {
   issuer: string;
   documentNumber: string;
   issueDate: string;
-  expiryDate: string;
+  expiryDate?: string | null;
   notes?: string;
   status: string;
   enableAlerts: boolean;

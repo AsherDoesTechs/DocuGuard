@@ -1,4 +1,8 @@
-import axios, { AxiosInstance, AxiosResponse, InternalAxiosRequestConfig } from "axios";
+import axios, {
+  AxiosInstance,
+  AxiosResponse,
+  InternalAxiosRequestConfig,
+} from "axios";
 import * as SecureStore from "expo-secure-store";
 
 const API_BASE_URL =
@@ -128,18 +132,30 @@ export const auth = {
     return response.data;
   },
 
-  verifyEmail: async (data: { token: string }): Promise<{ message: string; token?: string }> => {
-    const response = await apiClient.post("/auth/verify-email", { token: data.token });
+  verifyEmail: async (data: {
+    token: string;
+  }): Promise<{ message: string; token?: string }> => {
+    const response = await apiClient.post("/auth/verify-email", {
+      token: data.token,
+    });
     return response.data;
   },
 
-  resendVerification: async (data: { email: string }): Promise<{ message: string }> => {
-    const response = await apiClient.post("/auth/resend-verification", { email: data.email });
+  resendVerification: async (data: {
+    email: string;
+  }): Promise<{ message: string }> => {
+    const response = await apiClient.post("/auth/resend-verification", {
+      email: data.email,
+    });
     return response.data;
   },
 
-  forgotPassword: async (data: { email: string }): Promise<{ message: string }> => {
-    const response = await apiClient.post("/auth/forgot-password", { email: data.email });
+  forgotPassword: async (data: {
+    email: string;
+  }): Promise<{ message: string }> => {
+    const response = await apiClient.post("/auth/forgot-password", {
+      email: data.email,
+    });
     return response.data;
   },
 
@@ -199,13 +215,16 @@ export const documents = {
     fileType: string,
   ): Promise<void> => {
     if (typeof fetch === "undefined") {
-      throw new Error("Upload requires fetch, which is not available in this environment.");
+      throw new Error(
+        "Upload requires fetch, which is not available in this environment.",
+      );
     }
 
     const response = await fetch(imageUri);
     if (!response.ok) {
       throw new Error(`Could not read local file (${response.status})`);
     }
+
     const blob = await response.blob();
 
     const uploadResponse = await fetch(uploadUrl, {
@@ -218,9 +237,7 @@ export const documents = {
 
     if (!uploadResponse.ok) {
       const errorText = await uploadResponse.text();
-      throw new Error(
-        `Upload failed: ${uploadResponse.status} ${errorText}`,
-      );
+      throw new Error(`Upload failed: ${uploadResponse.status} ${errorText}`);
     }
   },
 
@@ -232,12 +249,26 @@ export const documents = {
   processDocument: async (
     documentId: number,
   ): Promise<ProcessDocumentResponse> => {
-    const response = await apiClient.post("/documents/process", { documentId });
+    const response = await apiClient.post("/documents/process", {
+      documentId,
+    });
+    return response.data;
+  },
+
+  createOcrDraft: async (payload: {
+    s3Key: string;
+    storagePath?: string;
+    fileType: string;
+  }): Promise<DocumentRecordResponse> => {
+    const response = await apiClient.post("/documents/ocr-draft", payload);
+
     return response.data;
   },
 
   verifyDocument: async (documentId: number): Promise<{ message: string }> => {
-    const response = await apiClient.post("/documents/verify", { documentId });
+    const response = await apiClient.post("/documents/verify", {
+      documentId,
+    });
     return response.data;
   },
 
@@ -279,7 +310,10 @@ export const notifications = {
     expoPushToken?: string;
     devicePushToken?: string;
   }): Promise<{ message: string }> => {
-    const response = await apiClient.post("/api/notifications/push-token", data);
+    const response = await apiClient.post(
+      "/api/notifications/push-token",
+      data,
+    );
     return response.data;
   },
 };

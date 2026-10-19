@@ -9,7 +9,12 @@ import {
 import { DebugLogger } from "./debugLogger";
 import { ErrorCodes } from "../constants/errorCodes";
 
-export type { LocalDocument, LocalReminder, LocalUserProfile, DocumentDashboardSummary };
+export type {
+  LocalDocument,
+  LocalReminder,
+  LocalUserProfile,
+  DocumentDashboardSummary,
+};
 
 let db: SQLite.SQLiteDatabase | null = null;
 let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
@@ -86,7 +91,8 @@ function parseReminderIntervals(value: unknown): number[] | undefined {
       const parsed = JSON.parse(trimmed);
       if (Array.isArray(parsed)) {
         return parsed.filter(
-          (n): n is number => typeof n === "number" && Number.isFinite(n) && n > 0,
+          (n): n is number =>
+            typeof n === "number" && Number.isFinite(n) && n > 0,
         );
       }
     } catch {
@@ -113,7 +119,10 @@ function normalizeDocumentRow<T>(row: T): T {
   return row;
 }
 
-async function queryDocuments(sql: string, params: any[] = []): Promise<LocalDocument[]> {
+async function queryDocuments(
+  sql: string,
+  params: any[] = [],
+): Promise<LocalDocument[]> {
   const rows = await queryAll<LocalDocument>(sql, params);
   return rows.map(normalizeDocumentRow);
 }
@@ -162,7 +171,9 @@ const DOC_COLUMNS = `
  */
 const LOCAL_USER_ID_KEY = "docuguard.localUserId";
 
-export async function setLocalUserId(userId: number | string | null): Promise<void> {
+export async function setLocalUserId(
+  userId: number | string | null,
+): Promise<void> {
   if (userId === null || userId === undefined) {
     await SecureStore.deleteItemAsync(LOCAL_USER_ID_KEY);
     return;
@@ -239,12 +250,14 @@ async function claimUnownedRows(userId: number): Promise<void> {
     }
 
     await database.withExclusiveTransactionAsync(async (txn) => {
-      await txn.runAsync(`UPDATE documents SET user_id = ? WHERE user_id IS NULL`, [
-        userId,
-      ]);
-      await txn.runAsync(`UPDATE reminders SET user_id = ? WHERE user_id IS NULL`, [
-        userId,
-      ]);
+      await txn.runAsync(
+        `UPDATE documents SET user_id = ? WHERE user_id IS NULL`,
+        [userId],
+      );
+      await txn.runAsync(
+        `UPDATE reminders SET user_id = ? WHERE user_id IS NULL`,
+        [userId],
+      );
       await txn.runAsync(
         `UPDATE login_sessions SET user_id = ? WHERE user_id IS NULL`,
         [userId],
@@ -279,9 +292,10 @@ async function claimUnownedRows(userId: number): Promise<void> {
           await txn.runAsync(`DELETE FROM user_settings WHERE user_id = ?`, [
             userId,
           ]);
-          await txn.runAsync(`UPDATE user_settings SET user_id = ? WHERE user_id = 1`, [
-            userId,
-          ]);
+          await txn.runAsync(
+            `UPDATE user_settings SET user_id = ? WHERE user_id = 1`,
+            [userId],
+          );
         }
       }
     });
@@ -333,7 +347,9 @@ async function recoverUserIdFromToken(): Promise<number | null> {
  * Purging on login rather than sign-out covers the crash, token-expiry and
  * force-quit paths that never reach a sign-out handler.
  */
-export async function switchLocalUser(nextUserId: number | string): Promise<void> {
+export async function switchLocalUser(
+  nextUserId: number | string,
+): Promise<void> {
   const next = Number(nextUserId);
   if (!Number.isFinite(next)) {
     DebugLogger.warn("LocalDatabase", "switchLocalUser ignored: invalid id", {
@@ -344,10 +360,14 @@ export async function switchLocalUser(nextUserId: number | string): Promise<void
 
   const previous = await getLocalUserId();
   if (previous !== null && previous !== next) {
-    DebugLogger.info("LocalDatabase", "Account changed, purging previous local data", {
-      previous,
-      next,
-    });
+    DebugLogger.info(
+      "LocalDatabase",
+      "Account changed, purging previous local data",
+      {
+        previous,
+        next,
+      },
+    );
     await purgeLocalDataForUser(previous);
   }
 
@@ -370,7 +390,10 @@ export async function clearLocalSession(): Promise<void> {
  * return nothing rather than everything. Leaking the full vault is far worse
  * than briefly showing an empty list.
  */
-function scopeClause(userId: number | null, column = "user_id"): {
+function scopeClause(
+  userId: number | null,
+  column = "user_id",
+): {
   sql: string;
   params: number[];
 } {
@@ -390,17 +413,29 @@ function scopeClause(userId: number | null, column = "user_id"): {
  * Called on sign-out, not on login. Deleting at login would be too late: the
  * new account could be shown the previous account's vault first.
  */
-export async function purgeLocalDataForUser(userId: number | null): Promise<void> {
+export async function purgeLocalDataForUser(
+  userId: number | null,
+): Promise<void> {
   const database = await getDb();
 
   await database.withExclusiveTransactionAsync(async (txn) => {
     if (userId !== null) {
-      await txn.runAsync(`DELETE FROM document_tags WHERE document_id IN (SELECT id FROM documents WHERE user_id = ?)`, [userId]);
-      await txn.runAsync(`DELETE FROM document_history WHERE document_id IN (SELECT id FROM documents WHERE user_id = ?)`, [userId]);
+      await txn.runAsync(
+        `DELETE FROM document_tags WHERE document_id IN (SELECT id FROM documents WHERE user_id = ?)`,
+        [userId],
+      );
+      await txn.runAsync(
+        `DELETE FROM document_history WHERE document_id IN (SELECT id FROM documents WHERE user_id = ?)`,
+        [userId],
+      );
       await txn.runAsync(`DELETE FROM documents WHERE user_id = ?`, [userId]);
       await txn.runAsync(`DELETE FROM reminders WHERE user_id = ?`, [userId]);
-      await txn.runAsync(`DELETE FROM login_sessions WHERE user_id = ?`, [userId]);
-      await txn.runAsync(`DELETE FROM user_settings WHERE user_id = ?`, [userId]);
+      await txn.runAsync(`DELETE FROM login_sessions WHERE user_id = ?`, [
+        userId,
+      ]);
+      await txn.runAsync(`DELETE FROM user_settings WHERE user_id = ?`, [
+        userId,
+      ]);
       await txn.runAsync(`DELETE FROM user_profile WHERE id = ?`, [userId]);
     } else {
       // No account context: clear everything rather than guessing.
@@ -510,9 +545,7 @@ export async function initDatabase() {
        WHERE risk_score = 0 AND risk_level = 'Low'`,
     );
     if (!existingColumns.has("s3_key")) {
-      await database.execAsync(
-        `ALTER TABLE documents ADD COLUMN s3_key TEXT`,
-      );
+      await database.execAsync(`ALTER TABLE documents ADD COLUMN s3_key TEXT`);
     }
     if (!existingColumns.has("file_type")) {
       await database.execAsync(
@@ -725,18 +758,22 @@ export async function initDatabase() {
 
     // user_settings is a per-user singleton; the UNIQUE constraint is what
     // makes the read-then-branch-then-write in saveUserSettings safe.
-    await database.execAsync(`
+    await database
+      .execAsync(
+        `
       CREATE UNIQUE INDEX IF NOT EXISTS idx_user_settings_user_id ON user_settings(user_id);
-    `).catch(async () => {
-      // Existing installs can hold duplicates from the old race; collapse them.
-      await database.execAsync(`
+    `,
+      )
+      .catch(async () => {
+        // Existing installs can hold duplicates from the old race; collapse them.
+        await database.execAsync(`
         DELETE FROM user_settings
         WHERE rowid NOT IN (SELECT MIN(rowid) FROM user_settings GROUP BY user_id);
       `);
-      await database.execAsync(`
+        await database.execAsync(`
         CREATE UNIQUE INDEX IF NOT EXISTS idx_user_settings_user_id ON user_settings(user_id);
       `);
-    });
+      });
 
     DebugLogger.info("LocalDatabase", "Database initialized successfully");
   } catch (err) {
@@ -759,20 +796,40 @@ export async function createDocument(
     const userId = await getLocalUserId();
     const now = new Date().toISOString();
 
-    // The row and its tags must commit together. Previously the INSERT
-    // committed first, so a tag failure surfaced "Save failed" to the user
-    // while the document actually existed - retrying created a duplicate.
     let docId = 0;
+
     await database.withExclusiveTransactionAsync(async (txn) => {
       const result = await txn.runAsync(
         `
         INSERT INTO documents
-          (user_id, title, category, issuer, document_number, issue_date, expiry_date, notes,
-           status, enable_alerts, reminder_interval_days, reminder_intervals, file_url,
-           file_type, s3_key, processing_status, risk_score, risk_level, needs_sync,
-           sync_status, cloud_id, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `,
+          (
+            user_id,
+            title,
+            category,
+            issuer,
+            document_number,
+            issue_date,
+            expiry_date,
+            notes,
+            status,
+            enable_alerts,
+            reminder_interval_days,
+            reminder_intervals,
+            file_url,
+            file_type,
+            s3_key,
+            processing_status,
+            risk_score,
+            risk_level,
+            needs_sync,
+            sync_status,
+            cloud_id,
+            server_updated_at,
+            created_at,
+            updated_at
+          )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
         userId,
         doc.title ?? "",
         doc.category || "other",
@@ -791,147 +848,36 @@ export async function createDocument(
         doc.fileType || null,
         doc.s3Key || null,
         doc.processingStatus || "completed",
-        // Left null: nothing has assessed this document's authenticity.
         doc.riskScore ?? null,
         doc.riskLevel ?? null,
         doc.needsSync === false ? 0 : 1,
         doc.syncStatus || "pending",
         doc.cloudId ?? null,
+        doc.serverUpdatedAt ?? null,
         now,
         now,
       );
 
-      docId = result.lastInsertRowId as number;
+      docId = result.lastInsertRowId;
 
       if (doc.tags && doc.tags.length > 0) {
         const tags = normalizeTagList(doc.tags);
+
         for (const tag of tags) {
           await txn.runAsync(
-            `INSERT OR IGNORE INTO document_tags (document_id, tag) VALUES (?, ?)`,
+            `INSERT OR IGNORE INTO document_tags
+             (document_id, tag)
+             VALUES (?, ?)`,
             [docId, tag],
           );
-        }
-
-        async function reconcileRealtimeDocument(
-          event: "INSERT" | "UPDATE" | "DELETE",
-          remote: Record<string, any>,
-        ): Promise<void> {
-          const userId = await getLocalUserId();
-          if (userId === null || Number(remote.user_id ?? remote.userId) !== userId) return;
-
-          const cloudId = Number(remote.id);
-          const local = await querySingle<{ id: number }>(
-            `SELECT id FROM documents WHERE cloud_id = ? AND user_id = ?`,
-            [cloudId, userId],
-          );
-          if (event === "DELETE") {
-            if (local) {
-              await run(`DELETE FROM document_tags WHERE document_id = ?`, [local.id]);
-              await run(`DELETE FROM documents WHERE id = ? AND user_id = ?`, [local.id, userId]);
-            }
-            return;
-          }
-
-          const values = {
-            title: remote.title,
-            category: remote.category,
-            issuer: remote.issuer,
-            documentNumber: remote.document_number ?? remote.documentNumber,
-            issueDate: remote.issue_date ?? remote.issueDate,
-            expiryDate: remote.expiry_date ?? remote.expiryDate,
-            notes: remote.notes,
-            status: remote.status,
-            enableAlerts: remote.enable_alerts ?? remote.enableAlerts,
-            fileUrl: remote.file_url ?? remote.fileUrl,
-            fileType: remote.file_type ?? remote.fileType,
-            s3Key: remote.s3_key ?? remote.s3Key,
-            processingStatus: remote.processing_status ?? remote.processingStatus,
-            riskScore: remote.risk_score ?? remote.riskScore,
-            riskLevel: remote.risk_level ?? remote.riskLevel,
-            needsSync: false,
-            syncStatus: "synced" as const,
-            cloudId,
-            serverUpdatedAt: remote.updated_at ?? remote.updatedAt,
-          };
-          if (local) {
-            const database = await getDb();
-            await database.runAsync(
-              `UPDATE documents SET title = ?, category = ?, issuer = ?, document_number = ?,
-               issue_date = ?, expiry_date = ?, notes = ?, status = ?, enable_alerts = ?,
-               file_url = ?, file_type = ?, s3_key = ?, processing_status = ?, risk_score = ?,
-               risk_level = ?, needs_sync = 0, sync_status = 'synced', server_updated_at = ?,
-               updated_at = ? WHERE id = ? AND user_id = ?`,
-              values.title, values.category, values.issuer, values.documentNumber,
-              values.issueDate, values.expiryDate, values.notes, values.status,
-              values.enableAlerts ? 1 : 0, values.fileUrl, values.fileType, values.s3Key,
-              values.processingStatus, values.riskScore, values.riskLevel,
-              values.serverUpdatedAt, new Date().toISOString(), local.id, userId,
-            );
-          } else {
-            await createDocument(values);
-            const created = await querySingle<{ id: number }>(
-              `SELECT id FROM documents WHERE cloud_id = ? AND user_id = ? ORDER BY id DESC LIMIT 1`,
-              [cloudId, userId],
-            );
-            if (created) {
-              await run(
-                `UPDATE documents SET needs_sync = 0, sync_status = 'synced' WHERE id = ?`,
-                [created.id],
-              );
-            }
-          }
-        }
-
-        async function reconcileRealtimeReminder(
-          event: "INSERT" | "UPDATE" | "DELETE",
-          remote: Record<string, any>,
-        ): Promise<void> {
-          const userId = await getLocalUserId();
-          if (userId === null || Number(remote.user_id ?? remote.userId) !== userId) return;
-          const cloudId = Number(remote.id);
-          const local = await querySingle<{ id: number }>(
-            `SELECT id FROM reminders WHERE cloud_id = ? AND user_id = ?`,
-            [cloudId, userId],
-          );
-          if (event === "DELETE") {
-            if (local) await run(`DELETE FROM reminders WHERE id = ? AND user_id = ?`, [local.id, userId]);
-            return;
-          }
-          const values = [
-            remote.title,
-            remote.description,
-            remote.due_date ?? remote.dueDate,
-            remote.severity,
-            (remote.is_read ?? remote.read) ? 1 : 0,
-            cloudId,
-          ];
-          if (local) {
-            await run(
-              `UPDATE reminders SET title = ?, description = ?, due_date = ?, severity = ?,
-               is_read = ?, needs_sync = 0 WHERE id = ? AND user_id = ?`,
-              [...values.slice(0, 5), local.id, userId],
-            );
-          } else {
-            await run(
-              `INSERT INTO reminders (user_id, title, description, due_date, severity, is_read, needs_sync, cloud_id)
-               VALUES (?, ?, ?, ?, ?, ?, 0, ?)`,
-              [userId, ...values],
-            );
-          }
         }
       }
     });
 
-    DebugLogger.debug("LocalDatabase", "Document created", { docId });
     return docId;
-  } catch (err) {
-    DebugLogger.error(
-      "LocalDatabase",
-      "Failed to create document",
-      { error: err },
-      ErrorCodes.LOCAL_WRITE_FAILED,
-    );
-    throw err;
+  } catch (error) {
+    console.error("Failed to create document:", error);
+    throw error;
   }
 }
 
@@ -940,16 +886,97 @@ export async function reconcileRealtimeDocument(
   remote: Record<string, any>,
 ): Promise<void> {
   const userId = await getLocalUserId();
-  if (userId === null || Number(remote.user_id ?? remote.userId) !== userId) return;
-  const cloudId = Number(remote.id);
-  const local = await querySingle<{ id: number }>(
-    `SELECT id FROM documents WHERE cloud_id = ? AND user_id = ?`,
-    [cloudId, userId],
-  );
-  if (event === "DELETE") {
-    if (local) await run(`DELETE FROM documents WHERE id = ? AND user_id = ?`, [local.id, userId]);
+
+  if (userId === null || Number(remote.user_id ?? remote.userId) !== userId) {
     return;
   }
+
+  // Validate the cloud record ID before using it in database queries.
+  const cloudId = Number(remote.id);
+
+  if (!Number.isSafeInteger(cloudId) || cloudId <= 0) {
+    DebugLogger.warn(
+      "LocalDatabase",
+      "Ignoring realtime document with invalid cloud ID",
+    );
+    return;
+  }
+
+  // Read synchronization state before changing the local record.
+  const local = await querySingle<{
+    id: number;
+    needsSync: number | boolean;
+    serverUpdatedAt: string | null;
+  }>(
+    `SELECT
+       id,
+       needs_sync AS needsSync,
+       server_updated_at AS serverUpdatedAt
+     FROM documents
+     WHERE cloud_id = ? AND user_id = ?
+     LIMIT 1`,
+    [cloudId, userId],
+  );
+
+  // A remote deletion must not silently discard unsynchronized local edits.
+  if (event === "DELETE") {
+    if (!local) return;
+
+    if (Boolean(local.needsSync)) {
+      DebugLogger.warn(
+        "LocalDatabase",
+        "Remote deletion conflicts with pending local document changes",
+        { localId: local.id, cloudId },
+      );
+      return;
+    }
+
+    const database = await getDb();
+
+    await database.withExclusiveTransactionAsync(async (txn) => {
+      await txn.runAsync(`DELETE FROM document_tags WHERE document_id = ?`, [
+        local.id,
+      ]);
+
+      await txn.runAsync(`DELETE FROM documents WHERE id = ? AND user_id = ?`, [
+        local.id,
+        userId,
+      ]);
+    });
+
+    return;
+  }
+
+  // Compare revisions when both timestamps are available.
+  const remoteUpdatedAt = remote.updated_at ?? remote.updatedAt ?? null;
+  const remoteTimestamp =
+    typeof remoteUpdatedAt === "string" ? Date.parse(remoteUpdatedAt) : NaN;
+
+  const localTimestamp = local?.serverUpdatedAt
+    ? Date.parse(local.serverUpdatedAt)
+    : NaN;
+
+  if (
+    local &&
+    Number.isFinite(remoteTimestamp) &&
+    Number.isFinite(localTimestamp) &&
+    remoteTimestamp <= localTimestamp
+  ) {
+    // Equal timestamps commonly mean a duplicate realtime notification.
+    // Older timestamps mean this message must not replace newer local data.
+    return;
+  }
+
+  // Never overwrite unsynchronized local edits with a remote snapshot.
+  if (local && Boolean(local.needsSync)) {
+    DebugLogger.warn(
+      "LocalDatabase",
+      "Preserving pending local document edits during realtime reconciliation",
+      { localId: local.id, cloudId },
+    );
+    return;
+  }
+
   const values: Partial<LocalDocument> = {
     title: remote.title ?? "",
     category: remote.category ?? "other",
@@ -963,32 +990,87 @@ export async function reconcileRealtimeDocument(
     fileUrl: remote.file_url ?? remote.fileUrl,
     fileType: remote.file_type ?? remote.fileType,
     s3Key: remote.s3_key ?? remote.s3Key,
-    processingStatus: remote.processing_status ?? remote.processingStatus ?? "completed",
+    processingStatus:
+      remote.processing_status ?? remote.processingStatus ?? "completed",
     riskScore: remote.risk_score ?? remote.riskScore ?? null,
     riskLevel: remote.risk_level ?? remote.riskLevel ?? null,
     needsSync: false,
     syncStatus: "synced",
     cloudId,
-    serverUpdatedAt: remote.updated_at ?? remote.updatedAt ?? null,
+    serverUpdatedAt: remoteUpdatedAt,
   };
+
   if (local) {
     await run(
-      `UPDATE documents SET title=?, category=?, issuer=?, document_number=?, issue_date=?,
-       expiry_date=?, notes=?, status=?, enable_alerts=?, file_url=?, file_type=?, s3_key=?,
-       processing_status=?, risk_score=?, risk_level=?, needs_sync=0, sync_status='synced',
-       server_updated_at=?, updated_at=? WHERE id=? AND user_id=?`,
-      [values.title, values.category, values.issuer, values.documentNumber, values.issueDate,
-       values.expiryDate, values.notes, values.status, values.enableAlerts ? 1 : 0,
-       values.fileUrl, values.fileType, values.s3Key, values.processingStatus, values.riskScore,
-       values.riskLevel, values.serverUpdatedAt, new Date().toISOString(), local.id, userId],
+      `UPDATE documents
+       SET title = ?,
+           category = ?,
+           issuer = ?,
+           document_number = ?,
+           issue_date = ?,
+           expiry_date = ?,
+           notes = ?,
+           status = ?,
+           enable_alerts = ?,
+           file_url = ?,
+           file_type = ?,
+           s3_key = ?,
+           processing_status = ?,
+           risk_score = ?,
+           risk_level = ?,
+           needs_sync = 0,
+           sync_status = 'synced',
+           server_updated_at = ?,
+           updated_at = ?
+       WHERE id = ? AND user_id = ?`,
+      [
+        values.title,
+        values.category,
+        values.issuer,
+        values.documentNumber,
+        values.issueDate,
+        values.expiryDate,
+        values.notes,
+        values.status,
+        values.enableAlerts ? 1 : 0,
+        values.fileUrl ?? null,
+        values.fileType ?? null,
+        values.s3Key ?? null,
+        values.processingStatus,
+        values.riskScore,
+        values.riskLevel,
+        values.serverUpdatedAt,
+        new Date().toISOString(),
+        local.id,
+        userId,
+      ],
     );
-  } else {
-    await createDocument(values);
-    const created = await querySingle<{ id: number }>(
-      `SELECT id FROM documents WHERE cloud_id=? AND user_id=? ORDER BY id DESC LIMIT 1`,
-      [cloudId, userId],
+
+    return;
+  }
+
+  // No local record exists yet; create it from the remote snapshot.
+  await createDocument(values);
+
+  // Find the inserted record so the remote ID is linked locally.
+  const created = await querySingle<{ id: number }>(
+    `SELECT id
+     FROM documents
+     WHERE cloud_id = ? AND user_id = ?
+     ORDER BY id DESC
+     LIMIT 1`,
+    [cloudId, userId],
+  );
+
+  if (created) {
+    await run(
+      `UPDATE documents
+       SET needs_sync = 0,
+           sync_status = 'synced',
+           server_updated_at = ?
+       WHERE id = ? AND user_id = ?`,
+      [remoteUpdatedAt, created.id, userId],
     );
-    if (created) await run(`UPDATE documents SET needs_sync=0, sync_status='synced' WHERE id=?`, [created.id]);
   }
 }
 
@@ -997,42 +1079,132 @@ export async function reconcileRealtimeReminder(
   remote: Record<string, any>,
 ): Promise<void> {
   const userId = await getLocalUserId();
-  if (userId === null || Number(remote.user_id ?? remote.userId) !== userId) return;
-  const cloudId = Number(remote.id);
-  const local = await querySingle<{ id: number }>(
-    `SELECT id FROM reminders WHERE cloud_id=? AND user_id=?`,
-    [cloudId, userId],
-  );
-  if (event === "DELETE") {
-    if (local) await run(`DELETE FROM reminders WHERE id=? AND user_id=?`, [local.id, userId]);
+
+  // Do not process remote data without a valid active account.
+  if (userId === null || Number(remote.user_id ?? remote.userId) !== userId) {
     return;
   }
-  const row = [
-    remote.title ?? "",
-    remote.description ?? "",
+
+  // Validate the remote reminder ID before querying the database.
+  const cloudId = Number(remote.id);
+
+  if (!Number.isSafeInteger(cloudId) || cloudId <= 0) {
+    DebugLogger.warn(
+      "LocalDatabase",
+      "Ignored realtime reminder with invalid cloud ID",
+      { remoteId: remote.id },
+    );
+    return;
+  }
+
+  // Find the local reminder and its synchronization state.
+  const local = await querySingle<{
+    id: number;
+    needsSync: number | boolean;
+  }>(
+    `SELECT id, needs_sync AS needsSync
+     FROM reminders
+     WHERE cloud_id = ? AND user_id = ?
+     LIMIT 1`,
+    [cloudId, userId],
+  );
+
+  // A remote deletion must not discard pending local changes.
+  if (event === "DELETE") {
+    if (!local) {
+      return;
+    }
+
+    const hasPendingChanges =
+      local.needsSync === true || Number(local.needsSync) === 1;
+
+    if (hasPendingChanges) {
+      DebugLogger.debug(
+        "LocalDatabase",
+        "Preserved reminder with pending local changes after remote deletion",
+        { reminderId: local.id, cloudId },
+      );
+      return;
+    }
+
+    await run(
+      `DELETE FROM reminders
+       WHERE id = ? AND user_id = ? AND cloud_id = ?`,
+      [local.id, userId, cloudId],
+    );
+
+    return;
+  }
+
+  // Ignore unsupported runtime event values.
+  if (event !== "INSERT" && event !== "UPDATE") {
+    return;
+  }
+
+  // Do not overwrite a reminder that still has local changes to sync.
+  if (local) {
+    const hasPendingChanges =
+      local.needsSync === true || Number(local.needsSync) === 1;
+
+    if (hasPendingChanges) {
+      DebugLogger.debug(
+        "LocalDatabase",
+        "Ignored remote reminder update because local changes are pending",
+        { reminderId: local.id, cloudId },
+      );
+      return;
+    }
+  }
+
+  const values = [
+    String(remote.title ?? ""),
+    remote.description ?? null,
     remote.due_date ?? remote.dueDate ?? null,
-    remote.severity ?? "Valid",
+    String(remote.severity ?? "Valid"),
     (remote.is_read ?? remote.read) ? 1 : 0,
   ];
+
   if (local) {
     await run(
-      `UPDATE reminders SET title=?, description=?, due_date=?, severity=?, is_read=?, needs_sync=0
-       WHERE id=? AND user_id=?`,
-      [...row, local.id, userId],
+      `UPDATE reminders
+       SET title = ?,
+           description = ?,
+           due_date = ?,
+           severity = ?,
+           is_read = ?,
+           needs_sync = 0
+       WHERE id = ? AND user_id = ? AND cloud_id = ?`,
+      [...values, local.id, userId, cloudId],
     );
-  } else {
-    await run(
-      `INSERT INTO reminders (user_id,title,description,due_date,severity,is_read,needs_sync,cloud_id)
-       VALUES (?,?,?,?,?,?,0,?)`,
-      [userId, ...row, cloudId],
-    );
+
+    return;
   }
+
+  // No local reminder exists, so create it from the remote record.
+  await run(
+    `INSERT INTO reminders (
+       user_id,
+       title,
+       description,
+       due_date,
+       severity,
+       is_read,
+       needs_sync,
+       cloud_id
+     )
+     VALUES (?, ?, ?, ?, ?, ?, 0, ?)`,
+    [userId, ...values, cloudId],
+  );
 }
 
 /** Trims, lowercases and de-duplicates tags so the unique index holds. */
 function normalizeTagList(tags: string[]): string[] {
   const cleaned = tags
-    .map((tag) => String(tag ?? "").trim().toLowerCase())
+    .map((tag) =>
+      String(tag ?? "")
+        .trim()
+        .toLowerCase(),
+    )
     .filter((tag) => tag.length > 0);
   return Array.from(new Set(cleaned));
 }
@@ -1226,7 +1398,9 @@ export async function updateDocument(id: number, doc: Partial<LocalDocument>) {
       );
 
       if (doc.tags !== undefined) {
-        await txn.runAsync(`DELETE FROM document_tags WHERE document_id = ?`, [id]);
+        await txn.runAsync(`DELETE FROM document_tags WHERE document_id = ?`, [
+          id,
+        ]);
         for (const tag of normalizeTagList(doc.tags ?? [])) {
           await txn.runAsync(
             `INSERT OR IGNORE INTO document_tags (document_id, tag) VALUES (?, ?)`,
@@ -1257,10 +1431,13 @@ export async function deleteDocument(id: number) {
     // only the document left sync_queue pointing at a row that no longer
     // existed, which the sync worker then retried forever.
     await database.withExclusiveTransactionAsync(async (txn) => {
-      const where = userId === null ? `id = ? AND 1 = 0` : `id = ? AND user_id = ?`;
+      const where =
+        userId === null ? `id = ? AND 1 = 0` : `id = ? AND user_id = ?`;
       const values = userId === null ? [id] : [id, userId];
 
-      await txn.runAsync(`DELETE FROM document_tags WHERE document_id = ?`, [id]);
+      await txn.runAsync(`DELETE FROM document_tags WHERE document_id = ?`, [
+        id,
+      ]);
       await txn.runAsync(`DELETE FROM documents WHERE ${where}`, values);
       await txn.runAsync(
         `DELETE FROM sync_queue WHERE table_name = 'documents' AND record_id = ?`,
@@ -1297,7 +1474,13 @@ export async function setDocumentProcessingStatus(
     WHERE id = ? AND ${userId === null ? "1 = 0" : "user_id = ?"}
   `,
     userId === null
-      ? [status, riskScore ?? null, riskLevel ?? null, new Date().toISOString(), id]
+      ? [
+          status,
+          riskScore ?? null,
+          riskLevel ?? null,
+          new Date().toISOString(),
+          id,
+        ]
       : [
           status,
           riskScore ?? null,
@@ -1323,7 +1506,10 @@ export async function addDocumentTags(documentId: number, tags: string[]) {
         );
       }
     });
-    DebugLogger.debug("LocalDatabase", "Tags added", { documentId, tags: normalized });
+    DebugLogger.debug("LocalDatabase", "Tags added", {
+      documentId,
+      tags: normalized,
+    });
   } catch (err) {
     DebugLogger.error(
       "LocalDatabase",
@@ -1407,7 +1593,9 @@ export async function getDocumentsByTag(tag: string): Promise<number[]> {
        WHERE t.tag = ?
          AND d.status IS NOT 'deleted'
          AND ${userId === null ? "1 = 0" : "d.user_id = ?"}`,
-      userId === null ? [tag.trim().toLowerCase()] : [tag.trim().toLowerCase(), userId],
+      userId === null
+        ? [tag.trim().toLowerCase()]
+        : [tag.trim().toLowerCase(), userId],
     );
     return rows.map((r) => r.document_id);
   } catch (err) {
@@ -1438,7 +1626,10 @@ export async function replaceDocumentTags(documentId: number, tags: string[]) {
         );
       }
     });
-    DebugLogger.debug("LocalDatabase", "Tags replaced", { documentId, tags: normalized });
+    DebugLogger.debug("LocalDatabase", "Tags replaced", {
+      documentId,
+      tags: normalized,
+    });
   } catch (err) {
     DebugLogger.error(
       "LocalDatabase",
@@ -1784,7 +1975,13 @@ export async function addToSyncQueue(
 }
 
 export async function getSyncQueue(): Promise<
-  { id: number; table_name: string; record_id: number; operation: string; status: string }[]
+  {
+    id: number;
+    table_name: string;
+    record_id: number;
+    operation: string;
+    status: string;
+  }[]
 > {
   return queryAll<{
     id: number;
@@ -1792,7 +1989,9 @@ export async function getSyncQueue(): Promise<
     record_id: number;
     operation: string;
     status: string;
-  }>(`SELECT id, table_name, record_id, operation, status FROM sync_queue WHERE status = 'pending' ORDER BY created_at ASC`);
+  }>(
+    `SELECT id, table_name, record_id, operation, status FROM sync_queue WHERE status = 'pending' ORDER BY created_at ASC`,
+  );
 }
 
 export async function updateSyncQueueStatus(
@@ -1956,9 +2155,23 @@ export async function updateDocumentSyncStatus(
   syncStatus: "synced" | "pending" | "failed" | "local",
 ) {
   const userId = await getLocalUserId();
+  // When sync fails, ensure needs_sync stays set so the record is retried on
+  // the next sync attempt. This prevents a failed sync from being silently
+  // dropped from the retry queue.
+  const needsSync = syncStatus === "failed" ? 1 : undefined;
+  const setClauses = needsSync !== undefined
+    ? "sync_status = ?, needs_sync = ?"
+    : "sync_status = ?";
+  const params = needsSync !== undefined
+    ? userId === null
+      ? [syncStatus, needsSync, id]
+      : [syncStatus, needsSync, id, userId]
+    : userId === null
+      ? [syncStatus, id]
+      : [syncStatus, id, userId];
   await run(
-    `UPDATE documents SET sync_status = ? WHERE id = ? AND ${userId === null ? "1 = 0" : "user_id = ?"}`,
-    userId === null ? [syncStatus, id] : [syncStatus, id, userId],
+    `UPDATE documents SET ${setClauses} WHERE id = ? AND ${userId === null ? "1 = 0" : "user_id = ?"}`,
+    params,
   );
 }
 
@@ -2139,8 +2352,18 @@ export interface DocumentStatistics {
   expiringDocuments: number;
   expiredDocuments: number;
   byCategory: Record<string, number>;
-  expiringSoonList: { id: number; title: string; daysRemaining: number; expiryDate: string }[];
-  expiredList: { id: number; title: string; documentNumber: string; expiryDate: string }[];
+  expiringSoonList: {
+    id: number;
+    title: string;
+    daysRemaining: number;
+    expiryDate: string;
+  }[];
+  expiredList: {
+    id: number;
+    title: string;
+    documentNumber: string;
+    expiryDate: string;
+  }[];
 }
 
 export async function getStatistics(): Promise<DocumentStatistics> {
@@ -2245,7 +2468,11 @@ export async function getStatistics(): Promise<DocumentStatistics> {
  */
 function daysUntil(expiryDate: string): number {
   const [year, month, day] = expiryDate.slice(0, 10).split("-").map(Number);
-  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
+  if (
+    !Number.isFinite(year) ||
+    !Number.isFinite(month) ||
+    !Number.isFinite(day)
+  ) {
     return 0;
   }
   const expiry = new Date(year, month - 1, day);

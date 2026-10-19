@@ -5,7 +5,9 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (!supabaseUrl || !supabaseServiceKey) {
-  console.warn("Supabase Realtime: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY not configured");
+  console.warn(
+    "Supabase Realtime: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY not configured",
+  );
 }
 
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
@@ -40,10 +42,12 @@ function attachWebSocketServer(server, jwtSecret) {
       const decoded = jwt.verify(token || "", jwtSecret);
       const userId = decoded.userId;
       addSubscriber(userId, ws);
-      ws.send(JSON.stringify({
-        type: "connected",
-        timestamp: new Date().toISOString(),
-      }));
+      ws.send(
+        JSON.stringify({
+          type: "connected",
+          timestamp: new Date().toISOString(),
+        }),
+      );
       ws.on("close", () => removeSubscriber(userId, ws));
       ws.on("error", () => removeSubscriber(userId, ws));
     } catch (error) {
@@ -84,7 +88,7 @@ async function subscribeToUserChanges(userId) {
       },
       (payload) => {
         broadcastToUser(userId, "documents", payload);
-      }
+      },
     )
     .subscribe((status) => {
       info("Realtime", "Documents channel status", { userId, status });
@@ -102,7 +106,7 @@ async function subscribeToUserChanges(userId) {
       },
       (payload) => {
         broadcastToUser(userId, "reminders", payload);
-      }
+      },
     )
     .subscribe((status) => {
       info("Realtime", "Reminders channel status", { userId, status });
@@ -126,7 +130,11 @@ async function subscribeToUserChanges(userId) {
       info("Realtime", "Profiles channel status", { userId, status });
     });
 
-  channels.set(channelKey, { documentsChannel, remindersChannel, profilesChannel });
+  channels.set(channelKey, {
+    documentsChannel,
+    remindersChannel,
+    profilesChannel,
+  });
 
   info("Realtime", "Subscribed to user changes", { userId });
 
@@ -152,7 +160,10 @@ function broadcastToUser(userId, table, payload) {
       try {
         ws.send(message);
       } catch (err) {
-        warn("Realtime", "Failed to send to subscriber", { userId, error: err.message });
+        warn("Realtime", "Failed to send to subscriber", {
+          userId,
+          error: err.message,
+        });
       }
     }
   }
@@ -174,13 +185,19 @@ async function unsubscribeFromUserChanges(userId) {
 async function subscribeAllUsers() {
   const db = require("../config/db");
   try {
-    const { rows } = await db.query("SELECT id FROM users WHERE is_verified = TRUE");
+    const { rows } = await db.query(
+      "SELECT id FROM users WHERE is_verified = TRUE",
+    );
     for (const user of rows) {
       await subscribeToUserChanges(user.id);
     }
-    info("Realtime", "Subscribed to all verified users", { count: rows.length });
+    info("Realtime", "Subscribed to all verified users", {
+      count: rows.length,
+    });
   } catch (err) {
-    logError("Realtime", "Failed to subscribe all users", { error: err.message });
+    logError("Realtime", "Failed to subscribe all users", {
+      error: err.message,
+    });
   }
 }
 
