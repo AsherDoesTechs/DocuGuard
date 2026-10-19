@@ -106,6 +106,148 @@ exports.getUploadUrl = async (req, res) => {
   }
 };
 
+/**
+ * Create a draft for an uploaded file before OCR has extracted its fields.
+ * Normal document creation keeps its existing strict validation.
+ */
+exports.createOcrDraft = async (req, res) => {
+  const userId = req.user?.userId;
+
+  try {
+    if (!userId) {
+      return res.status(401).json({
+        error: "Authentication required",
+      });
+    }
+
+    const { s3Key, storagePath, fileType } = req.body || {};
+    const key = String(storagePath || s3Key || "").trim();
+    const normalizedFileType = String(fileType || "")
+      .toLowerCase()
+      .split(";")[0]
+      .trim();
+
+    if (!key) {
+      return res.status(400).json({
+        error: "A storage key is required",
+        code: ErrorCodes.DOC_VALIDATION,
+      });
+    }
+
+    // Only accept keys in the server-generated format:
+    // userId/<UUID>[.<extension>]
+    const prefix = `${String(userId)}/`;
+    const keyPart = key.startsWith(prefix) ? key.slice(prefix.length) : "";
+
+    if (
+      !keyPart ||
+      keyPart.includes("/") ||
+      !/^[0-9a-f-]{36}(?:\.[a-z0-9]{1,8})?$/i.test(keyPart)
+    ) {
+      return res.status(403).json({
+        error: "The uploaded file does not belong to this account",
+        code: ErrorCodes.DOC_VALIDATION,
+      });
+    }
+
+    const fileTypeError = validateFileType(normalizedFileType);
+
+    if (fileTypeError) {
+      return res.status(400).json({
+        error: fileTypeError,
+        code: ErrorCodes.DOC_INVALID_FILE_TYPE,
+      });
+    }
+
+    // Resolve a fresh URL to confirm that the uploaded object can be accessed.
+    // Never trust a client-provided URL as the authoritative file location.
+    const signedUrl = await getSignedDownloadUrl(key);
+
+    if (!signedUrl) {
+      return res.status(400).json({
+        error:
+          "The uploaded file could not be accessed. Please upload it again.",
+        code: ErrorCodes.DOC_UPLOAD_FAILED,
+      });
+    }
+
+    const result = await db.query(
+      `INSERT INTO documents (
+         user_id,
+         title,
+         category,
+         issuer,
+         document_number,
+         issue_date,
+         expiry_date,
+         notes,
+         enable_alerts,
+         status,
+         created_at,
+         s3_key,
+         file_url,
+         file_type,
+         processing_status
+       )
+       VALUES (
+         $1, $2, $3, NULL, NULL, NULL, NULL,
+         $4, $5, 'active', CURRENT_TIMESTAMP,
+         $6, NULL, $7, 'pending'
+       )
+       RETURNING
+         id,
+         title,
+         category,
+         issuer,
+         document_number AS "documentNumber",
+         issue_date AS "issueDate",
+         expiry_date AS "expiryDate",
+         notes,
+         status,
+         enable_alerts AS "enableAlerts",
+         file_url AS "fileUrl",
+         file_type AS "fileType",
+         s3_key AS "s3Key",
+         processing_status AS "processingStatus",
+         risk_score AS "riskScore",
+         risk_level AS "riskLevel"`,
+      [
+        userId,
+        "Scanned Document",
+        "other",
+        "Scanned document awaiting OCR processing.",
+        true,
+        key,
+        normalizedFileType,
+      ],
+    );
+
+    const document = result.rows[0];
+
+    await syncDocument(userId, document, "INSERT");
+
+    return res.status(201).json({
+      status: "success",
+      message: "OCR draft created successfully",
+      document,
+    });
+  } catch (err) {
+    logError("Documents", "Failed to create OCR draft", {
+      error: err?.message,
+      name: err?.name,
+      code: err?.code,
+      userId,
+    });
+
+    return res.status(500).json({
+      status: "error",
+      code: ErrorCodes.DOC_CREATE_FAILED,
+      error: "Failed to create the OCR draft",
+    });
+  }
+};
+
+
 // Process document with OCR/AI
 exports.processDocument = async (req, res) => {
   try {
