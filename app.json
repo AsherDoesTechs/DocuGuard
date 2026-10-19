@@ -5,9 +5,7 @@
     "slug": "DocuGuard",
     "version": "1.0.0",
     "icon": "./app/assets/icon.png",
-    "runtimeVersion": {
-      "policy": "appVersion"
-    },
+    "runtimeVersion": "1.0.0",
     "updates": {
       "url": "https://u.expo.dev/118057a8-ff30-4258-b9a4-096c617ae595"
     },
