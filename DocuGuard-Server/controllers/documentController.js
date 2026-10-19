@@ -3,6 +3,7 @@ const {
   generatePresignedUploadUrl,
   getSignedDownloadUrl,
   rehydrateFileUrls,
+  validateFileType,
 } = require("../services/storageService");
 const { extractDocumentData } = require("../services/logicEngine");
 const {
