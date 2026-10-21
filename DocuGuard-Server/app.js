@@ -8,6 +8,7 @@ const profileRoutes = require("./routes/profile");
 const notificationRoutes = require("./routes/notification");
 const exportRoutes = require("./routes/export");
 const subscriptionRoutes = require("./routes/subscription");
+const db = require("./config/db");
 const http = require("http");
 const { attachWebSocketServer, subscribeAllUsers } = require("./services/realtimeService");
 
@@ -55,6 +56,54 @@ app.use(apiLimiter);
 // 3. Health Check
 app.get("/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
+});
+
+/*
+ * Readiness.
+ *
+ * `/health` only proves that the process is alive. It said "ok" even when the
+ * database was unreachable, so a platform that used it as the readiness probe
+ * kept the instance in service while every request failed. This one asks the
+ * database and reports 503 when it does not answer.
+ *
+ * Diagnostic logging is intentionally minimal: only error.name, error.code,
+ * error.errno, and a sanitized error.message are written to stderr. Connection
+ * URLs, passwords, and stack traces are never logged.
+ */
+
+// Redact connection URLs and password fragments from log output. pg error
+// messages may contain a connection string or username but never the password;
+// this is a defensive measure only. Quoted values (e.g. password = "my secret")
+// are matched in full so spaces inside quotes are also redacted.
+const CONNECTION_STRING_RE =
+  /(postgresql|postgres):\/\/[^\s"']+|(?:password|pwd|secret)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s&;]+)/gi;
+
+function sanitizeErrorMessage(message) {
+  return String(message ?? "").replace(CONNECTION_STRING_RE, "[REDACTED]");
+}
+
+app.get("/health/ready", async (req, res) => {
+  try {
+    await db.query("SELECT 1");
+    res.json({
+      status: "ready",
+      database: "ok",
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error("Readiness check failed:", {
+      name: error.name,
+      code: error.code,
+      errno: error.errno,
+      message: sanitizeErrorMessage(error.message),
+    });
+    res.status(503).json({
+      status: "not_ready",
+      database: "unavailable",
+      error: "The database did not answer the readiness check.",
+      timestamp: new Date().toISOString(),
+    });
+  }
 });
 
 // 4. API Routes
