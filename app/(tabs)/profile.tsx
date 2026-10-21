@@ -20,12 +20,19 @@ import { SubscriptionView } from "../../components/ui/SubscriptionView";
 import { COLORS } from "@/constants";
 import { RefreshableContainer } from "@/components/ui/RefreshableContainer";
 import * as SecureStore from "expo-secure-store";
-import { api } from "../../services/api";
+import { api, setAuthToken } from "../../services/api";
 import {
   getUserProfile,
   getAllDocuments,
   clearLocalSession,
+  purgeLocalDataForUser,
+  getLocalDataOwnerId,
+  saveUserProfile,
 } from "../../services/localDatabase";
+import { removePushTokenFromBackend } from "../../hooks/usePushNotifications";
+import { resolveSignOutTokenOutcome } from "@/shared/sync/pushTokenOwnership";
+import { setNotificationsEnabled } from "../../services/notificationPreferences";
+import { checkAndScheduleAlerts } from "../../services/notificationScheduler";
 import * as LocalAuthentication from "expo-local-authentication";
 import {
   feedbackService,
@@ -313,7 +320,9 @@ export default function ProfileScreen() {
           expiringCount: localDocs.filter((d) => d.status === "expiring")
             .length,
           notifyEmail: localProfile.notifyEmail ?? true,
-          notifyPush: localProfile.notifyPush ?? false,
+          // The local profile row has no `notifyPush` column: the push
+          // preference lives in `notificationsEnabled`.
+          notifyPush: localProfile.notificationsEnabled ?? false,
           notifyExpiry: localProfile.notifyExpiry ?? true,
           twoFactor: localProfile.twoFactor ?? false,
           serialNumber,
@@ -327,22 +336,26 @@ export default function ProfileScreen() {
           biometricEnabled: false,
           appLockEnabled: false,
         });
+
         setPersonalInfo({
           name: localProfile.name || "",
           email: localProfile.email || "",
           phone: localProfile.phone || "",
         });
+
         setTwoFactor(localProfile.twoFactor ?? false);
         setNotifyEmail(localProfile.notifyEmail ?? true);
-        setNotifyPush(localProfile.notifyPush ?? false);
+        setNotifyPush(localProfile.notificationsEnabled ?? false);
         setNotifyExpiry(localProfile.notifyExpiry ?? true);
       }
 
       const token = await SecureStore.getItemAsync("userToken");
+
       if (token) {
         try {
           const res = await api.client.get("/profile");
           const subData = res.data.subscription || {};
+
           setUser((prev) => ({
             ...prev!,
             ...res.data,
@@ -357,17 +370,41 @@ export default function ProfileScreen() {
               serialNumber: res.data.serialNumber || serialNumber,
             },
           }));
+
           setPersonalInfo({
             name: res.data.name || "",
             email: res.data.email || "",
             phone: res.data.phone || "",
           });
-          if (res.data.twoFactor !== undefined)
+
+          if (res.data.twoFactor !== undefined) {
             setTwoFactor(res.data.twoFactor);
-          if (res.data.documentPreferences)
+          }
+
+          if (res.data.documentPreferences) {
             setDocPreferences(res.data.documentPreferences);
-        } catch {
-          // Fall back gracefully
+          }
+        } catch (err) {
+          // Keep the locally loaded profile if the server profile request fails.
+          console.warn("Failed to load remote profile:", err);
+        }
+
+        // Load the persisted reminder lead time separately.
+        // The endpoint returns { settings: { reminderBeforeDays: number } }.
+        try {
+          const settingsResponse = await api.profile.getSettings();
+          const savedDays = settingsResponse?.settings?.reminderBeforeDays;
+
+          if (
+            Number.isInteger(savedDays) &&
+            savedDays >= 1 &&
+            savedDays <= 30
+          ) {
+            setExpiryLeadDays(String(savedDays));
+          }
+        } catch (settingsError) {
+          // Preserve the current/default value if settings cannot be fetched.
+          console.warn("Failed to load profile settings:", settingsError);
         }
       }
     } catch (err: any) {
@@ -571,6 +608,121 @@ export default function ProfileScreen() {
     }
   };
 
+  const handleExpiryLeadDaysSave = async () => {
+    const days = Number(expiryLeadDays);
+
+    if (
+      !expiryLeadDays.trim() ||
+      !Number.isInteger(days) ||
+      days < 1 ||
+      days > 30
+    ) {
+      feedbackService.error("Enter a whole number from 1 to 30 days.");
+      return;
+    }
+
+    try {
+      const token = await SecureStore.getItemAsync("userToken");
+
+      if (!token) {
+        feedbackService.error("Please sign in to save this setting.");
+        return;
+      }
+
+      await api.profile.updateSettings({ reminderBeforeDays: days });
+
+      setExpiryLeadDays(String(days));
+      feedbackService.success("Reminder lead time saved.");
+    } catch (err: any) {
+      feedbackService.error(
+        getApiErrorMessage(err, "Failed to save reminder lead time"),
+      );
+    }
+  };
+
+  /**
+   * Persists one of the three notification switches.
+   *
+   * The switches used to be plain component state: they moved when the user
+   * flipped them and were gone the next time the screen mounted. Nothing was
+   * written to the local profile, nothing was sent to the server, and the
+   * scheduler never heard about it - so a user who turned alerts off was
+   * still asked for every document.
+   *
+   * Each switch is written in both places:
+   *   - the local profile row, which is what the scheduler and the local
+   *     screens read, and
+   *   - the server, so the setting survives a reinstall and reaches the
+   *     devices that push.
+   */
+  const handleNotificationPreferenceChange = async (
+    key: "notifyEmail" | "notifyPush" | "notifyExpiry",
+    value: boolean,
+  ) => {
+    if (key === "notifyEmail") {
+      setNotifyEmail(value);
+    } else if (key === "notifyPush") {
+      setNotifyPush(value);
+    } else {
+      setNotifyExpiry(value);
+    }
+
+    try {
+      const current = await getUserProfile();
+
+      if (current) {
+        await saveUserProfile({
+          ...current,
+          preferencesDirty: true,
+          notificationsEnabled:
+            key === "notifyPush" ? value : current.notificationsEnabled,
+          notifyEmail: key === "notifyEmail" ? value : current.notifyEmail,
+          notifyExpiry: key === "notifyExpiry" ? value : current.notifyExpiry,
+        });
+      }
+
+      /*
+       * The push switch is the one the scheduler reads, so it is the one that
+       * has to reach `setNotificationsEnabled`. Turning it off also has to
+       * withdraw the alerts that are already scheduled, otherwise the
+       * notifications that were booked keep arriving.
+       */
+      if (key === "notifyPush") {
+        await setNotificationsEnabled(value);
+        await checkAndScheduleAlerts();
+      }
+
+      const token = await SecureStore.getItemAsync("userToken");
+
+      if (token) {
+        await api.client.patch(
+          "/profile/preferences",
+          {
+            notifyEmail: key === "notifyEmail" ? value : undefined,
+            notifyPush: key === "notifyPush" ? value : undefined,
+            notifyExpiry: key === "notifyExpiry" ? value : undefined,
+          },
+          { headers: { Authorization: `Bearer ${token}` } },
+        );
+      }
+
+      setUser((prev) =>
+        prev
+          ? {
+              ...prev,
+              notifyEmail: key === "notifyEmail" ? value : prev.notifyEmail,
+              notifyPush: key === "notifyPush" ? value : prev.notifyPush,
+              notifyExpiry: key === "notifyExpiry" ? value : prev.notifyExpiry,
+            }
+          : prev,
+      );
+    } catch (err: any) {
+      feedbackService.error(
+        getApiErrorMessage(err, "Failed to update notification settings"),
+      );
+    }
+  };
+
   const fetchLoginSessions = useCallback(async () => {
     try {
       const token = await SecureStore.getItemAsync("userToken");
@@ -612,30 +764,98 @@ export default function ProfileScreen() {
       return;
     }
 
+    setDeletingAccount(true);
+
+    /*
+     * The device stops being registered for this account.
+     *
+     * The push token lives on the account row. Removing it while the session
+     * is still valid detaches the device from the account that is being
+     * deleted, so the expiry job cannot keep pushing that account's documents
+     * to this device after the account is gone. The removal is best effort:
+     * if it fails the account is still deleted, and the user is warned.
+     */
+    let tokenRemoved = false;
     try {
-      setDeletingAccount(true);
+      tokenRemoved = await removePushTokenFromBackend();
+    } catch {
+      tokenRemoved = false;
+    }
+
+    try {
       const token = await SecureStore.getItemAsync("userToken");
       await api.client.post(
         "/profile/delete-account",
         { password: deletePassword },
         { headers: { Authorization: `Bearer ${token}` } },
       );
-
-      await clearLocalSession();
-      await SecureStore.deleteItemAsync("userToken");
-      setDeleteModalVisible(false);
-      feedbackService.success("Account permanently deleted.");
-      router.replace("/(auth)/login" as any);
     } catch (err: any) {
+      // The account still exists, so nothing was removed anywhere.
       feedbackService.error(
         getApiErrorMessage(
           err,
           "Failed to delete account. Password may be incorrect.",
         ),
       );
-    } finally {
       setDeletingAccount(false);
+      return;
     }
+
+    /*
+     * The account is gone on the server. From here on the local copy has to
+     * go too, and the session has to be closed, whatever the local database
+     * does.
+     *
+     * The two used to be one step: a local failure skipped the session
+     * closing and reported "the password may be incorrect" for an account
+     * that had already been deleted - the local documents of a deleted
+     * account stayed on the device and stayed readable.
+     */
+    let localCleanupFailed = false;
+
+    try {
+      const owner = await getLocalDataOwnerId();
+
+      if (owner === null) {
+        // Without an account id there is no way to tell which rows belong to
+        // the deleted account, and clearing everything would delete the rows
+        // of an account that is still signed in on this device.
+        throw new Error("The account of the local data is unknown.");
+      }
+
+      await purgeLocalDataForUser(owner);
+    } catch (error) {
+      localCleanupFailed = true;
+      console.error("Failed to remove the local copy of a deleted account:", {
+        error,
+      });
+    }
+
+    await clearLocalSession();
+    await setAuthToken(null);
+    setDeleteModalVisible(false);
+    setDeletingAccount(false);
+
+    const cleanupFailed = localCleanupFailed || !tokenRemoved;
+
+    if (cleanupFailed) {
+      let message =
+        "The account was deleted, but its copy on this device could not be removed. The data is not readable and is removed the next time an account signs in on this device.";
+
+      if (!tokenRemoved && localCleanupFailed) {
+        message =
+          "The account was deleted, but this device could not be unregistered for push notifications and its local copy could not be removed. The notifications of the deleted account can still reach this device until the token is detached, and the local data is removed the next time an account signs in.";
+      } else if (!tokenRemoved) {
+        message =
+          "The account was deleted, but this device could not be unregistered for push notifications. The notifications of the deleted account can still reach this device until the device reconnects and registers for another account.";
+      }
+
+      feedbackService.warning(message);
+    } else {
+      feedbackService.success("Account permanently deleted.");
+    }
+
+    router.replace("/(auth)/login" as any);
   };
 
   const handleSignOut = () => {
@@ -647,11 +867,36 @@ export default function ProfileScreen() {
       destructive: true,
       onConfirm: async () => {
         try {
+          /*
+           * The device stops being registered for this account.
+           *
+           * The push token is stored on the account. Without this call the
+           * server kept pushing this account's document titles and expiry
+           * dates to the device, even after another account had signed in.
+           * The call happens before the session token is deleted, so the
+           * server still knows whose token it is.
+           */
+          const removalSucceeded = await removePushTokenFromBackend();
+          const outcome = resolveSignOutTokenOutcome({ removalSucceeded });
+
           await clearLocalSession();
-          await SecureStore.deleteItemAsync("userToken");
+          await setAuthToken(null);
           await SecureStore.deleteItemAsync("biometricEnabled");
           await SecureStore.deleteItemAsync("docuguard.appLock.enabled");
           router.replace("/(auth)/login" as any);
+
+          if (outcome.warnUser) {
+            /*
+             * The device is still registered for the account. The
+             * notifications of the account the user just left can still reach
+             * the device, so the user is told instead of being left with a
+             * silent leak. The token is detached from the account the next
+             * time an account signs in on this device.
+             */
+            feedbackService.warning(
+              "You are signed out, but this device could not be unregistered for push notifications. The notifications of the account you left can still reach this device until it reconnects.",
+            );
+          }
         } catch {
           feedbackService.error("Failed to sign out cleanly");
         }
@@ -990,18 +1235,30 @@ export default function ProfileScreen() {
                     <Text style={styles.label}>Email Alerts</Text>
                     <Switch
                       value={notifyEmail}
-                      onValueChange={setNotifyEmail}
+                      onValueChange={(value) =>
+                        handleNotificationPreferenceChange("notifyEmail", value)
+                      }
                     />
                   </View>
                   <View style={styles.rowBetween}>
                     <Text style={styles.label}>Push Notifications</Text>
-                    <Switch value={notifyPush} onValueChange={setNotifyPush} />
+                    <Switch
+                      value={notifyPush}
+                      onValueChange={(value) =>
+                        handleNotificationPreferenceChange("notifyPush", value)
+                      }
+                    />
                   </View>
                   <View style={styles.rowBetween}>
                     <Text style={styles.label}>Document Expiry Reminders</Text>
                     <Switch
                       value={notifyExpiry}
-                      onValueChange={setNotifyExpiry}
+                      onValueChange={(value) =>
+                        handleNotificationPreferenceChange(
+                          "notifyExpiry",
+                          value,
+                        )
+                      }
                     />
                   </View>
                   <Text style={styles.inputLabel}>
@@ -1014,6 +1271,9 @@ export default function ProfileScreen() {
                     keyboardType="numeric"
                     value={expiryLeadDays}
                     onChangeText={setExpiryLeadDays}
+                    onEndEditing={() => {
+                      void handleExpiryLeadDaysSave();
+                    }}
                   />
                 </View>
               )}
