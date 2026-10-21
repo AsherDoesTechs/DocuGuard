@@ -23,6 +23,23 @@ export interface UseRealtimeOptions {
   onError?: (error: Error) => void;
 }
 
+/**
+ * The realtime feed of the local vault.
+ *
+ * The hook is implemented and the reconciliation it drives
+ * (`reconcileRealtimeDocument`, `reconcileRealtimeReminder`) is written and
+ * reviewed, but no screen mounts this hook, so no realtime message is
+ * received today and the reconciliation code does not run.
+ *
+ * That is deliberate for now: mounting the hook opens a websocket to the API
+ * for every session, which is a behaviour change rather than a repair. The
+ * sync worker remains the only path that brings server changes into the
+ * device, and it does so with the conflict detection that the reconciliation
+ * code would otherwise duplicate.
+ *
+ * When the hook is mounted, the reconciliation has to be covered by tests
+ * before it goes live: it writes to the local database from a server event.
+ */
 export function useRealtime(options: UseRealtimeOptions = {}) {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);

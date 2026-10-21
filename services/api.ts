@@ -209,12 +209,22 @@ export const documents = {
     return response.data;
   },
 
+  /**
+   * Removes an uploaded object that never became a document.
+   *
+   * The upload of a picked file happens before the document is written to the
+   * database. When that write then fails, the object is left in the bucket
+   * with nothing pointing at it, so the client asks the server to remove it.
+   */
+  deleteUploadedObject: async (s3Key: string): Promise<void> => {
+    await apiClient.delete("/documents/storage", { data: { s3Key } });
+  },
+
   uploadToS3: async (
     uploadUrl: string,
     imageUri: string,
     fileType: string,
-  ): Promise<void> => {
-    if (typeof fetch === "undefined") {
+  ): Promise<void> => {    if (typeof fetch === "undefined") {
       throw new Error(
         "Upload requires fetch, which is not available in this environment.",
       );
@@ -315,6 +325,18 @@ export const notifications = {
       data,
     );
     return response.data;
+  },
+
+  /**
+   * Removes the push token of the signed-in account.
+   *
+   * The token is stored on the account. Without this call it stayed there
+   * after a sign-out, and the server kept pushing that account's document
+   * titles to the device - which, after another account signed in, belonged
+   * to somebody else.
+   */
+  removePushToken: async (): Promise<void> => {
+    await apiClient.delete("/api/notifications/push-token");
   },
 };
 

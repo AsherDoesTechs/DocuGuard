@@ -149,3 +149,63 @@ async function syncTokenToBackend(tokens: { expoToken?: string; deviceToken?: st
     });
   }
 }
+
+/**
+ * Registers this device for the account that is signed in right now.
+ *
+ * The token is stored on the account, so it has to be registered again for
+ * every account: a token that was registered for the previous account would
+ * push that account's documents to this device.
+ *
+ * Registering the token also detaches it from every other account, so a
+ * token that was left behind by a sign-out that could not reach the server
+ * is not pushed to this device under the previous account.
+ *
+ * The call is best effort. A device that cannot register simply does not
+ * receive server notifications, and nothing else about the sign-in depends
+ * on it.
+ */
+export async function registerPushTokenWithBackend(): Promise<void> {
+  if (isExpoGo) {
+    return;
+  }
+
+  try {
+    const tokens = await registerForPushNotificationsAsync();
+
+    if (!tokens) {
+      return;
+    }
+
+    await syncTokenToBackend(tokens);
+  } catch (error: any) {
+    console.error("Push token registration failed:", {
+      message: error?.message,
+      status: error?.response?.status,
+    });
+  }
+}
+
+/**
+ * Removes this device from the account that is signed in.
+ *
+ * Called on sign-out, before the session token is deleted, so the server can
+ * still tell whose token it is.
+ *
+ * The outcome is returned instead of being swallowed: a removal that failed
+ * leaves the device registered for the account, and the user has to be told
+ * that the notifications of the account they left can still reach it.
+ */
+export async function removePushTokenFromBackend(): Promise<boolean> {
+  try {
+    await api.client.delete("/api/notifications/push-token");
+    return true;
+  } catch (error: any) {
+    console.error("Push token removal failed:", {
+      message: error?.message,
+      status: error?.response?.status,
+    });
+
+    return false;
+  }
+}

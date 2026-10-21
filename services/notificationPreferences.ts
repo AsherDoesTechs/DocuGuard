@@ -48,7 +48,11 @@ export async function setNotificationsEnabled(enabled: boolean): Promise<void> {
   try {
     const profile = await getUserProfile();
     if (profile) {
-      await saveUserProfile({ ...profile, notificationsEnabled: enabled });
+      await saveUserProfile({
+        ...profile,
+        preferencesDirty: true,
+        notificationsEnabled: enabled,
+      });
     }
   } catch (error) {
     // A missing or unreadable profile row must not break the toggle.
