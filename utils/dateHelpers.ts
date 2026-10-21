@@ -39,6 +39,17 @@ export function parseLocalDate(
 }
 
 /**
+ * Formats a date as its local calendar date (`YYYY-MM-DD`).
+ *
+ * `expiry_date` is stored as a plain calendar date, so every comparison
+ * against it has to use the local calendar date as well. SQLite's
+ * `date('now')` returns the UTC date, which is a different day for part of
+ * every day in any timezone that is not UTC - and the expiry window was
+ * shifted by a whole day because of it.
+ */
+export { toLocalDateString, localDateStringAfterDays } from "@/shared/dates/localDate";
+
+/**
  * Calculates the number of calendar days until expiry.
  *
  * Missing or invalid dates return 9999 to preserve the existing

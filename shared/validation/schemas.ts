@@ -7,7 +7,25 @@ export const emailSchema = z
   .min(1, "Email is required")
   .email("Invalid email format");
 
+/**
+ * The password policy for signing in.
+ *
+ * It is the same rule the server enforces. The stricter registration policy
+ * lives in `registrationPasswordSchema`, so accounts that were created before
+ * that policy existed keep working.
+ */
 export const passwordSchema = z
+  .string()
+  .min(6, "Password must be at least 6 characters")
+  .max(128, "Password is too long");
+
+/**
+ * The password policy for creating an account.
+ *
+ * The client and the server enforce the same rule, so a password the app
+ * accepts is never refused by the API and the other way round.
+ */
+export const registrationPasswordSchema = z
   .string()
   .min(8, "Password must be at least 8 characters")
   .max(128, "Password is too long")
@@ -28,15 +46,20 @@ export const loginSchema = z.object({
   rememberMe: z.boolean().optional(),
 });
 
-export const registerSchema = z.object({
-  name: nameSchema,
-  email: emailSchema,
-  password: passwordSchema,
-  confirmPassword: z.string().optional(),
-}).refine((data) => !data.confirmPassword || data.password === data.confirmPassword, {
-  message: "Passwords do not match",
-  path: ["confirmPassword"],
-});
+export const registerSchema = z
+  .object({
+    name: nameSchema,
+    email: emailSchema,
+    password: registrationPasswordSchema,
+    confirmPassword: z.string().optional(),
+  })
+  .refine(
+    (data) => !data.confirmPassword || data.password === data.confirmPassword,
+    {
+      message: "Passwords do not match",
+      path: ["confirmPassword"],
+    },
+  );
 
 export const verifyEmailSchema = z.object({
   token: z.string().min(1, "Verification token is required"),
@@ -149,6 +172,40 @@ const dateStringSchema = z
     );
   }, "Invalid date");
 
+/**
+ * A date that may genuinely be absent.
+ *
+ * `dateStringSchema` only accepts a string or nothing, so `null` was a type
+ * error. A document without an expiry date is a normal thing - the mobile app
+ * offers "No expiration date" - and the client stores it as SQL NULL. Sending
+ * that NULL made the server reject the whole request with a 400, so documents
+ * without an expiry date could never be synced at all.
+ *
+ * An empty string is normalised to NULL as well: it passed validation and was
+ * then written straight into a DATE column, where Postgres rejected it.
+ */
+const nullableDateStringSchema = z
+  .string()
+  .nullable()
+  .optional()
+  .transform((val) =>
+    val === null || val === undefined || val.trim() === "" ? null : val.trim(),
+  )
+  .refine((val) => {
+    if (val === null) return true;
+    return DATE_REGEX.test(val);
+  }, "Date must be in YYYY-MM-DD format")
+  .refine((val) => {
+    if (val === null) return true;
+    const [year, month, day] = val.split("-").map(Number);
+    const date = new Date(Date.UTC(year, month - 1, day));
+    return (
+      date.getUTCFullYear() === year &&
+      date.getUTCMonth() === month - 1 &&
+      date.getUTCDate() === day
+    );
+  }, "Invalid date");
+
 const documentShape = {
   title: z.string().min(1, "Document title is required").max(100, "Maximum 100 characters").trim(),
   category: categorySchema,
@@ -159,16 +216,18 @@ const documentShape = {
     .max(50, "Maximum 50 characters")
     .regex(/^[A-Z0-9\/-]+$/, "Use only letters, numbers, - or /")
     .transform((val) => val.toUpperCase()),
-  issueDate: dateStringSchema,
-  expiryDate: dateStringSchema,
+  issueDate: nullableDateStringSchema,
+  expiryDate: nullableDateStringSchema,
   notes: z.string().max(1000, "Maximum 1000 characters").trim().optional(),
   enableAlerts: z.boolean().default(true),
   status: z.enum(["active", "verified", "expired"]).default("active"),
   processingStatus: z.enum(["pending", "uploading", "processing", "completed", "failed"]).default("completed"),
   // No defaults: a client that omits risk means "not assessed", not "safe".
   // Defaulting these wrote 0/"Low" and made unassessed look verified.
-  riskScore: z.number().min(0).max(100).optional(),
-  riskLevel: z.enum(["Low", "Medium", "High"]).optional(),
+  // Null is accepted and means the same as absent, so a client that sends an
+  // explicit null is not rejected for the whole document.
+  riskScore: z.number().min(0).max(100).nullish().transform((val) => (val === null ? undefined : val)),
+  riskLevel: z.enum(["Low", "Medium", "High"]).nullish().transform((val) => (val === null ? undefined : val)),
   fileUrl: fileUrlSchema,
   fileType: z.string().optional().nullable(),
   s3Key: z.string().optional().nullable(),
@@ -197,30 +256,16 @@ export const documentUpdateSchema = z
   .partial()
   .extend({
     id: z.number().int().positive(),
-    // expiryDate is nullable on update: the client sends null to clear it.
-    // dateStringSchema alone rejects null, so override it here.
-    expiryDate: z
-      .string()
-      .nullable()
-      .optional()
-      .transform((val) => {
-        if (val === null || val === undefined || val === "") return null;
-        return val.trim();
-      })
-      .refine((val) => {
-        if (val === null) return true;
-        return DATE_REGEX.test(val);
-      }, "Date must be in YYYY-MM-DD format")
-      .refine((val) => {
-        if (val === null) return true;
-        const [year, month, day] = val.split("-").map(Number);
-        const date = new Date(Date.UTC(year, month - 1, day));
-        return (
-          date.getUTCFullYear() === year &&
-          date.getUTCMonth() === month - 1 &&
-          date.getUTCDate() === day
-        );
-      }, "Invalid date"),
+    /*
+     * The server revision this device last saw.
+     *
+     * It is optional on purpose: a client that does not know the revision
+     * keeps the previous behaviour and the update is applied unconditionally.
+     * A client that does send it gets the update refused with a 409 when the
+     * server copy has moved on, so a change made elsewhere is not silently
+     * overwritten.
+     */
+    baseUpdatedAt: z.string().min(1).max(64).optional(),
   });
 
 export const documentSyncSchema = z
@@ -229,8 +274,8 @@ export const documentSyncSchema = z
   category: categorySchema,
   issuer: z.string().min(1).max(150).trim(),
   documentNumber: z.string().min(1).max(50).transform((val) => val.toUpperCase()),
-  issueDate: dateStringSchema,
-  expiryDate: dateStringSchema,
+  issueDate: nullableDateStringSchema,
+  expiryDate: nullableDateStringSchema,
   notes: z.string().max(1000).trim().optional(),
   enableAlerts: z.boolean().default(true),
   status: z.enum(["active", "verified", "expired"]).default("active"),
@@ -239,8 +284,8 @@ export const documentSyncSchema = z
   fileType: z.string().optional().nullable(),
   processingStatus: z.enum(["pending", "uploading", "processing", "completed", "failed"]).default("completed"),
   // Unset means unassessed. See the note on documentShape.
-  riskScore: z.number().min(0).max(100).optional(),
-  riskLevel: z.enum(["Low", "Medium", "High"]).optional(),
+  riskScore: z.number().min(0).max(100).nullish().transform((val) => (val === null ? undefined : val)),
+  riskLevel: z.enum(["Low", "Medium", "High"]).nullish().transform((val) => (val === null ? undefined : val)),
   cloudId: z.number().int().positive().optional(),
   baseUpdatedAt: z.string().min(1).max(64).optional(),
 })

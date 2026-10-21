@@ -1,6 +1,16 @@
-import { parseLocalDate, getDaysUntilExpiry } from "./dateHelpers";
+import {
+  parseLocalDate,
+  getDaysUntilExpiry,
+  toLocalDateString,
+  localDateStringAfterDays,
+} from "./dateHelpers";
 
-export { parseLocalDate, getDaysUntilExpiry } from "./dateHelpers";
+export {
+  parseLocalDate,
+  getDaysUntilExpiry,
+  toLocalDateString,
+  localDateStringAfterDays,
+} from "./dateHelpers";
 
 export { classifyExpiration, getSyncStatusDisplay } from "./dateUtils";
 
