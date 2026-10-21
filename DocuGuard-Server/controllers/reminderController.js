@@ -96,9 +96,36 @@ exports.updateNotificationPrefs = async (req, res) => {
   }
 
   try {
+    /*
+     * Only the fields that were sent are written.
+     *
+     * `notifications_enabled` used to be written straight from the body, so a
+     * request that only carried a token turned the preference into NULL. A
+     * NULL is not TRUE, so the server stopped sending that user any push
+     * notification at all.
+     */
+    const sets = [];
+    const values = [];
+
+    if (validation.data.notificationsEnabled !== undefined) {
+      values.push(validation.data.notificationsEnabled);
+      sets.push(`notifications_enabled = $${values.length}`);
+    }
+
+    if (validation.data.fcmToken !== undefined) {
+      values.push(validation.data.fcmToken);
+      sets.push(`fcm_token = $${values.length}`);
+    }
+
+    if (sets.length === 0) {
+      return res.json({ message: "No changes to save" });
+    }
+
+    values.push(userId);
+
     await db.query(
-      `UPDATE users SET notifications_enabled = $1, fcm_token = COALESCE($2, fcm_token) WHERE id = $3`,
-      [notificationsEnabled, fcmToken, userId],
+      `UPDATE users SET ${sets.join(", ")} WHERE id = $${values.length}`,
+      values,
     );
     res.json({ message: "Notification preferences updated successfully" });
   } catch (err) {

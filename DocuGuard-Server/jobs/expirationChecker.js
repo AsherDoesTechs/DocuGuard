@@ -20,6 +20,11 @@ async function runExpirationCheck() {
     //
     // enable_alerts is honoured here now; it was plumbed everywhere except
     // the one place that decides whether to notify.
+    //
+    // Tombstones are skipped. A deleted document keeps its row until the
+    // device has synced the deletion, and the row still carries its expiry
+    // date - so without this filter the job kept sending expiry reminders
+    // for a document the user had already deleted.
     const { rows } = await db.query(
       `
       SELECT d.id, d.title, d.expiry_date,
@@ -29,6 +34,7 @@ async function runExpirationCheck() {
       FROM documents d
       JOIN users u ON d.user_id = u.id
       WHERE d.enable_alerts = TRUE
+        AND d.status <> 'deleted'
         AND u.notifications_enabled = TRUE
         AND d.expiry_date <= CURRENT_DATE + ($1 || ' days')::interval
         AND COALESCE(u.expo_push_token, u.fcm_token) IS NOT NULL

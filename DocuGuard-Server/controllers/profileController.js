@@ -19,11 +19,11 @@ exports.getProfile = async (req, res) => {
     );
 
     const statsRes = await db.query(
-      `SELECT 
+      `SELECT
          COUNT(*) AS "documentCount",
          COUNT(CASE WHEN expiry_date <= CURRENT_DATE + INTERVAL '30 days' THEN 1 END) AS "expiringCount",
          COUNT(CASE WHEN expiry_date < CURRENT_DATE THEN 1 END) AS "expiredCount"
-       FROM documents WHERE user_id = $1`,
+       FROM documents WHERE user_id = $1 AND status <> 'deleted'`,
       [userId],
     );
 
@@ -210,9 +210,41 @@ exports.updatePreferences = async (req, res) => {
   const { notifyEmail, notifyPush, notifyExpiry } = validation.data;
 
   try {
+    /*
+     * Only the preferences that were sent are written.
+     *
+     * The old statement wrote all three columns, so a request that carried
+     * one preference turned the other two into NULL. A NULL is not TRUE, so
+     * the server stopped sending that kind of notification altogether - and
+     * the user had no way of seeing that it had happened.
+     */
+    const columns = {
+      notifyEmail: "email_alerts",
+      notifyPush: "notifications_enabled",
+      notifyExpiry: "expiry_alerts",
+    };
+
+    const sets = [];
+    const values = [];
+
+    for (const [key, column] of Object.entries(columns)) {
+      const value = validation.data[key];
+
+      if (value !== undefined) {
+        values.push(value);
+        sets.push(`${column} = $${values.length}`);
+      }
+    }
+
+    if (sets.length === 0) {
+      return res.json({ message: "No changes to save" });
+    }
+
+    values.push(userId);
+
     await db.query(
-      `UPDATE users SET email_alerts = $1, notifications_enabled = $2, expiry_alerts = $3 WHERE id = $4`,
-      [notifyEmail, notifyPush, notifyExpiry, userId],
+      `UPDATE users SET ${sets.join(", ")} WHERE id = $${values.length}`,
+      values,
     );
     await syncProfile(userId, { notifyEmail, notifyPush, notifyExpiry });
     res.json({ message: "Preferences updated" });
