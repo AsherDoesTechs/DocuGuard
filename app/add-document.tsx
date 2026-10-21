@@ -24,13 +24,19 @@ import * as DocumentPicker from "expo-document-picker";
 import { COLORS } from "@/constants";
 import { DocumentScannerComponent } from "@/components/ui/DocumentScanner";
 import { extractDocumentData } from "../utils/ocr";
+import { LocalDocument } from "../services/localDatabase";
+import { saveDocumentToVault } from "@/services/documentSaveService";
+import { DocumentSaveError } from "@/shared/sync/documentSaveCore";
+import { normalizeCloudId } from "@/shared/sync/cloudId";
 import {
-  createDocument,
-  logDocumentAction,
-  LocalDocument,
-} from "../services/localDatabase";
+  buildUploadFileName,
+  needsStorageUpload,
+  validateUploadFile,
+} from "@/shared/sync/documentFileUpload";
+import { resolveUploadCompensation } from "@/shared/sync/storageObjectPolicy";
+import { api } from "@/services/api";
+import { syncWorker } from "@/services/syncWorker";
 import { formatCategoryForBackend } from "@/utils/categories";
-import { scheduleRemindersForDocument } from "@/services/notificationScheduler";
 import {
   feedbackService,
   useFeedbackService,
@@ -949,6 +955,18 @@ export default function AddDocumentScreen() {
 
   const saveInProgressRef = React.useRef(false);
 
+  /*
+   * The storage key of a file that was uploaded for this document.
+   *
+   * It is remembered so that pressing save twice does not upload the same
+   * file twice: the second attempt reuses the object that is already in the
+   * bucket instead of creating a second one for the same document.
+   */
+  const uploadedFileRef = React.useRef<{
+    uri: string;
+    s3Key: string;
+  } | null>(null);
+
   const [step, setStep] = useState<number>(0);
 
   const [documentType, setDocumentType] = useState<
@@ -980,7 +998,8 @@ export default function AddDocumentScreen() {
     fileUrl?: string;
     s3Key?: string;
     storagePath?: string;
-    documentId?: string | number;
+    /** Normalised server id of the OCR draft. Always a positive integer. */
+    documentId?: number;
   } | null>(null);
   const [datePicker, setDatePicker] = useState<
     "issueDate" | "expiryDate" | null
@@ -1039,6 +1058,13 @@ export default function AddDocumentScreen() {
       if (result.canceled || !result.assets?.[0]) return;
 
       const asset = result.assets[0];
+
+      /*
+       * A different file means a different upload, so the key of a previous
+       * upload is dropped.
+       */
+      uploadedFileRef.current = null;
+
       setSelectedFile({
         name: asset.name,
         uri: asset.uri,
@@ -1047,9 +1073,102 @@ export default function AddDocumentScreen() {
       });
 
       setStep(4);
-      feedbackService.success("Document uploaded. Ready for review.");
+      feedbackService.success("Document selected. Ready for review.");
     } catch (error) {
       feedbackService.error("Could not select the document. Please try again.");
+    }
+  }
+
+  /**
+   * Uploads a file the user picked so the cloud copy holds the file too.
+   *
+   * The upload uses the endpoint the OCR pipeline already uses, so no server
+   * change is needed. The OCR draft endpoint is deliberately not called: that
+   * endpoint creates a second row on the server, and the metadata sync is
+   * supposed to create the one and only row for this document.
+   *
+   * A failure is reported instead of thrown: the document is still saved on
+   * the device with its metadata, and the file stays here until the upload
+   * succeeds.
+   */
+  /**
+   * Asks the server to remove an uploaded object.
+   *
+   * The removal never throws: the caller is already handling a failure, and a
+   * second failure must not hide the first one. The answer says whether the
+   * object is gone, so the user can be told when it is not.
+   */
+  async function removeUploadedObject(s3Key: string): Promise<boolean> {
+    try {
+      await api.documents.deleteUploadedObject(s3Key);
+      return true;
+    } catch (cleanupError) {
+      console.warn("Uploaded object could not be removed:", cleanupError);
+      return false;
+    }
+  }
+
+  async function uploadPickedFile(
+    file: NonNullable<typeof selectedFile>,
+  ): Promise<{ ok: boolean; s3Key?: string; message?: string }> {
+    if (!needsStorageUpload({ s3Key: null, fileUrl: null })) {
+      return { ok: true };
+    }
+
+    const cached = uploadedFileRef.current;
+
+    if (cached && cached.uri === file.uri) {
+      // The file was already uploaded for this document.
+      return { ok: true, s3Key: cached.s3Key };
+    }
+
+    const fileType = file.mimeType || "image/jpeg";
+
+    const invalid = validateUploadFile({ fileType, size: file.size });
+
+    if (invalid) {
+      return { ok: false, message: invalid };
+    }
+
+    try {
+      const uploadData = await api.documents.getUploadUrl(
+        buildUploadFileName(file),
+        fileType,
+      );
+
+      if (!uploadData?.uploadUrl) {
+        return {
+          ok: false,
+          message: "The server did not return an upload URL for the file.",
+        };
+      }
+
+      await api.documents.uploadToS3(uploadData.uploadUrl, file.uri, fileType);
+
+      const s3Key = String(
+        uploadData.storagePath || uploadData.s3Key || "",
+      ).trim();
+
+      if (!s3Key) {
+        return {
+          ok: false,
+          message:
+            "The file was uploaded, but the server did not return a storage key.",
+        };
+      }
+
+      uploadedFileRef.current = { uri: file.uri, s3Key };
+
+      return { ok: true, s3Key };
+    } catch (error: any) {
+      return {
+        ok: false,
+        message:
+          error?.isOffline || /network/i.test(error?.message ?? "")
+            ? "The file could not be uploaded because there is no connection. The file stays on this device."
+            : error?.message ||
+              "The file could not be uploaded and stays on this device.",
+      };
     }
   }
 
@@ -1217,17 +1336,77 @@ export default function AddDocumentScreen() {
     saveInProgressRef.current = true;
     setSaving(true);
 
+    /*
+     * The storage key of an upload that has not become a document yet.
+     *
+     * The upload runs before the local insert, so a failed insert leaves the
+     * uploaded object behind. The key is remembered here so the failure path
+     * can ask the server to remove it.
+     */
+    let uploadedObjectKey: string | undefined;
+
     try {
       const token = await getStoredToken();
       const hasFile = !!selectedFile;
 
       let fileUrl: string | undefined;
       let s3Key: string | undefined;
+      let processingStatus = "completed";
 
       if (ocrUploadMeta?.fileUrl) {
+        /*
+         * A scanned document. The file was uploaded by the OCR pipeline and
+         * the OCR already ran on the server, so the processing really is
+         * finished. The old code stored "processing" here and pushed it with
+         * the first metadata sync, which downgraded the server row from
+         * "completed" back to "processing".
+         */
         fileUrl = ocrUploadMeta.fileUrl;
         s3Key = ocrUploadMeta.s3Key || ocrUploadMeta.storagePath;
+      } else if (selectedFile) {
+        /*
+         * A document the user picked from their device.
+         *
+         * The file was never uploaded, so the cloud copy of the document used
+         * to hold nothing but its metadata and the file stayed on this device.
+         * The upload runs before the local insert, so the stored row carries
+         * the storage key and the sync links the document to the uploaded
+         * object.
+         */
+        const uploaded = await uploadPickedFile(selectedFile);
+
+        s3Key = uploaded.s3Key;
+        uploadedObjectKey = uploaded.ok ? uploaded.s3Key : undefined;
+        processingStatus = uploaded.ok ? "completed" : "failed";
+
+        /*
+         * The local path is kept so the file can still be opened without a
+         * connection. The cloud copy is addressed by the storage key, and the
+         * server mints a fresh signed URL from it when one is asked for.
+         */
+        fileUrl = selectedFile.uri;
+
+        if (!uploaded.ok) {
+          feedbackService.warning(
+            uploaded.message ||
+              "The file could not be uploaded. The document was saved on this device and the file stays here until the upload succeeds.",
+          );
+        }
       }
+
+      /*
+       * The cloud row that already holds the scanned file.
+       *
+       * The scan created a draft on the server before the user reviewed it.
+       * Linking the local document to that row is what lets the later sync
+       * update the draft instead of creating a second document for the same
+       * file.
+       *
+       * The id is normalised rather than type-checked: PostgreSQL BIGSERIAL
+       * ids arrive as strings, and a plain `typeof id === "number"` check
+       * silently dropped the link.
+       */
+      const cloudId = normalizeCloudId(ocrUploadMeta?.documentId) ?? undefined;
 
       const payload: Partial<LocalDocument> = {
         title: title.trim(),
@@ -1243,37 +1422,116 @@ export default function AddDocumentScreen() {
         enableAlerts: enableAlerts,
         reminderIntervalDays: reminderIntervals[0] || 7,
         reminderIntervals: reminderIntervals,
-        processingStatus: hasFile ? "processing" : "completed",
+        processingStatus,
         needsSync: !!token,
         syncStatus: token ? "pending" : "local",
         fileUrl: fileUrl || selectedFile?.uri,
         fileType: selectedFile?.mimeType ?? undefined,
         s3Key,
+        cloudId,
       };
 
-      const localId = await createDocument(payload);
-
-      await logDocumentAction(localId, "created", payload);
-
-      if (enableAlerts && expiryDate) {
-        await scheduleRemindersForDocument({
-          ...payload,
-          id: localId,
-        } as LocalDocument);
-      }
+      /*
+       * The local insert is the only step that can fail the save. The history
+       * entry and the reminders are reported as warnings, so a failure there
+       * cannot make the user press save again and create a second copy of the
+       * document.
+       */
+      const result = await saveDocumentToVault(payload);
 
       setSaving(false);
 
+      const warningText =
+        result.warnings.length > 0
+          ? `\n\n${result.warnings.map((warning) => warning.message).join(" ")}`
+          : "";
+
+      if (!token) {
+        await feedbackService.confirm({
+          title: "Document Added",
+          message: `${title} has been saved on this device. It will be uploaded to your account the next time you sign in.${warningText}`,
+          confirmText: "View Documents",
+          onConfirm: () => router.replace("/(tabs)/documents"),
+          onCancel: () => {},
+        });
+        return;
+      }
+
       await feedbackService.confirm({
         title: "Document Added",
-        message: `${title} has been successfully added to your document vault.`,
+        message: `${title} has been saved on this device and is being uploaded to your account.${warningText}`,
         confirmText: "View Documents",
         onConfirm: () => router.replace("/(tabs)/documents"),
         onCancel: () => {},
       });
+
+      /*
+       * The upload happens in the background so the user is not kept waiting
+       * on the network, and the outcome is reported when it is known. Only the
+       * document that was just saved is pushed, so a record that is waiting
+       * for its backoff is not pushed early by an unrelated save.
+       */
+      syncWorker.requestSync({
+        force: true,
+        onlyDocumentId: result.localId,
+        onComplete: (syncResult) => {
+          if (syncResult.documentsSynced > 0) {
+            feedbackService.success("Document synced to your account.");
+            return;
+          }
+
+          const firstError = syncResult.errors?.[0];
+          feedbackService.warning(
+            firstError
+              ? `Saved on this device. ${firstError}`
+              : "Saved on this device. The cloud sync will be retried automatically.",
+          );
+        },
+      });
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Could not save the document.";
+
+      /*
+       * The upload succeeded but the document was never written.
+       *
+       * The uploaded object is now in the bucket with nothing pointing at it,
+       * so the server is asked to remove it. The removal is best effort: if it
+       * does not work, the object stays in the bucket and the file itself is
+       * still on the device, so nothing the user owns is lost.
+       */
+      const compensation = resolveUploadCompensation({
+        uploadedKey: uploadedObjectKey,
+        documentSaved: false,
+      });
+
+      if (compensation.action === "remove" && compensation.s3Key) {
+        const removed = await removeUploadedObject(compensation.s3Key);
+
+        if (!removed) {
+          feedbackService.warning(
+            "The document could not be saved, and the uploaded file could not " +
+              "be removed from your account. The file is still on this device.",
+          );
+        }
+      }
+
+      /*
+       * A scanned document already has a draft on the server. When the local
+       * insert failed and the draft could not be removed, say so: the account
+       * keeps a copy the user never completed.
+       */
+      if (
+        error instanceof DocumentSaveError &&
+        error.cloudId &&
+        !error.compensated
+      ) {
+        feedbackService.error(
+          `${message} The uploaded copy could not be removed from your account and is still there.`,
+        );
+        return;
+      }
+
       feedbackService.error(message);
     } finally {
       saveInProgressRef.current = false;

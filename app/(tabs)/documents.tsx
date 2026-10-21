@@ -28,7 +28,7 @@ import {
   type DocumentDashboardSummary,
 } from "../../services/localDatabase";
 
-import { cancelDocumentNotifications } from "../../services/notificationScheduler";
+import { cancelExpiringSoonNotifications } from "../../services/notificationScheduler";
 
 export default function DocumentsScreen() {
   const router = useRouter();
@@ -87,7 +87,14 @@ export default function DocumentsScreen() {
       for (const doc of expiredDocs) {
         if (doc.status !== "expired" && doc.id != null) {
           await updateDocumentStatus(doc.id, "expired");
-          await cancelDocumentNotifications(doc.id);
+          /*
+           * Only the "expiring soon" alerts are withdrawn here.
+           *
+           * The whole set was cancelled before, which included the daily
+           * expiry notice - the one alert that a document has expired is
+           * supposed to produce. The user was never told.
+           */
+          await cancelExpiringSoonNotifications(doc.id);
         }
       }
 

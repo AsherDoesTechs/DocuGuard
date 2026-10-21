@@ -28,11 +28,11 @@ import { COLORS } from "@/constants";
 import {
   getDocumentById,
   updateDocument,
-  markDocumentSynced,
-  updateDocumentSyncStatus,
+  markDocumentSyncedWithCloud,
 } from "@/services/localDatabase";
 import { api, API_BASE_URL } from "@/services/api";
 import { documentUpdateSchema, validateSchema } from "@/shared/validation";
+import { canonicalizeServerRevision } from "@/shared/sync/syncPolicy";
 import {
   scheduleRemindersForDocument,
   cancelDocumentNotifications,
@@ -381,6 +381,13 @@ export default function EditDocumentScreen() {
   const [isSaving, setIsSaving] = useState(false);
   const [useLocalData, setUseLocalData] = useState(false);
   const [cloudId, setCloudId] = useState<number | null>(null);
+  /**
+   * The server revision of the document when this device last saw it.
+   *
+   * It is sent with every edit so the server can refuse the write when the
+   * document has moved on somewhere else.
+   */
+  const [serverRevision, setServerRevision] = useState<string | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<DocumentGroup>("other");
   const [typeSearch, setTypeSearch] = useState("");
   const [showAllTypes, setShowAllTypes] = useState(false);
@@ -580,6 +587,7 @@ export default function EditDocumentScreen() {
             ? localDocument.cloudId
             : null,
         );
+        setServerRevision(localDocument.serverUpdatedAt ?? null);
 
         return;
       }
@@ -606,6 +614,7 @@ export default function EditDocumentScreen() {
       const data = result?.document || result?.data || result;
 
       setCloudId(typeof data?.id === "number" ? data.id : null);
+      setServerRevision(data?.updatedAt ?? null);
 
       const title = data?.title || "";
       const backendCategory = data?.category || BACKEND_CATEGORIES.OTHER;
@@ -844,6 +853,20 @@ export default function EditDocumentScreen() {
       payload.enableAlerts = values.enableAlerts;
     }
 
+    /*
+     * The revision this device last saw.
+     *
+     * It is sent with the edit so the server can refuse the write when the
+     * document has been changed somewhere else. Without it the edit was an
+     * unconditional overwrite, and a change that had been made on the web app
+     * or on another device was destroyed without a word.
+     */
+    const baseRevision = canonicalizeServerRevision(serverRevision);
+
+    if (baseRevision) {
+      (payload as { baseUpdatedAt?: string }).baseUpdatedAt = baseRevision;
+    }
+
     // Check before setting the saving state so it cannot become stuck.
     if (Object.keys(payload).length === 0) {
       await feedbackService.alert({
@@ -874,10 +897,28 @@ export default function EditDocumentScreen() {
         }
 
         if (cloudId) {
-          await api.documents.update(cloudId, payload);
+          const cloudResponse = await api.documents.update(cloudId, payload);
 
-          await markDocumentSynced(numericId);
-          await updateDocumentSyncStatus(numericId, "synced");
+          /*
+           * The server answers with the revision it just wrote. Storing it
+           * keeps the next push conflict aware: without it the client kept the
+           * revision from before the edit, so the next sync was always
+           * answered with a 409 and the document never left the pending queue.
+           *
+           * The revision is normalised first, because a value the server
+           * cannot compare would turn every later push into a false conflict.
+           */
+          const writtenRevision = canonicalizeServerRevision(
+            cloudResponse?.document?.updatedAt,
+          );
+
+          await markDocumentSyncedWithCloud(
+            numericId,
+            cloudId,
+            writtenRevision,
+          );
+
+          setServerRevision(writtenRevision);
 
           cloudSaveSuccessful = true;
         }
@@ -917,13 +958,34 @@ export default function EditDocumentScreen() {
       // Reschedule expiration reminders after a successful document save.
       // Runs in its own try/catch so notification failures do not incorrectly
       // surface as document-save or cloud-sync failures.
-      if (payload.expiryDate !== undefined && (cloudSaveSuccessful || useLocalData || localSaveSuccessful)) {
+      //
+      // The reschedule also runs when only the alert switch was touched:
+      // switching the alerts off has to withdraw the alerts that are already
+      // scheduled, and that never happened - the switch only reached the
+      // database, so the notifications kept arriving.
+      const remindersAffected =
+        payload.expiryDate !== undefined || payload.enableAlerts !== undefined;
+
+      if (remindersAffected && (cloudSaveSuccessful || useLocalData || localSaveSuccessful)) {
         try {
+          /*
+           * The lead time belongs to the document and is not part of the
+           * edit form, so it is read back from the stored row. Without it the
+           * scheduler fell back to its default and the alert the user had
+           * chosen was replaced by a different one.
+           */
+          const storedDocument = await getDocumentById(numericId);
+
           await scheduleRemindersForDocument({
             id: numericId,
             title: values.title,
-            expiryDate: payload.expiryDate || undefined,
+            expiryDate:
+              payload.expiryDate !== undefined
+                ? payload.expiryDate || undefined
+                : storedDocument?.expiryDate || values.expiryDate || undefined,
             enableAlerts: values.enableAlerts,
+            reminderIntervals: storedDocument?.reminderIntervals,
+            reminderIntervalDays: storedDocument?.reminderIntervalDays,
           } as LocalDocument);
         } catch (reminderError: unknown) {
           console.warn("Reminder rescheduling failed:", reminderError);
@@ -945,7 +1007,30 @@ export default function EditDocumentScreen() {
           ? error.message
           : "Please try again when you have an internet connection.";
 
-      if (localSaveSuccessful) {
+      /*
+       * A conflict is not a failure of the save.
+       *
+       * The local copy holds the change and the server copy holds a change
+       * that was made somewhere else. The server was not overwritten, and the
+       * change is not lost either: it stays on the device and is pushed again
+       * once the conflict is settled.
+       */
+      const status =
+        (error as { response?: { status?: number } })?.response?.status ??
+        undefined;
+
+      if (status === 409) {
+        await feedbackService.alert({
+          title: "Changed on Another Device",
+          message:
+            "This document was changed somewhere else since you opened it, " +
+            "so your change was not uploaded.\n\n" +
+            "Your change is saved on this device. Open the document again to " +
+            "see the version in your cloud vault and reapply your change if " +
+            "you still want it.",
+          type: "warning",
+        });
+      } else if (localSaveSuccessful) {
         await feedbackService.alert({
           title: "Saved Locally",
           message:
@@ -970,6 +1055,7 @@ export default function EditDocumentScreen() {
     initialData,
     isSaving,
     router,
+    serverRevision,
     useLocalData,
     validateForm,
     values,
