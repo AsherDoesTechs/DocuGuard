@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
-import { Link, useRouter } from "expo-router";
+import { Link, useRouter, useFocusEffect } from "expo-router";
 import * as LocalAuthentication from "expo-local-authentication";
 import * as SecureStore from "expo-secure-store";
 import { Ionicons } from "@expo/vector-icons";
@@ -10,8 +10,9 @@ import { AuthScreen } from "../../components/ui/AuthScreen";
 import { useForm } from "../../hooks/useForm";
 import { useColors } from "@/context/ThemeContext";
 import { Spacing } from "@/constants";
-import { api } from "../../services/api";
+import { api, setAuthToken } from "../../services/api";
 import { switchLocalUser } from "../../services/localDatabase";
+import { registerPushTokenWithBackend } from "../../hooks/usePushNotifications";
 import {
   loginSchema,
   type LoginInput,
@@ -59,11 +60,30 @@ export default function LoginScreen() {
         throw new Error("The server did not return a valid session.");
       }
 
-      await SecureStore.setItemAsync("userToken", response.token);
+      /*
+       * The session is written through the api client.
+       *
+       * The client keeps the token in memory as well, and the request
+       * interceptor prefers the in-memory value. Writing the token to the
+       * secure store alone left the old token in memory, so the first
+       * request of the new session was sent with the token of the account
+       * that had signed out before.
+       */
+      await setAuthToken(response.token);
 
       if (response.user?.id != null) {
         await switchLocalUser(response.user.id);
       }
+
+      /*
+       * The push token belongs to the account that just signed in.
+       *
+       * The token is stored on the account, so a device that was registered
+       * for the previous account would keep receiving that account's
+       * notifications. Registering it here covers the case where the app was
+       * not restarted between the two sign-ins.
+       */
+      void registerPushTokenWithBackend();
 
       if (rememberMe) {
         await SecureStore.setItemAsync("rememberedEmail", email);
@@ -78,40 +98,43 @@ export default function LoginScreen() {
 
   // Check biometric availability without allowing native API failures
   // to crash the login screen.
-  useEffect(() => {
-    let mounted = true;
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
 
-    const checkBiometricSupport = async () => {
-      try {
-const [hasHardware, isEnrolled, biometricSetting, token] = await Promise.all([
-          LocalAuthentication.hasHardwareAsync(),
-          LocalAuthentication.isEnrolledAsync(),
-          SecureStore.getItemAsync("biometricEnabled"),
-          SecureStore.getItemAsync("userToken"),
-        ]);
+      const checkBiometricSupport = async () => {
+        try {
+          const [hasHardware, isEnrolled, biometricSetting, token] =
+            await Promise.all([
+              LocalAuthentication.hasHardwareAsync(),
+              LocalAuthentication.isEnrolledAsync(),
+              SecureStore.getItemAsync("biometricEnabled"),
+              SecureStore.getItemAsync("userToken"),
+            ]);
 
-        if (mounted) {
-          setIsBiometricSupported(
-            hasHardware &&
-              isEnrolled &&
-              (biometricSetting === "true" || Boolean(token)),
-          );
+          if (active) {
+            setIsBiometricSupported(
+              hasHardware &&
+                isEnrolled &&
+                (biometricSetting === "true" || Boolean(token)),
+            );
+          }
+        } catch (error) {
+          console.warn("Unable to check biometric availability:", error);
+
+          if (active) {
+            setIsBiometricSupported(false);
+          }
         }
-      } catch (error) {
-        console.warn("Unable to check biometric availability:", error);
+      };
 
-        if (mounted) {
-          setIsBiometricSupported(false);
-        }
-      }
-    };
+      void checkBiometricSupport();
 
-    void checkBiometricSupport();
-
-    return () => {
-      mounted = false;
-    };
-  }, []);
+      return () => {
+        active = false;
+      };
+    }, []),
+  );
 
   const handleTwoFactorSubmit = async () => {
     if (!pendingTwoFactor || twoFactorRequestRef.current) {

@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback, useRef } from "react";
 import { AppState, AppStateStatus } from "react-native";
 import * as LocalAuthentication from "expo-local-authentication";
 import * as SecureStore from "expo-secure-store";
-import { api } from "../services/api";
+import { api, setAuthToken } from "../services/api";
 import { getUserProfile, switchLocalUser } from "../services/localDatabase";
 import {
   View,
@@ -193,7 +193,14 @@ export function useAppLock() {
       const token = await SecureStore.getItemAsync("userToken");
 
       if (token) {
-        await SecureStore.deleteItemAsync("userToken");
+        /*
+         * The session is closed through the api client.
+         *
+         * The client keeps a copy of the token in memory, and the request
+         * interceptor prefers that copy. Deleting the token from the secure
+         * store alone left the session usable for the requests that follow.
+         */
+        await setAuthToken(null);
 
         // Confirm that the token is actually gone.
         const remainingToken = await SecureStore.getItemAsync("userToken");

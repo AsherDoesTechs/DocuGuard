@@ -9,6 +9,7 @@ import { usePushNotifications } from "../hooks/usePushNotifications";
 import { useAppLock, AppLockScreen } from "../hooks/useAppLock";
 import { initDatabase } from "../services/localDatabase";
 import { checkAndScheduleAlerts } from "../services/notificationScheduler";
+import { syncWorker } from "@/services/syncWorker";
 
 import { AlertProvider } from "@/components/ui/AlertService";
 import { ThemeProvider } from "@/context/ThemeContext";
@@ -95,6 +96,16 @@ export default function RootLayout() {
         } catch (error) {
           console.warn("Failed to schedule alerts:", error);
         }
+
+        /*
+         * Start the retry worker.
+         *
+         * Without it a document saved while offline stayed unsynchronised
+         * until the user happened to open the Cloud Sync screen and press
+         * "Sync now". The worker only pushes records that are already queued
+         * and never removes local data.
+         */
+        syncWorker.start();
       } catch (error) {
         console.error("Failed to initialize local database:", error);
 

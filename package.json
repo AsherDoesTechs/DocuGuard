@@ -61,8 +61,9 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "typecheck": "tsc --noEmit",
+    "test": "node --test \"tests/*.test.js\"",
     "check:server": "npm --prefix DocuGuard-Server run check",
-    "check": "npm run typecheck && npm run check:server"
+    "check": "npm run typecheck && npm test && npm run check:server"
   },
   "private": true
 }
