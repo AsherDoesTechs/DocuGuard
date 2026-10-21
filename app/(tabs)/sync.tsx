@@ -146,7 +146,13 @@ export default function SyncScreen() {
       setSyncing(true);
 
       try {
-        const result = await syncToCloud();
+        /*
+         * The user asked for it explicitly, so the per-record backoff is
+         * ignored. The pass still runs through the same process-wide lock as
+         * the background worker, so the two can never push the same document
+         * at the same time and create it twice on the server.
+         */
+        const result = await syncToCloud({ force: true });
 
         await fetchPending();
 
@@ -160,12 +166,43 @@ export default function SyncScreen() {
             `Successfully synced ${result.documentsSynced} document(s) and ${result.remindersSynced} reminder(s).`,
           );
         } else if (result.errors && result.errors.length > 0) {
+          const attention =
+            (result.documentsNeedingAttention ?? 0) > 0
+              ? `\n\n${result.documentsNeedingAttention} item(s) could not be fixed automatically and need your attention.`
+              : "";
+
+          /*
+           * A conflict is reported on its own.
+           *
+           * The local copy was kept and nothing was overwritten on the
+           * server. The user gets the names of the documents that moved on
+           * and the moment the server last changed them, so the decision
+           * about which version wins is theirs.
+           */
+          const conflicts = result.conflicts ?? [];
+
+          const conflictText = conflicts.length
+            ? `\n\nChanged on another device:\n${conflicts
+                .map((conflict) => {
+                  const changed = conflict.serverUpdatedAt
+                    ? new Date(conflict.serverUpdatedAt).toLocaleString()
+                    : "an unknown time";
+
+                  return `• ${conflict.title} (server version: ${changed})`;
+                })
+                .join("\n")}\n\nYour copy was kept and was not uploaded. Open the document and check it against the version in your cloud vault.`
+            : "";
+
           await feedbackService.alert({
-            title: "Sync Completed with Errors",
+            title: conflicts.length
+              ? "Sync Completed with Conflicts"
+              : "Sync Completed with Errors",
             message:
               `Synced ${result.documentsSynced} document(s) and ` +
               `${result.remindersSynced} reminder(s), but some items failed:\n\n` +
-              result.errors.join("\n"),
+              result.errors.join("\n") +
+              attention +
+              conflictText,
             type: "warning",
           });
         } else {

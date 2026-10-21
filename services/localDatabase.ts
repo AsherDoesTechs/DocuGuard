@@ -8,6 +8,10 @@ import {
 } from "../types/offline";
 import { DebugLogger } from "./debugLogger";
 import { ErrorCodes } from "../constants/errorCodes";
+import { toLocalDateString, localDateStringAfterDays } from "@/utils";
+import { syncRetryStore } from "./syncRetryStore";
+import { SYNC_FAILURE_KIND } from "@/shared/sync/syncPolicy";
+import { resolveAccountSwitch } from "@/shared/sync/accountSwitch";
 
 export type {
   LocalDocument,
@@ -171,6 +175,21 @@ const DOC_COLUMNS = `
  */
 const LOCAL_USER_ID_KEY = "docuguard.localUserId";
 
+/**
+ * The account that owns the rows still on disk after a sign-out.
+ *
+ * Sign-out deliberately keeps the documents so the same account finds them
+ * again. It also clears `LOCAL_USER_ID_KEY`, which meant the next sign-in
+ * could no longer tell whether the account signing in was the account that
+ * owns the rows: `getLocalUserId()` falls back to the token, and the token
+ * already belongs to the incoming account. The previous account's vault
+ * therefore stayed on disk, invisible but never deleted.
+ *
+ * This marker records the owner explicitly so the account change can still be
+ * detected.
+ */
+const LAST_SIGNED_OUT_USER_ID_KEY = "docuguard.lastSignedOutUserId";
+
 export async function setLocalUserId(
   userId: number | string | null,
 ): Promise<void> {
@@ -179,6 +198,31 @@ export async function setLocalUserId(
     return;
   }
   await SecureStore.setItemAsync(LOCAL_USER_ID_KEY, String(userId));
+}
+
+/**
+ * The account that owns the local rows.
+ *
+ * Unlike `getLocalUserId()` this never falls back to the token: the token
+ * describes whoever is signing in now, not whoever owns the rows on disk, and
+ * conflating the two is what allowed the previous account's vault to survive
+ * an account change.
+ */
+export async function getLocalDataOwnerId(): Promise<number | null> {
+  try {
+    const raw =
+      (await SecureStore.getItemAsync(LOCAL_USER_ID_KEY)) ??
+      (await SecureStore.getItemAsync(LAST_SIGNED_OUT_USER_ID_KEY));
+
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function getLocalUserId(): Promise<number | null> {
@@ -250,8 +294,17 @@ async function claimUnownedRows(userId: number): Promise<void> {
     }
 
     await database.withExclusiveTransactionAsync(async (txn) => {
+      /*
+       * A document that never reached the cloud is queued for a sync. A
+       * document that already has a cloud id was uploaded before, and pushing
+       * it again would be pointless work at best and a conflict at worst.
+       */
       await txn.runAsync(
-        `UPDATE documents SET user_id = ? WHERE user_id IS NULL`,
+        `UPDATE documents
+         SET user_id = ?,
+             needs_sync = CASE WHEN cloud_id IS NULL THEN 1 ELSE needs_sync END,
+             sync_status = CASE WHEN cloud_id IS NULL THEN 'pending' ELSE sync_status END
+         WHERE user_id IS NULL`,
         [userId],
       );
       await txn.runAsync(
@@ -351,25 +404,77 @@ export async function switchLocalUser(
   nextUserId: number | string,
 ): Promise<void> {
   const next = Number(nextUserId);
-  if (!Number.isFinite(next)) {
+  if (!Number.isFinite(next) || next <= 0) {
     DebugLogger.warn("LocalDatabase", "switchLocalUser ignored: invalid id", {
       nextUserId,
     });
     return;
   }
 
-  const previous = await getLocalUserId();
-  if (previous !== null && previous !== next) {
+  /*
+   * The owner of the rows on disk, not the current session.
+   *
+   * `getLocalUserId()` would recover the incoming account's id from the token
+   * (the token is stored before this call), so it can never reveal that the
+   * rows belong to somebody else.
+   */
+  const owner = await getLocalDataOwnerId();
+  const decision = resolveAccountSwitch({ ownerId: owner, nextUserId: next });
+  const accountChanged = decision.accountChanged;
+
+  if (decision.purgePreviousData) {
+    if (owner === null) {
+      /*
+       * The decision only asks for a purge when an owner is known, so this
+       * cannot happen. If it ever does, the sign-in stops here: continuing
+       * would show the new account the rows of the previous one.
+       */
+      throw new Error(
+        "The account that owns the local data is unknown. The sign-in was stopped so that no other account's data is shown.",
+      );
+    }
+
     DebugLogger.info(
       "LocalDatabase",
       "Account changed, purging previous local data",
       {
-        previous,
+        previous: owner,
         next,
       },
     );
-    await purgeLocalDataForUser(previous);
+    await purgeLocalDataForUser(owner);
   }
+
+  await SecureStore.deleteItemAsync(LAST_SIGNED_OUT_USER_ID_KEY);
+
+  /*
+   * The retry log follows the account.
+   *
+   * A different account starts with an empty log. The same account gets the
+   * records that were blocked by an expired session released, because they can
+   * be pushed again now that there is a valid session. The backoff and the
+   * attempt count of every other record are kept: they describe real attempts
+   * against a server that was reachable.
+   */
+  try {
+    if (decision.clearRetryLog) {
+      await syncRetryStore.clearAll();
+    } else if (decision.releaseAuthBlocked) {
+      await syncRetryStore.clearBlockedBy({ kind: SYNC_FAILURE_KIND.AUTH });
+    }
+  } catch (error) {
+    DebugLogger.warn("LocalDatabase", "Failed to release the retry log", {
+      error,
+    });
+  }
+
+  /*
+   * Documents written while nobody was signed in have no owner, so no read
+   * could ever find them and they were silently lost. Claiming them for the
+   * account that signs in now keeps them, and queues the ones that never
+   * reached the cloud.
+   */
+  await claimUnownedRows(next);
 
   await setLocalUserId(next);
 }
@@ -378,6 +483,18 @@ export async function switchLocalUser(
  * Clears all local state at sign-out. Safe to call when already signed out.
  */
 export async function clearLocalSession(): Promise<void> {
+  /*
+   * The documents stay on disk so the same account finds them again, but the
+   * account that owns them is remembered. Without this marker a later sign-in
+   * by a different account could not detect the change and the previous
+   * account's vault would stay on the device forever.
+   */
+  const owner = await getLocalDataOwnerId();
+
+  if (owner !== null) {
+    await SecureStore.setItemAsync(LAST_SIGNED_OUT_USER_ID_KEY, String(owner));
+  }
+
   // Clear authentication/user context only. Saved documents remain keyed by
   // user_id so the same account restores them on next sign-in.
   await setLocalUserId(null);
@@ -404,7 +521,7 @@ function scopeClause(
 }
 
 /**
- * Wipes every local row belonging to the signed-out account.
+ * Wipes every local row belonging to the given account.
  *
  * `user_profile` and `user_settings` only ever held one account's data, so
  * they are dropped wholesale; `documents`/`reminders`/`login_sessions` are
@@ -412,41 +529,34 @@ function scopeClause(
  *
  * Called on sign-out, not on login. Deleting at login would be too late: the
  * new account could be shown the previous account's vault first.
+ *
+ * The account id is required. A purge without one would have to clear the
+ * whole database, and that would delete the rows of an account that is still
+ * signed in on the device - the opposite of what the caller asked for.
  */
-export async function purgeLocalDataForUser(
-  userId: number | null,
-): Promise<void> {
+export async function purgeLocalDataForUser(userId: number): Promise<void> {
+  if (!Number.isFinite(userId) || userId <= 0) {
+    throw new Error(
+      "A purge needs the account id of the rows to remove. Nothing was deleted.",
+    );
+  }
+
   const database = await getDb();
 
   await database.withExclusiveTransactionAsync(async (txn) => {
-    if (userId !== null) {
-      await txn.runAsync(
-        `DELETE FROM document_tags WHERE document_id IN (SELECT id FROM documents WHERE user_id = ?)`,
-        [userId],
-      );
-      await txn.runAsync(
-        `DELETE FROM document_history WHERE document_id IN (SELECT id FROM documents WHERE user_id = ?)`,
-        [userId],
-      );
-      await txn.runAsync(`DELETE FROM documents WHERE user_id = ?`, [userId]);
-      await txn.runAsync(`DELETE FROM reminders WHERE user_id = ?`, [userId]);
-      await txn.runAsync(`DELETE FROM login_sessions WHERE user_id = ?`, [
-        userId,
-      ]);
-      await txn.runAsync(`DELETE FROM user_settings WHERE user_id = ?`, [
-        userId,
-      ]);
-      await txn.runAsync(`DELETE FROM user_profile WHERE id = ?`, [userId]);
-    } else {
-      // No account context: clear everything rather than guessing.
-      await txn.runAsync(`DELETE FROM document_tags`);
-      await txn.runAsync(`DELETE FROM document_history`);
-      await txn.runAsync(`DELETE FROM documents`);
-      await txn.runAsync(`DELETE FROM reminders`);
-      await txn.runAsync(`DELETE FROM login_sessions`);
-      await txn.runAsync(`DELETE FROM user_settings`);
-      await txn.runAsync(`DELETE FROM user_profile`);
-    }
+    await txn.runAsync(
+      `DELETE FROM document_tags WHERE document_id IN (SELECT id FROM documents WHERE user_id = ?)`,
+      [userId],
+    );
+    await txn.runAsync(
+      `DELETE FROM document_history WHERE document_id IN (SELECT id FROM documents WHERE user_id = ?)`,
+      [userId],
+    );
+    await txn.runAsync(`DELETE FROM documents WHERE user_id = ?`, [userId]);
+    await txn.runAsync(`DELETE FROM reminders WHERE user_id = ?`, [userId]);
+    await txn.runAsync(`DELETE FROM login_sessions WHERE user_id = ?`, [userId]);
+    await txn.runAsync(`DELETE FROM user_settings WHERE user_id = ?`, [userId]);
+    await txn.runAsync(`DELETE FROM user_profile WHERE id = ?`, [userId]);
     await txn.runAsync(`DELETE FROM sync_queue`);
   });
 
@@ -605,9 +715,33 @@ export async function initDatabase() {
         notifications_enabled BOOLEAN DEFAULT 1,
         notify_email BOOLEAN DEFAULT 1,
         notify_expiry BOOLEAN DEFAULT 1,
-        two_factor BOOLEAN DEFAULT 0
+        two_factor BOOLEAN DEFAULT 0,
+        preferences_dirty BOOLEAN DEFAULT 0
       )
     `);
+
+    /*
+     * The column that says whether the notification preferences of the local
+     * row are newer than the server's.
+     *
+     * Without it there is no way to tell a preference that the user changed
+     * on this device from a copy of the server's value, so the sync either
+     * pushes a stale value over a newer one or never pushes the change at
+     * all.
+     */
+    const profileColumns = new Set(
+      (
+        await database.getAllAsync<{ name: string }>(
+          `PRAGMA table_info(user_profile)`,
+        )
+      ).map((col) => col.name),
+    );
+
+    if (!profileColumns.has("preferences_dirty")) {
+      await database.execAsync(
+        `ALTER TABLE user_profile ADD COLUMN preferences_dirty BOOLEAN DEFAULT 0`,
+      );
+    }
 
     await database.execAsync(`
       CREATE TABLE IF NOT EXISTS sync_queue (
@@ -796,6 +930,22 @@ export async function createDocument(
     const userId = await getLocalUserId();
     const now = new Date().toISOString();
 
+    /*
+     * A document that claims to be syncable but has no owner would be written
+     * with `user_id = NULL`. Every read is scoped by `user_id`, so the row
+     * would exist and be invisible at the same time, and the sync worker -
+     * which is scoped the same way - would never pick it up. The save would
+     * report success and the document would simply not exist for the user.
+     *
+     * A document saved while nobody is signed in is a different case: it is
+     * stored on purpose and claimed by `claimUnownedRows` on the next sign-in.
+     */
+    if (userId === null && doc.needsSync !== false) {
+      throw new Error(
+        "The document cannot be queued for sync because the signed-in account could not be determined.",
+      );
+    }
+
     let docId = 0;
 
     await database.withExclusiveTransactionAsync(async (txn) => {
@@ -874,6 +1024,28 @@ export async function createDocument(
       }
     });
 
+    /*
+     * The row has to be readable before the save is reported as successful.
+     *
+     * A driver that returns no usable id would otherwise hand back "0" and
+     * every later step - the history entry, the reminders, the sync - would
+     * address a row that does not exist.
+     */
+    if (!Number.isSafeInteger(docId) || docId <= 0) {
+      throw new Error(
+        "The document was written without a usable id and was not saved.",
+      );
+    }
+
+    const stored = await querySingle<{ id: number }>(
+      `SELECT id FROM documents WHERE id = ?`,
+      [docId],
+    );
+
+    if (!stored) {
+      throw new Error("The document could not be read back after saving.");
+    }
+
     return docId;
   } catch (error) {
     console.error("Failed to create document:", error);
@@ -881,6 +1053,18 @@ export async function createDocument(
   }
 }
 
+/**
+ * Applies a server event to the local vault.
+ *
+ * This is the realtime path. It is implemented and reviewed, but no screen
+ * mounts the hook that feeds it, so it does not run today. The sync worker is
+ * the only path that brings server changes onto the device at the moment.
+ *
+ * The guards below are the reason it is safe to enable: an event for another
+ * account is ignored, a document with pending local changes is never
+ * overwritten, and an event that is not newer than the local copy is treated
+ * as a duplicate notification.
+ */
 export async function reconcileRealtimeDocument(
   event: "INSERT" | "UPDATE" | "DELETE",
   remote: Record<string, any>,
@@ -1226,15 +1410,7 @@ export async function getAllDocuments(): Promise<LocalDocument[]> {
     // WHERE clause at all, so they stayed visible with full PII.
     const rows = await queryDocuments(
       `
-      SELECT d.id, d.user_id AS "userId", d.title, d.category, d.issuer,
-             d.document_number AS "documentNumber",
-             d.issue_date AS "issueDate", d.expiry_date AS "expiryDate", d.notes, d.status,
-             d.enable_alerts AS "enableAlerts", d.reminder_interval_days AS "reminderIntervalDays",
-             d.reminder_intervals AS "reminderIntervals", d.file_url AS "fileUrl",
-             d.file_type AS "fileType", d.s3_key AS "s3Key", d.processing_status AS "processingStatus",
-             d.risk_score AS "riskScore", d.risk_level AS "riskLevel",
-             d.needs_sync AS "needsSync", d.sync_status AS "syncStatus", d.cloud_id AS "cloudId",
-             d.created_at AS "createdAt", d.updated_at AS "updatedAt"
+      SELECT ${DOC_COLUMNS}
       FROM documents d
       WHERE d.status IS NOT 'deleted'
         AND ${userId === null ? "1 = 0" : "d.user_id = ?"}
@@ -1674,12 +1850,33 @@ export async function saveUserProfile(profile: LocalUserProfile) {
     DebugLogger.warn("LocalDatabase", "saveUserProfile skipped: signed out");
     return;
   }
+
+  /*
+   * The row is replaced as a whole, so the flag has to be carried over.
+   *
+   * The write happens on paths that do not touch the notification
+   * preferences - the document counters, for instance - and dropping the flag
+   * there would make a pending offline change look like it had been pushed.
+   */
+  const existing = await querySingle<{ preferencesDirty: number }>(
+    `SELECT preferences_dirty AS "preferencesDirty" FROM user_profile WHERE id = ?`,
+    [userId],
+  );
+
+  const preferencesDirty =
+    profile.preferencesDirty === undefined
+      ? (existing?.preferencesDirty ?? 0)
+      : profile.preferencesDirty
+        ? 1
+        : 0;
+
   await run(
     `
     INSERT OR REPLACE INTO user_profile
       (id, name, email, document_count, expiring_count, expired_count,
-       notifications_enabled, notify_email, notify_expiry, two_factor)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       notifications_enabled, notify_email, notify_expiry, two_factor,
+       preferences_dirty)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
     [
       userId,
@@ -1692,7 +1889,67 @@ export async function saveUserProfile(profile: LocalUserProfile) {
       profile.notifyEmail ? 1 : 0,
       profile.notifyExpiry ? 1 : 0,
       profile.twoFactor ? 1 : 0,
+      preferencesDirty,
     ],
+  );
+}
+
+/**
+ * Writes the notification preferences of the signed-in account into the local
+ * profile row, creating the row when it does not exist yet.
+ *
+ * The row usually does not exist: nothing else creates it. The write used to
+ * be skipped when the row was missing, so the email and the expiry switch
+ * were never stored and went back to their default the next time the screen
+ * was opened.
+ *
+ * The change is marked as pending, so a sync pushes it to the server even
+ * when the direct request failed.
+ */
+export async function updateLocalNotificationPreferences(fields: {
+  notificationsEnabled?: boolean;
+  notifyEmail?: boolean;
+  notifyExpiry?: boolean;
+}): Promise<void> {
+  const userId = await getLocalUserId();
+  if (userId === null) {
+    DebugLogger.warn(
+      "LocalDatabase",
+      "updateLocalNotificationPreferences skipped: signed out",
+    );
+    return;
+  }
+
+  const existing = await getUserProfile();
+
+  await saveUserProfile({
+    id: userId,
+    name: existing?.name ?? "",
+    email: existing?.email ?? "",
+    documentCount: existing?.documentCount ?? 0,
+    expiringCount: existing?.expiringCount ?? 0,
+    expiredCount: existing?.expiredCount ?? 0,
+    notificationsEnabled:
+      fields.notificationsEnabled ?? existing?.notificationsEnabled ?? true,
+    notifyEmail: fields.notifyEmail ?? existing?.notifyEmail ?? true,
+    notifyExpiry: fields.notifyExpiry ?? existing?.notifyExpiry ?? true,
+    twoFactor: existing?.twoFactor ?? false,
+    preferencesDirty: true,
+  });
+}
+
+/**
+ * Marks the local notification preferences as pushed (or as still pending).
+ */
+export async function setLocalPreferencesDirty(dirty: boolean): Promise<void> {
+  const userId = await getLocalUserId();
+  if (userId === null) {
+    return;
+  }
+
+  await run(
+    `UPDATE user_profile SET preferences_dirty = ? WHERE id = ?`,
+    [dirty ? 1 : 0, userId],
   );
 }
 
@@ -1705,7 +1962,8 @@ export async function getUserProfile(): Promise<LocalUserProfile | null> {
             expiring_count AS "expiringCount", expired_count AS "expiredCount",
             notifications_enabled AS "notificationsEnabled",
             notify_email AS "notifyEmail", notify_expiry AS "notifyExpiry",
-            two_factor AS "twoFactor"
+            two_factor AS "twoFactor",
+            preferences_dirty AS "preferencesDirty"
      FROM user_profile WHERE id = ?`,
     [userId],
   );
@@ -2019,6 +2277,41 @@ export async function getUnsyncedReminderCount(): Promise<number> {
   return result?.count || 0;
 }
 
+/**
+ * The ids of the records that are still waiting to be pushed.
+ *
+ * The retry log is pruned against these ids, so the log only holds the
+ * records that still exist. Only the ids are read: the pass has already
+ * loaded the full rows, and loading them a second time with every column
+ * costs a full read of the queue.
+ */
+export async function getPendingSyncIds(): Promise<{
+  documentIds: number[];
+  reminderIds: number[];
+}> {
+  const userId = await getLocalUserId();
+
+  if (userId === null) {
+    return { documentIds: [], reminderIds: [] };
+  }
+
+  const [documents, reminders] = await Promise.all([
+    queryAll<{ id: number }>(
+      `SELECT id FROM documents WHERE needs_sync = 1 AND user_id = ?`,
+      [userId],
+    ),
+    queryAll<{ id: number }>(
+      `SELECT id FROM reminders WHERE needs_sync = 1 AND user_id = ?`,
+      [userId],
+    ),
+  ]);
+
+  return {
+    documentIds: documents.map((row) => row.id),
+    reminderIds: reminders.map((row) => row.id),
+  };
+}
+
 export async function setReminderCloudId(
   id: number,
   cloudId: number | null,
@@ -2056,8 +2349,15 @@ export async function markAllRemindersAsRead(): Promise<void> {
 
 export async function markDocumentSynced(id: number) {
   const userId = await getLocalUserId();
+  /*
+   * The status is cleared together with the flag. Clearing only `needs_sync`
+   * left the row reading "waiting to sync" forever, because the screens treat
+   * a pending status as pending even when nothing is queued.
+   */
   await run(
-    `UPDATE documents SET needs_sync = 0 WHERE id = ? AND ${userId === null ? "1 = 0" : "user_id = ?"}`,
+    `UPDATE documents
+     SET needs_sync = 0, sync_status = 'synced'
+     WHERE id = ? AND ${userId === null ? "1 = 0" : "user_id = ?"}`,
     userId === null ? [id] : [id, userId],
   );
 }
@@ -2155,20 +2455,20 @@ export async function updateDocumentSyncStatus(
   syncStatus: "synced" | "pending" | "failed" | "local",
 ) {
   const userId = await getLocalUserId();
-  // When sync fails, ensure needs_sync stays set so the record is retried on
-  // the next sync attempt. This prevents a failed sync from being silently
-  // dropped from the retry queue.
-  const needsSync = syncStatus === "failed" ? 1 : undefined;
-  const setClauses = needsSync !== undefined
-    ? "sync_status = ?, needs_sync = ?"
-    : "sync_status = ?";
-  const params = needsSync !== undefined
-    ? userId === null
+  /*
+   * The flag and the status always move together.
+   *
+   * "failed" and "pending" both mean "there is still work to do", so both keep
+   * `needs_sync` set and the record stays in the retry queue. Only "synced"
+   * and "local" clear it, and only after the remote operation has succeeded.
+   */
+  const needsSync = syncStatus === "failed" || syncStatus === "pending" ? 1 : 0;
+  const setClauses = "sync_status = ?, needs_sync = ?";
+  const params =
+    userId === null
       ? [syncStatus, needsSync, id]
-      : [syncStatus, needsSync, id, userId]
-    : userId === null
-      ? [syncStatus, id]
-      : [syncStatus, id, userId];
+      : [syncStatus, needsSync, id, userId];
+
   await run(
     `UPDATE documents SET ${setClauses} WHERE id = ? AND ${userId === null ? "1 = 0" : "user_id = ?"}`,
     params,
@@ -2210,7 +2510,12 @@ export async function markDocumentSyncedWithCloud(
      SET cloud_id = COALESCE(?, cloud_id),
          server_updated_at = COALESCE(?, server_updated_at),
          needs_sync = 0,
-         sync_status = 'synced'
+         sync_status = 'synced',
+         processing_status = CASE
+           WHEN processing_status IN ('pending', 'uploading', 'processing')
+             THEN 'completed'
+           ELSE processing_status
+         END
      WHERE id = ? AND ${userId === null ? "1 = 0" : "user_id = ?"}`,
     userId === null
       ? [cloudId, serverUpdatedAt, id]
@@ -2255,34 +2560,73 @@ export async function getExpiringDocuments(
   days: number = 30,
 ): Promise<LocalDocument[]> {
   const userId = await getLocalUserId();
+  /*
+   * The window is anchored on the local calendar date, not on `date('now')`.
+   * `date('now')` is the UTC date, so for part of every day the window was
+   * shifted by one day: a document expiring today was reported as valid
+   * instead of expiring, and the last day of the window was cut off.
+   */
+  const today = toLocalDateString();
+  const windowEnd = localDateStringAfterDays(days);
+
   return queryDocuments(
     `
     SELECT ${DOC_COLUMNS}
     FROM documents
     WHERE ${EXPIRY_PRESENT}
       AND ${NOT_DELETED}
-      AND expiry_date >= date('now')
-      AND expiry_date <= date('now', '+' || ? || ' days')
+      AND expiry_date >= ?
+      AND expiry_date <= ?
       AND ${userId === null ? "1 = 0" : "user_id = ?"}
     ORDER BY expiry_date ASC
   `,
-    userId === null ? [days] : [days, userId],
+    userId === null ? [today, windowEnd] : [today, windowEnd, userId],
   );
 }
 
 export async function getExpiredDocuments(): Promise<LocalDocument[]> {
   const userId = await getLocalUserId();
+  const today = toLocalDateString();
+
   return queryDocuments(
     `
     SELECT ${DOC_COLUMNS}
     FROM documents
     WHERE ${EXPIRY_PRESENT}
       AND ${NOT_DELETED}
-      AND expiry_date < date('now')
+      AND expiry_date < ?
       AND ${userId === null ? "1 = 0" : "user_id = ?"}
     ORDER BY expiry_date ASC
   `,
-    userId === null ? [] : [userId],
+    userId === null ? [today] : [today, userId],
+  );
+}
+
+/**
+ * Every document that can still raise an expiry alert.
+ *
+ * The scheduler used to look at the 30-day window only. A user who asked to
+ * be reminded 60 or 90 days before expiry - both are offered by the app -
+ * never got the alert for a document that expires further out, because the
+ * document was never looked at. The lead time is a property of the document,
+ * so the scheduler needs every document that still has an expiry date ahead
+ * of it.
+ */
+export async function getDocumentsEligibleForAlerts(): Promise<LocalDocument[]> {
+  const userId = await getLocalUserId();
+  const today = toLocalDateString();
+
+  return queryDocuments(
+    `
+    SELECT ${DOC_COLUMNS}
+    FROM documents
+    WHERE ${EXPIRY_PRESENT}
+      AND ${NOT_DELETED}
+      AND expiry_date >= ?
+      AND ${userId === null ? "1 = 0" : "user_id = ?"}
+    ORDER BY expiry_date ASC
+  `,
+    userId === null ? [today] : [today, userId],
   );
 }
 
@@ -2291,6 +2635,8 @@ export async function getDashboardSummary(): Promise<DocumentDashboardSummary> {
   const userId = await getLocalUserId();
   const scope = userId === null ? "1 = 0" : "user_id = ?";
   const scopeParams = userId === null ? [] : [userId];
+  const today = toLocalDateString();
+  const expiringEnd = localDateStringAfterDays(30);
 
   const base = `FROM documents WHERE ${NOT_DELETED} AND ${EXPIRY_PRESENT} AND ${scope}`;
   // One aggregate instead of four sequential round trips across the native
@@ -2304,11 +2650,15 @@ export async function getDashboardSummary(): Promise<DocumentDashboardSummary> {
     `
     SELECT
       COUNT(*) AS total,
-      SUM(CASE WHEN expiry_date > date('now') THEN 1 ELSE 0 END) AS valid,
-      SUM(CASE WHEN expiry_date >= date('now') AND expiry_date <= date('now', '+30 days') THEN 1 ELSE 0 END) AS expiring,
-      SUM(CASE WHEN expiry_date < date('now') THEN 1 ELSE 0 END) AS expired
+      SUM(CASE WHEN expiry_date > ? THEN 1 ELSE 0 END) AS valid,
+      SUM(CASE WHEN expiry_date >= ? AND expiry_date <= ? THEN 1 ELSE 0 END) AS expiring,
+      SUM(CASE WHEN expiry_date < ? THEN 1 ELSE 0 END) AS expired
     ${base}
   `,
+    today,
+    today,
+    expiringEnd,
+    today,
     ...scopeParams,
   );
 
@@ -2320,10 +2670,11 @@ export async function getDashboardSummary(): Promise<DocumentDashboardSummary> {
     `
     SELECT id, title, expiry_date
     ${base}
-    AND expiry_date >= date('now')
+    AND expiry_date >= ?
     ORDER BY expiry_date ASC
     LIMIT 1
   `,
+    today,
     ...scopeParams,
   );
 

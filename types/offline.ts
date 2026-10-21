@@ -67,6 +67,16 @@ export interface LocalUserProfile {
   notifyEmail: boolean;
   notifyExpiry: boolean;
   twoFactor: boolean;
+  /**
+   * Whether the notification preferences of this row are newer than the
+   * server's.
+   *
+   * The flag is what makes an offline change reach the server eventually: a
+   * preference that was changed without a connection stays marked until a
+   * sync has pushed it. A row that is not marked holds a copy of the server's
+   * values, so it may be replaced by them.
+   */
+  preferencesDirty?: boolean;
 }
 
 export interface SyncResult {
