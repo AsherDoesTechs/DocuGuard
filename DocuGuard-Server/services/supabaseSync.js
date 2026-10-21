@@ -1,5 +1,6 @@
 const { supabaseAdmin } = require("../config/supabase");
 const db = require("../config/db");
+const { authoritativeDocumentRow } = require("./dataSyncService");
 
 async function exportUserData(userId) {
   const documents = await db.query(
@@ -35,22 +36,20 @@ async function exportUserData(userId) {
   return exportData;
 }
 
+/**
+ * Writes a document to the mirror.
+ *
+ * The payload is mapped as a stored row rather than as a request payload: an
+ * upsert writes every column it is given, so a column the payload does not
+ * carry is left alone, and a column that is NULL stays NULL. The previous
+ * payload named only some of the columns and replaced the revision with a
+ * freshly minted timestamp, so a document that was written here could have
+ * its expiry date and its notes cleared.
+ */
 async function syncDocumentToCloud(userId, document) {
   const { error } = await supabaseAdmin
     .from("documents")
-    .upsert({
-      id: document.id,
-      user_id: userId,
-      title: document.title,
-      category: document.category,
-      issuer: document.issuer,
-      document_number: document.documentNumber,
-      issue_date: document.issueDate,
-      expiry_date: document.expiryDate,
-      notes: document.notes,
-      status: document.status,
-      updated_at: new Date().toISOString(),
-    });
+    .upsert(authoritativeDocumentRow(document, userId));
 
   if (error) {
     throw new Error(`Supabase sync failed: ${error.message}`);

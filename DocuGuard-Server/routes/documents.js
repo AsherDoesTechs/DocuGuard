@@ -8,6 +8,9 @@ router.use(authMiddleware);
 
 // Specific routes FIRST (before parameterized routes)
 router.get("/upload-url", asyncHandler(documentController.getUploadUrl));
+// Removes an upload that never became a document. It has to be registered
+// before "/:id", otherwise "storage" would be read as a document id.
+router.delete("/storage", asyncHandler(documentController.deleteUploadedObject));
 router.post("/ocr-draft", asyncHandler(documentController.createOcrDraft));
 router.post("/process", asyncHandler(documentController.processDocument));
 router.post("/verify", asyncHandler(documentController.verifyDocument));

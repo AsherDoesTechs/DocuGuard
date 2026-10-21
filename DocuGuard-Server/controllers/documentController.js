@@ -4,13 +4,18 @@ const {
   getSignedDownloadUrl,
   rehydrateFileUrls,
   validateFileType,
+  deleteStorageObject,
 } = require("../services/storageService");
 const { extractDocumentData } = require("../services/logicEngine");
 const {
   sendProcessingCompleteNotification,
   sendVerificationNotification,
 } = require("../services/notificationService");
-const { syncDocument, deleteRecord } = require("../services/dataSyncService");
+const { syncDocument, syncDocumentFromAuthoritative, deleteRecord } = require("../services/dataSyncService");
+const {
+  SYNC_TARGET,
+  resolveSyncTarget,
+} = require("../services/documentSyncResolver");
 const { ErrorCodes } = require("../utils/errorCodes");
 const { debug, info, warn, error: logError } = require("../utils/debugLogger");
 const {
@@ -22,6 +27,75 @@ const {
   verifyDocumentSchema,
   validateSchema,
 } = require("../../shared/validation/schemas");
+const {
+  canonicalizeServerRevision,
+  revisionPrecision,
+} = require("../../shared/sync/serverRevision");
+const { ownsStorageKey } = require("../../shared/sync/storageObjectPolicy");
+
+/**
+ * The server revision of a row, rendered so it survives a round trip.
+ *
+ * `updated_at` is a timestamptz with microsecond precision, but a JSON
+ * response can only carry milliseconds. The client sends the revision it last
+ * saw back as `baseUpdatedAt`, and the server compares it with the stored
+ * revision. A lossy value never matched, so every document that had been
+ * synced once and then edited locally was answered with a 409 conflict on the
+ * next sync and never left the pending queue.
+ *
+ * `to_char` keeps all six microsecond digits and the explicit `Z` keeps the
+ * value unambiguous, so the string Postgres parses back is the value it stored.
+ */
+const UPDATED_AT_ISO_SQL = `to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
+
+/**
+ * The revision comparison used by the conditional sync update.
+ *
+ * The comparison uses the highest precision the incoming revision can carry.
+ *
+ * A canonical revision names one exact instant, so the row has to be at that
+ * exact instant:
+ *
+ *   `updated_at = $18::timestamptz`
+ *
+ * A revision that a pre-upgrade client produced carries milliseconds only. The
+ * sub-millisecond part of the instant is simply not in the request, so the
+ * row is compared with millisecond precision:
+ *
+ *   `date_trunc('milliseconds', updated_at) = date_trunc('milliseconds', $18)`
+ *
+ * Comparing a canonical revision with millisecond precision would say that
+ * "...T15:27:11.123456Z" and "...T15:27:11.123789Z" are the same revision.
+ * They are two different moments: a client that had seen the first one and
+ * had been overwritten by the second would be told that nothing had changed,
+ * and its write would be accepted over the newer edit. That is a lost update.
+ *
+ * Both sides are truncated in UTC, so the comparison does not depend on the
+ * time zone of the database session.
+ *
+ * @param {number} revisionParam The number of the revision parameter.
+ * @param {number} exactParam The number of the parameter that says whether the
+ *   revision is exact.
+ * @returns {string}
+ */
+function buildRevisionMatchSql(revisionParam, exactParam) {
+  return `(
+  ($${exactParam}::boolean AND updated_at = $${revisionParam}::timestamptz)
+  OR (
+    NOT $${exactParam}::boolean
+    AND date_trunc('milliseconds', updated_at AT TIME ZONE 'UTC')
+      = date_trunc('milliseconds', $${revisionParam}::timestamptz AT TIME ZONE 'UTC')
+  )
+)`;
+}
+
+const REVISION_MATCH_SQL = buildRevisionMatchSql(18, 19);
+
+/**
+ * The same comparison for the plain update route, whose parameters are
+ * numbered differently.
+ */
+const REVISION_MATCH_SQL_UPDATE = buildRevisionMatchSql(11, 12);
 
 // Get all documents for the authenticated user
 exports.getAllDocuments = async (req, res) => {
@@ -29,11 +103,11 @@ exports.getAllDocuments = async (req, res) => {
 
   try {
     const result = await db.query(
-      `SELECT id, title, category, issuer, document_number AS "documentNumber", 
+      `SELECT id, title, category, issuer, document_number AS "documentNumber",
               issue_date AS "issueDate", expiry_date AS "expiryDate", notes, status, enable_alerts AS "enableAlerts",
               file_url AS "fileUrl", file_type AS "fileType", s3_key AS "s3Key",
               processing_status AS "processingStatus", risk_score AS "riskScore", risk_level AS "riskLevel"
-       FROM documents WHERE user_id = $1 ORDER BY expiry_date ASC NULLS LAST`,
+       FROM documents WHERE user_id = $1 AND status <> 'deleted' ORDER BY expiry_date ASC NULLS LAST`,
       [userId],
     );
 
@@ -209,9 +283,10 @@ exports.createOcrDraft = async (req, res) => {
          file_url AS "fileUrl",
          file_type AS "fileType",
          s3_key AS "s3Key",
-         processing_status AS "processingStatus",
-         risk_score AS "riskScore",
-         risk_level AS "riskLevel"`,
+          processing_status AS "processingStatus",
+          risk_score AS "riskScore",
+          risk_level AS "riskLevel",
+          ${UPDATED_AT_ISO_SQL} AS "updatedAt"`,
             [
         userId,
         "Scanned Document",
@@ -229,6 +304,8 @@ exports.createOcrDraft = async (req, res) => {
 
     const document = result.rows[0];
 
+    // A row that does not exist yet: the mirror is written as a complete
+    // record, with the column defaults for the fields the row does not have.
     await syncDocument(userId, document, "INSERT");
 
     return res.status(201).json({
@@ -381,7 +458,7 @@ exports.processDocument = async (req, res) => {
         processing_status = 'completed'
       WHERE id = $10
         AND user_id = $11
-      RETURNING *
+      RETURNING *, ${UPDATED_AT_ISO_SQL} AS "updatedAt"
       `,
       [
         extractedData.title,
@@ -405,6 +482,12 @@ exports.processDocument = async (req, res) => {
     }
 
     const updatedDocument = updateResult.rows[0];
+    /*
+     * The update above is the whole row, so the mirror can be written from
+     * it. It is mapped as a stored row rather than as a request payload: a
+     * field that is NULL in the database is a fact ("no issuer", "never
+     * assessed"), and a field the update did not touch is left alone.
+     */
     await syncDocument(userId, updatedDocument, "UPDATE");
 
     /*
@@ -457,12 +540,24 @@ exports.processDocument = async (req, res) => {
           `,
           [req.body.documentId, req.user.userId],
         );
-        await syncDocument(req.user.userId, {
-          id: req.body.documentId,
-          status: "active",
-          processing_status: "failed",
-          user_id: req.user.userId,
-        }, "UPDATE");
+        /*
+         * Mirror the row the server actually wrote, not a payload built from the
+         * request body.
+         *
+         * The mirror is an upsert into the same table the update above just
+         * wrote, so a payload that leaves a field out does not leave the field
+         * alone - it clears it. A partial payload used to erase the title, the
+         * expiry date, the document number, the issuer, the storage key and
+         * the risk fields, and to replace the title with "Scanned Document".
+         *
+         * The persisted row is fetched, scoped by this account, and mirrored
+         * as it is. When the row cannot be read, nothing is mirrored at all.
+         */
+        await syncDocumentFromAuthoritative(
+          req.user.userId,
+          req.body.documentId,
+          "UPDATE",
+        );
       }
     } catch (dbError) {
       logError("Could not update failed processing status:", dbError);
@@ -518,13 +613,24 @@ exports.verifyDocument = async (req, res) => {
       });
     }
 
+    /*
+     * Mirror the row the server actually wrote, not a payload built from the
+     * request body.
+     *
+     * The mirror is an upsert into the same table the update above just
+     * wrote, so a payload that leaves a field out does not leave the field
+     * alone - it clears it. A partial payload used to erase the expiry date,
+     * the document number, the issuer, the storage key, the file reference
+     * and the risk fields, and to reset the category to "other".
+     *
+     * The persisted row is fetched, scoped by this account, and mirrored as
+     * it is. When the row cannot be read - it was deleted, or it belongs to
+     * somebody else - nothing is mirrored at all, rather than a record
+     * invented from a partial request body.
+     */
+    await syncDocumentFromAuthoritative(userId, documentId, "UPDATE");
+
     if (docResult.rows.length > 0) {
-      await syncDocument(userId, {
-        id: documentId,
-        userId,
-        title: docResult.rows[0].title,
-        status: "verified",
-      }, "UPDATE");
       const userResult = await db.query(
         `SELECT fcm_token, expo_push_token FROM users WHERE id = $1`,
         [userId],
@@ -593,10 +699,11 @@ exports.getDocumentById = async (req, res) => {
 
   try {
     const doc = await db.query(
-      `SELECT id, title, category, issuer, document_number AS "documentNumber", 
+      `SELECT id, title, category, issuer, document_number AS "documentNumber",
               issue_date AS "issueDate", expiry_date AS "expiryDate", notes, status, enable_alerts AS "enableAlerts",
               file_url AS "fileUrl", file_type AS "fileType", s3_key AS "s3Key",
-              processing_status AS "processingStatus", risk_score AS "riskScore", risk_level AS "riskLevel"
+              processing_status AS "processingStatus", risk_score AS "riskScore", risk_level AS "riskLevel",
+              ${UPDATED_AT_ISO_SQL} AS "updatedAt"
        FROM documents WHERE id = $1 AND user_id = $2`,
       [docId, userId],
     );
@@ -711,10 +818,11 @@ exports.createDocument = async (req, res) => {
          s3_key, file_url, file_type, processing_status
        ) 
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'active', CURRENT_TIMESTAMP, $10, $11, $12, $13) 
-       RETURNING id, title, category, issuer, document_number AS "documentNumber", 
+       RETURNING id, title, category, issuer, document_number AS "documentNumber",
                  issue_date AS "issueDate", expiry_date AS "expiryDate", notes, status, enable_alerts AS "enableAlerts",
                  file_url AS "fileUrl", file_type AS "fileType", s3_key AS "s3Key",
-                 processing_status AS "processingStatus", risk_score AS "riskScore", risk_level AS "riskLevel"`,
+                 processing_status AS "processingStatus", risk_score AS "riskScore", risk_level AS "riskLevel",
+                 ${UPDATED_AT_ISO_SQL} AS "updatedAt"`,
       [
         userId,
         title,
@@ -736,6 +844,8 @@ exports.createDocument = async (req, res) => {
       userId,
       docId: newDoc.rows[0].id,
     });
+    // A row that does not exist yet: the mirror is written as a complete
+    // record, with the column defaults for the fields the row does not have.
     await syncDocument(userId, newDoc.rows[0], "INSERT");
     res.status(201).json({
       message: "Document created successfully",
@@ -786,19 +896,51 @@ exports.updateDocument = async (req, res) => {
     expiryDate,
     notes,
     enableAlerts,
+    baseUpdatedAt,
   } = validation.data;
+
+  /*
+   * The revision this device last saw, when it sent one.
+   *
+   * The guard is optional. A client that does not know the revision keeps the
+   * previous behaviour and the update is applied unconditionally, which is
+   * what every client that predates revision tracking expects.
+   *
+   * A client that does send the revision gets the update refused with a 409
+   * when the server copy has moved on. Without this the edit screen was a
+   * lost update: it overwrote whatever the server held, including a change
+   * that had been made on the web app or on another device.
+   */
+  let baseRevision = null;
+  let exactRevision = true;
+
+  if (baseUpdatedAt !== undefined && baseUpdatedAt !== null) {
+    baseRevision = canonicalizeServerRevision(baseUpdatedAt);
+
+    if (baseRevision === null) {
+      return res.status(400).json({
+        error:
+          "The document revision is not in a format this server understands.",
+        code: ErrorCodes.DOC_VALIDATION,
+      });
+    }
+
+    exactRevision = revisionPrecision(baseUpdatedAt) === "microsecond";
+  }
 
   try {
     const updated = await db.query(
-      `UPDATE documents 
-       SET title = $1, category = $2, issuer = $3, document_number = $4, 
-           issue_date = $5, expiry_date = $6, notes = $7, enable_alerts = $8, 
-           updated_at = CURRENT_TIMESTAMP
-       WHERE id = $9 AND user_id = $10 
-       RETURNING id, title, category, issuer, document_number AS "documentNumber", 
+      `UPDATE documents
+       SET title = $1, category = $2, issuer = $3, document_number = $4,
+           issue_date = $5, expiry_date = $6, notes = $7, enable_alerts = $8,
+           updated_at = clock_timestamp()
+       WHERE id = $9 AND user_id = $10
+         AND ($11::timestamptz IS NULL OR ${REVISION_MATCH_SQL_UPDATE})
+       RETURNING id, title, category, issuer, document_number AS "documentNumber",
                  issue_date AS "issueDate", expiry_date AS "expiryDate", notes, status, enable_alerts AS "enableAlerts",
                  s3_key AS "s3Key", file_url AS "fileUrl", file_type AS "fileType",
-                 processing_status AS "processingStatus"`,
+                 processing_status AS "processingStatus",
+                 ${UPDATED_AT_ISO_SQL} AS "updatedAt"`,
       [
         title,
         category,
@@ -810,17 +952,50 @@ exports.updateDocument = async (req, res) => {
         typeof enableAlerts === "boolean" ? enableAlerts : true,
         docId,
         userId,
+        baseRevision || null,
+        exactRevision,
       ],
     );
 
     if (updated.rows.length === 0) {
-      return res.status(404).json({
-        error: "Document not found or unauthorized",
-        code: ErrorCodes.DOC_NOT_FOUND,
+      /*
+       * Either the document is not there, or it is there but it has moved on.
+       *
+       * The two cases are told apart by asking for the row: a document that
+       * does not exist, or is not owned by this account, must not be reported
+       * as a conflict, because a conflict would tell the user that their copy
+       * was changed on another device when in fact there is no such document.
+       */
+      const current = await db.query(
+        `SELECT ${UPDATED_AT_ISO_SQL} AS "updatedAt"
+         FROM documents WHERE id = $1 AND user_id = $2`,
+        [docId, userId],
+      );
+
+      if (current.rows.length === 0) {
+        return res.status(404).json({
+          error: "Document not found or unauthorized",
+          code: ErrorCodes.DOC_NOT_FOUND,
+        });
+      }
+
+      return res.status(409).json({
+        error:
+          "This document was changed on another device since your last sync",
+        code: ErrorCodes.SYNC_CONFLICT,
+        conflict: true,
+        serverUpdatedAt: current.rows[0].updatedAt ?? null,
       });
     }
 
     info("Documents", "Document updated", { userId, docId });
+    /*
+     * The update above did not touch the risk columns, so the returned row
+     * does not carry them. The mirror is written from the stored row, and a
+     * column the payload does not carry is not written at all - so the risk
+     * score and the risk level of the document survive the edit instead of
+     * being cleared.
+     */
     await syncDocument(userId, updated.rows[0], "UPDATE");
 
     res.json({
@@ -880,16 +1055,58 @@ exports.syncDocument = async (req, res) => {
 
   debug("Documents", "Sync document request", { userId, title });
 
-  try {
-    // Prefer the id the client already holds. Falling back to a document_number
-    // match can silently overwrite a different document when two share a number.
-    if (cloudId) {
-      const owned = await db.query(
-        `SELECT id FROM documents WHERE id = $1 AND user_id = $2`,
-        [cloudId, userId],
-      );
+  /*
+   * The revision the client last saw.
+   *
+   * The value is validated before it reaches the database. An unusable
+   * revision used to be handed to Postgres as `$18::timestamptz`, which threw
+   * "invalid input syntax" and answered the push with a 500. A client that
+   * cannot state a usable revision is told so instead, and the revision it
+   * does send is normalised into the format the comparison uses.
+   *
+   * The precision of the revision decides how strictly the row is compared. A
+   * canonical revision names one exact instant and is compared exactly. A
+   * revision from a pre-upgrade client carries milliseconds only, so the row
+   * is compared with millisecond precision - that is the most the request can
+   * say about the row it came from.
+   */
+  let baseRevision = null;
+  let exactRevision = true;
 
-      if (owned.rows.length === 0) {
+  if (baseUpdatedAt !== undefined && baseUpdatedAt !== null) {
+    baseRevision = canonicalizeServerRevision(baseUpdatedAt);
+
+    if (baseRevision === null) {
+      return res.status(400).json({
+        error:
+          "The document revision is not in a format this server understands.",
+        code: ErrorCodes.SYNC_PARTIAL,
+      });
+    }
+
+    exactRevision = revisionPrecision(baseUpdatedAt) === "microsecond";
+  }
+
+  try {
+    /*
+     * Which server row does this payload belong to?
+     *
+     * The lookup used to be "the row with this document number", which could
+     * not recognise a document that had never been given one - the OCR draft
+     * of a scanned document - and so created a second row for it. The
+     * resolver tries the row id first, then the storage key of the upload and
+     * only then the document number.
+     */
+    const target = await resolveSyncTarget(db, {
+      userId,
+      cloudId,
+      s3Key,
+      documentNumber,
+      title,
+    });
+
+    if (target.action === SYNC_TARGET.CONFLICT) {
+      if (target.reason === "notOwned") {
         // The row this client knew about is gone or no longer owned by it.
         // Do not create or overwrite anything; let the client keep local data.
         return res.status(409).json({
@@ -898,48 +1115,42 @@ exports.syncDocument = async (req, res) => {
           conflict: true,
         });
       }
-    }
-
-    let existing;
-    if (cloudId) {
-      existing = { rows: [{ id: cloudId }] };
-    } else {
-      existing = await db.query(
-        `SELECT id, title FROM documents WHERE document_number = $1 AND user_id = $2`,
-        [documentNumber || title, userId],
-      );
 
       // Same number but a different document: flag rather than overwrite.
-      if (existing.rows.length > 0 && existing.rows[0].title !== title) {
-        return res.status(409).json({
-          error:
-            "A different document already uses this document number on your account",
-          code: ErrorCodes.SYNC_CONFLICT,
-          conflict: true,
-        });
-      }
+      return res.status(409).json({
+        error:
+          "A different document already uses this document number on your account",
+        code: ErrorCodes.SYNC_CONFLICT,
+        conflict: true,
+      });
     }
 
-    if (existing.rows.length > 0) {
+    if (target.action === SYNC_TARGET.UPDATE) {
       // Conditional update. When the client tells us which server revision it
       // last saw, require the row to still be at that revision. Without this
       // any push was an unconditional overwrite, so a change made on the web
       // app was silently destroyed by the next mobile sync.
+      //
+      // The new revision is written with `clock_timestamp()`, the moment the
+      // statement runs. `CURRENT_TIMESTAMP` is the moment the transaction
+      // started, so two writes in the same transaction would leave the
+      // revision unchanged and the second write would look like a write
+      // against a row that had not moved.
       const updated = await db.query(
         `UPDATE documents
          SET title = $1, category = $2, issuer = $3, document_number = $4,
              issue_date = $5, expiry_date = $6, notes = $7, enable_alerts = $8,
              status = $9, s3_key = $10, file_url = $11, file_type = $12,
              processing_status = $13, risk_score = $14, risk_level = $15,
-             updated_at = CURRENT_TIMESTAMP
+             updated_at = clock_timestamp()
          WHERE id = $16 AND user_id = $17
-           AND ($18::timestamptz IS NULL OR updated_at = $18::timestamptz)
+           AND ($18::timestamptz IS NULL OR ${REVISION_MATCH_SQL})
          RETURNING id, title, category, issuer, document_number AS "documentNumber",
                    issue_date AS "issueDate", expiry_date AS "expiryDate", notes, status,
                    enable_alerts AS "enableAlerts", file_url AS "fileUrl", file_type AS "fileType",
                    s3_key AS "s3Key", processing_status AS "processingStatus",
                    risk_score AS "riskScore", risk_level AS "riskLevel",
-                   updated_at AS "updatedAt"`,
+                   ${UPDATED_AT_ISO_SQL} AS "updatedAt"`,
         [
           title,
           category || "other",
@@ -956,18 +1167,19 @@ exports.syncDocument = async (req, res) => {
           processingStatus || "completed",
           riskScore,
           riskLevel,
-          existing.rows[0].id,
+          target.rowId,
           userId,
-          baseUpdatedAt || null,
+          baseRevision || null,
+          exactRevision,
         ],
       );
 
       // The revision guard matched no row: the server copy moved on.
       if (updated.rows.length === 0) {
         const current = await db.query(
-          `SELECT updated_at AS "updatedAt"
+          `SELECT ${UPDATED_AT_ISO_SQL} AS "updatedAt"
            FROM documents WHERE id = $1 AND user_id = $2`,
-          [existing.rows[0].id, userId],
+          [target.rowId, userId],
         );
 
         return res.status(409).json({
@@ -981,61 +1193,70 @@ exports.syncDocument = async (req, res) => {
 
       info("Documents", "Document synced (updated)", {
         userId,
-        docId: existing.rows[0].id,
+        docId: target.rowId,
+        matchedBy: target.matchedBy,
       });
+      /*
+       * The returned row is the stored row, so it is mirrored as it is. A
+       * column the payload does not carry is not written, and a column that
+       * is NULL stays NULL - the mirror never invents a value for a field
+       * the client did not send.
+       */
       await syncDocument(userId, updated.rows[0], "UPDATE");
 
       res.json({
         message: "Document synced (updated)",
         document: updated.rows[0],
       });
-    } else {
-      const inserted = await db.query(
-        `INSERT INTO documents (
-           user_id, title, category, issuer, document_number, 
-           issue_date, expiry_date, notes, enable_alerts, status, created_at,
-           s3_key, file_url, file_type, processing_status,
-           risk_score, risk_level
-         ) 
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CURRENT_TIMESTAMP, $11, $12, $13, $14, $15, $16) 
-         RETURNING id, title, category, issuer, document_number AS "documentNumber", 
-                   issue_date AS "issueDate", expiry_date AS "expiryDate", notes, status, enable_alerts AS "enableAlerts",
-                   s3_key AS "s3Key", file_url AS "fileUrl", file_type AS "fileType",
-                   processing_status AS "processingStatus",
-                   risk_score AS "riskScore", risk_level AS "riskLevel"`,
-        [
-          userId,
-          title,
-          category || "other",
-          issuer,
-          documentNumber,
-          issueDate,
-          expiryDate,
-          notes,
-          enableAlerts ? true : false,
-          status || "active",
-          s3Key,
-          fileUrl,
-          fileType,
-          processingStatus || "completed",
-          // Null when the client sent nothing: no detector has assessed this
-          // document. Writing 0/"Low" would read as "assessed and safe".
-          riskScore ?? null,
-          riskLevel ?? null,
-        ],
-      );
-
-      info("Documents", "Document synced (created)", {
-        userId,
-        docId: inserted.rows[0].id,
-      });
-      await syncDocument(userId, inserted.rows[0], "INSERT");
-
-      res.status(201).json({
-        message: "Document synced (created)",
-        document: inserted.rows[0],
-      });
+      return;
     }
+
+    const inserted = await db.query(
+      `INSERT INTO documents (
+         user_id, title, category, issuer, document_number,
+         issue_date, expiry_date, notes, enable_alerts, status, created_at,
+         s3_key, file_url, file_type, processing_status,
+         risk_score, risk_level
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CURRENT_TIMESTAMP, $11, $12, $13, $14, $15, $16)
+       RETURNING id, title, category, issuer, document_number AS "documentNumber",
+                 issue_date AS "issueDate", expiry_date AS "expiryDate", notes, status,
+                 enable_alerts AS "enableAlerts", file_url AS "fileUrl", file_type AS "fileType",
+                 s3_key AS "s3Key", processing_status AS "processingStatus",
+                 risk_score AS "riskScore", risk_level AS "riskLevel",
+                 ${UPDATED_AT_ISO_SQL} AS "updatedAt"`,
+      [
+        userId,
+        title,
+        category || "other",
+        issuer,
+        documentNumber,
+        issueDate,
+        expiryDate,
+        notes,
+        enableAlerts ? true : false,
+        status || "active",
+        s3Key,
+        fileUrl,
+        fileType,
+        processingStatus || "completed",
+        // Null when the client sent nothing: no detector has assessed this
+        // document. Writing 0/"Low" would read as "assessed and safe".
+        riskScore ?? null,
+        riskLevel ?? null,
+      ],
+    );
+
+    info("Documents", "Document synced (created)", {
+      userId,
+      docId: inserted.rows[0].id,
+    });
+    await syncDocument(userId, inserted.rows[0], "INSERT");
+
+    res.status(201).json({
+      message: "Document synced (created)",
+      document: inserted.rows[0],
+    });
   } catch (err) {
     logError(
       "Documents",
@@ -1055,6 +1276,85 @@ exports.syncDocument = async (req, res) => {
   }
 };
 
+/**
+ * Removes an uploaded object that never became a document.
+ *
+ * The upload of a picked file happens before the document is written to the
+ * database. When the database write then fails, the uploaded object is left
+ * behind: the file is in the bucket, but no row points at it and no
+ * interaction can ever reach it again.
+ *
+ * The client calls this to clean up after itself. The removal is deliberately
+ * narrow:
+ *
+ *   - the key has to live in the caller's own folder, so nobody can remove
+ *     another account's object;
+ *   - the key must not be referenced by any document, so an object that a
+ *     document does use is never removed;
+ *   - the removal itself is best effort. A failure is reported, and the
+ *     object is left for a later cleanup rather than blocking the request.
+ */
+exports.deleteUploadedObject = async (req, res) => {
+  const userId = req.user.userId;
+  const s3Key = typeof req.body?.s3Key === "string" ? req.body.s3Key.trim() : "";
+
+  if (!s3Key) {
+    return res.status(400).json({
+      error: "A storage key is required.",
+      code: ErrorCodes.DOC_VALIDATION,
+    });
+  }
+
+  // The stored name is always "<userId>/<uuid>.<ext>".
+  if (!ownsStorageKey(s3Key, userId)) {
+    return res.status(403).json({
+      error: "This storage key does not belong to your account.",
+      code: ErrorCodes.DOC_NOT_FOUND,
+    });
+  }
+
+  try {
+    /*
+     * A key that a document still uses is never removed. The check is across
+     * every account: an object that is referenced anywhere is in use, even if
+     * the row that references it belongs to somebody else.
+     */
+    const inUse = await db.query(
+      `SELECT id FROM documents WHERE s3_key = $1 LIMIT 1`,
+      [s3Key],
+    );
+
+    if (inUse.rows.length > 0) {
+      return res.status(409).json({
+        error: "This file is still attached to a document.",
+        code: ErrorCodes.SYNC_CONFLICT,
+        conflict: true,
+      });
+    }
+
+    await deleteStorageObject(s3Key);
+
+    info("Documents", "Uploaded object removed", { userId, s3Key });
+    res.json({ message: "Uploaded object removed" });
+  } catch (err) {
+    logError(
+      "Documents",
+      "Error removing an uploaded object",
+      {
+        error: err.message,
+        stack: err.stack,
+        userId,
+        s3Key,
+      },
+      ErrorCodes.DOC_DELETE_FAILED,
+    );
+    res.status(500).json({
+      error: "Server error while removing the uploaded file",
+      code: ErrorCodes.DOC_DELETE_FAILED,
+    });
+  }
+};
+
 // Delete a document
 exports.deleteDocument = async (req, res) => {
   const userId = req.user.userId;
@@ -1062,7 +1362,7 @@ exports.deleteDocument = async (req, res) => {
 
   try {
     const result = await db.query(
-      `DELETE FROM documents WHERE id = $1 AND user_id = $2 RETURNING id`,
+      `DELETE FROM documents WHERE id = $1 AND user_id = $2 RETURNING id, s3_key`,
       [docId, userId],
     );
 
@@ -1074,6 +1374,23 @@ exports.deleteDocument = async (req, res) => {
     }
 
     info("Documents", "Document deleted", { userId, docId });
+
+    /*
+     * The stored object goes with the row.
+     *
+     * The row is the only thing that points at the object, so a deleted
+     * document left its file in the bucket forever: nothing could reach it
+     * any more and nothing would ever remove it. The removal is best effort -
+     * a failure here must not turn a completed delete into an error - and it
+     * only ever touches the key that belonged to the row that was just
+     * deleted.
+     */
+    const deletedKey = result.rows[0].s3_key;
+
+    if (deletedKey) {
+      await deleteStorageObject(deletedKey);
+    }
+
     await deleteRecord("documents", docId, userId);
     res.json({ message: "Document deleted successfully" });
   } catch (err) {
