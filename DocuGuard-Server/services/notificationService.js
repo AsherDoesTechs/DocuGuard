@@ -1,4 +1,5 @@
-const admin = require("../config/firebase");
+const app = require("../config/firebase");
+const { getMessaging } = require("firebase-admin/messaging");
 
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
 
@@ -84,7 +85,7 @@ async function sendPushNotification(token, title, body, data = {}) {
       },
     };
 
-    const response = await admin.messaging().send(message);
+    const response = await getMessaging(app).send(message);
     console.log("FCM push notification sent:", response);
     return { success: true, messageId: response, channel: "fcm" };
   } catch (error) {
@@ -93,7 +94,11 @@ async function sendPushNotification(token, title, body, data = {}) {
   }
 }
 
-async function sendExpirationReminder(userToken, documentTitle, daysUntilExpiry) {
+async function sendExpirationReminder(
+  userToken,
+  documentTitle,
+  daysUntilExpiry,
+) {
   let severity = "warning";
   let title = "⚠️ Document Expiring Soon";
   let body = `Your document "${documentTitle}" expires in ${daysUntilExpiry} days.`;
