@@ -9,7 +9,11 @@ const {
 } = require("../services/storageService");
 // OCR extraction is performed exclusively by documentValidationService.
 const storageService = require("../services/storageService");
-const asyncHandler = require("../utils/asyncHandler");
+const asyncHandlerModule = require("../utils/asyncHandler");
+const asyncHandler =
+  typeof asyncHandlerModule === "function"
+    ? asyncHandlerModule
+    : asyncHandlerModule.asyncHandler || asyncHandlerModule.default;
 const {
   sendProcessingCompleteNotification,
   sendVerificationNotification,
