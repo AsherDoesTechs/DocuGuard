@@ -42,7 +42,7 @@ function evaluateExtractionConfidence(extractedData) {
   }
 
   const configuredThreshold = Number(
-    process.env.AZURE_FIELD_CONFIDENCE_THRESHOLD || "0.85",
+    process.env.AZURE_FIELD_CONFIDENCE_THRESHOLD || "0.50",
   );
 
   if (
