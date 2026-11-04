@@ -74,8 +74,6 @@ function evaluateExtractionConfidence(extractedData) {
 
     const value = node.value;
 
-    // Nested Azure objects and arrays can contain independently scored fields.
-    // Evaluate those child fields rather than relying only on the parent score.
     if (value && typeof value === "object") {
       const nestedFields = Array.isArray(value)
         ? value.filter(
@@ -144,6 +142,7 @@ function evaluateExtractionConfidence(extractedData) {
     uncertainFields: 0,
   };
 }
+
 async function validateDocumentType({ fileUrl }) {
   if (!fileUrl) {
     return {
@@ -178,16 +177,13 @@ async function validateDocumentType({ fileUrl }) {
       throw new Error("Azure classification returned an invalid decision.");
     }
 
-    // Only the classifier's exact label and validated route choose the model.
-    // fileType and selectedCategory deliberately do not influence extraction.
     const extractedData = await extractClassifiedDocumentData(
       fileUrl,
       classificationResult.modelId,
       classificationResult.classification,
     );
 
-    const confidenceEvaluation =
-      evaluateExtractionConfidence(extractedData);
+    const confidenceEvaluation = evaluateExtractionConfidence(extractedData);
 
     if (confidenceEvaluation.needsReview) {
       return {
@@ -212,13 +208,10 @@ async function validateDocumentType({ fileUrl }) {
       confidenceEvaluation,
     };
   } catch (error) {
-    // Keep raw SDK details and document URLs out of client responses and logs.
+    // Log the actual error message for debugging on Render
     warn("DocumentValidation", "Classification-first validation failed", {
-      error:
-        error?.message === "Azure document classification timed out." ||
-        error?.message === "Azure document extraction timed out."
-          ? "OCR operation timed out"
-          : "OCR operation failed",
+      error: error?.message || "OCR operation failed",
+      stack: error?.stack,
     });
 
     const timedOut = /timed out/i.test(String(error?.message || ""));
@@ -229,7 +222,7 @@ async function validateDocumentType({ fileUrl }) {
       code: "OCR_PROCESS_FAILED",
       message: timedOut
         ? "Document processing timed out. Please try again."
-        : "Document processing failed. Please try again.",
+        : `Document processing failed: ${error?.message || "Please try again."}`,
     };
   }
 }
