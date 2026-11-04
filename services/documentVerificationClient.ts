@@ -2,6 +2,9 @@ export interface AzureOCRResponse {
   documentType?: string;
   fields?: {
     documentNumber?: { content: string };
+    licenseNumber?: { content: string };
+    idNumber?: { content: string };
+    cardNumber?: { content: string };
     issueDate?: { content: string };
     expiryDate?: { content: string };
     [key: string]: any;
@@ -49,11 +52,16 @@ export class DocumentVerificationOrchestrator {
     payload: VerificationRequest,
   ): VerificationResponse {
     const { selectedSpecificId, azureOcrResult } = payload;
-    const docType = (azureOcrResult.documentType || "").toLowerCase();
+    const docType = (azureOcrResult.documentType || "")
+      .toLowerCase()
+      .replace(/[\s\-_]/g, "");
+    const normalizedSelectedId = (selectedSpecificId || "")
+      .toLowerCase()
+      .replace(/[\s\-_]/g, "");
 
     // 1. Specific Passport Validation
-    if (selectedSpecificId === "philippine-passport") {
-      if (!azureOcrResult.passportModel && docType !== "passport") {
+    if (normalizedSelectedId.includes("passport")) {
+      if (!azureOcrResult.passportModel && !docType.includes("passport")) {
         return {
           allow_processing: false,
           error_code: "DOCUMENT_TYPE_MISMATCH",
@@ -63,7 +71,6 @@ export class DocumentVerificationOrchestrator {
       }
     } else {
       // 2. Flexible General ID / Driver's License / Government ID Validation
-      // Azure often returns generic tags like "identitycard", "idcard", "driverslicense", or empty for IDs.
       const isIdFamily = [
         "driver",
         "license",
@@ -76,40 +83,40 @@ export class DocumentVerificationOrchestrator {
         "tin",
         "philhealth",
         "sss",
-      ].some((keyword) => selectedSpecificId.toLowerCase().includes(keyword));
+      ].some((keyword) => normalizedSelectedId.includes(keyword));
 
       if (docType && isIdFamily) {
-        // If Azure detects any standard identity document model, allow it through
         const acceptedAzureTypes = [
           "identitycard",
           "idcard",
           "driverslicense",
+          "driverlicense",
           "document",
-          selectedSpecificId.toLowerCase(),
+          normalizedSelectedId,
         ];
 
-        const isCompatible = acceptedAzureTypes.some((type) =>
-          docType.includes(type),
+        const isCompatible = acceptedAzureTypes.some(
+          (type) => docType.includes(type) || type.includes(docType),
         );
 
-        if (!isCompatible && docType !== selectedSpecificId.toLowerCase()) {
+        if (!isCompatible && docType !== "other" && docType !== "") {
           return {
             allow_processing: false,
             error_code: "DOCUMENT_TYPE_MISMATCH",
             message: `Verification halted. You selected document type [${selectedSpecificId}], but the system detected an incompatible layout. Please upload the correct physical document.`,
           };
         }
-      } else if (docType && docType !== selectedSpecificId.toLowerCase()) {
-        // Fallback strict check for other specialized forms
-        return {
-          allow_processing: false,
-          error_code: "DOCUMENT_TYPE_MISMATCH",
-          message: `Verification halted. You selected document type [${selectedSpecificId}], but the system detected an incompatible layout. Please upload the correct physical document.`,
-        };
       }
     }
 
-    const rawDocNum = azureOcrResult.fields?.documentNumber?.content;
+    // Support fallback keys for document/license numbers returned by Azure OCR
+    const fields = azureOcrResult.fields || {};
+    const rawDocNum =
+      fields.documentNumber?.content ||
+      fields.licenseNumber?.content ||
+      fields.idNumber?.content ||
+      fields.cardNumber?.content;
+
     if (!rawDocNum) {
       return {
         allow_processing: false,
@@ -120,16 +127,15 @@ export class DocumentVerificationOrchestrator {
     }
 
     const documentNumber = this.cleanDocumentNumber(rawDocNum);
-    const issueDate =
-      this.normalizeDate(azureOcrResult.fields?.issueDate?.content) || "";
+    const issueDate = this.normalizeDate(fields.issueDate?.content) || "";
 
-    const rawExpiry = azureOcrResult.fields?.expiryDate?.content;
+    const rawExpiry = fields.expiryDate?.content;
     const hasNoExpirationDate =
       !rawExpiry ||
       rawExpiry.toLowerCase().includes("lifetime") ||
       rawExpiry.toLowerCase().includes("indefinite") ||
-      selectedSpecificId === "birth-certificate" ||
-      selectedSpecificId === "national-id";
+      normalizedSelectedId.includes("birthcertificate") ||
+      normalizedSelectedId.includes("nationalid");
 
     const expiryDate = hasNoExpirationDate
       ? null
