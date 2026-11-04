@@ -198,9 +198,12 @@ async function classifyAzureDocument(fileUrl) {
         throw new Error("Azure document classification timed out.");
       }
 
-      const documents = Array.isArray(result?.documents)
+     const documents = Array.isArray(result?.documents)
         ? result.documents
         : [];
+
+      // 👉 ADD THIS LINE TO SEE THE EXACT LABEL AZURE RETURNS IN RENDER LOGS:
+      console.log("AZURE_CLASSIFIER_RAW_DOCUMENTS:", JSON.stringify(documents, null, 2));
 
       if (documents.length === 0) {
         return {
