@@ -4,6 +4,8 @@
 
 ---
 
+postgresql://postgres.ysxeobillupncexfkfvu:Root%402132%21%40%23@aws-0-ap-south-1.pooler.supabase.com:5432/postgres
+
 ## 📌 Overview
 
 DocuGuard is a mobile application developed to help individuals securely manage important digital documents in one centralized location. The application allows users to upload, organize, monitor, and receive reminders about document expiration dates, reducing the risk of losing access to critical documents due to missed renewals.
@@ -279,6 +281,8 @@ DocuGuard is being developed as a Bachelor of Science in Information Technology 
 
 eas build --platform android --profile preview
 .\gradlew.bat app:assembleRelease -x lint -x test --configure-on-demand --build-cache
+eas build --platform androud --profile preview
+npx eas-cli update --channel preview --message "Describe the verified fix"
 
 # 📄 License
 

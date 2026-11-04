@@ -21,6 +21,7 @@
     "android": {
       "predictiveBackGestureEnabled": false,
       "package": "com.anonymous.DocuGuard",
+      "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "foregroundImage": "./app/assets/icon.png",
         "backgroundColor": "#FFFFFF"
@@ -42,15 +43,17 @@
         {
           "backgroundColor": "#FFFFFF",
           "image": "./app/assets/icon.png",
-          "imageWidth": 100,
+          "imageWidth": 160,
           "dark": {
             "backgroundColor": "#FFFFFF",
-            "image": "./app/assets/icon.png"
+            "image": "./app/assets/icon.png",
+            "imageWidth": 160
           }
         }
       ],
       "expo-sharing",
       "expo-sqlite",
+      "expo-secure-store",
       [
         "expo-local-authentication",
         {
@@ -68,7 +71,7 @@
         {
           "icon": "./app/assets/icon.png",
           "color": "#2563EB",
-          "sounds": []
+          "sounds": ["./assets/sounds/info.mp3"]
         }
       ],
       "react-native-document-scanner-plugin",

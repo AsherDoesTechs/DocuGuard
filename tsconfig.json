@@ -1,13 +1,20 @@
-{
-  "extends": "expo/tsconfig.base",
-  "compilerOptions": {
-    "strict": true,
-    "ignoreDeprecations": "6.0",
-    "baseUrl": ".",
-    "ignoreDeprecations": "6.0",
-    "paths": {
-      "@/*": ["./*"]
-    }
-  },
-  "exclude": ["node_modules", "dist", "build", "DocuGuard-Server"]
+﻿{
+    "extends":  "expo/tsconfig.base",
+    "compilerOptions":  {
+                            "strict":  true,
+                            "ignoreDeprecations":  "6.0",
+                            "baseUrl":  ".",
+                            "paths":  {
+                                          "@/*":  [
+                                                      "./*"
+                                                  ]
+                                      }
+                        },
+    "exclude":  [
+                    "node_modules",
+                    "dist",
+                    "build",
+                    "DocuGuard-Server",
+                    "DocuGuard-Admin"
+                ]
 }

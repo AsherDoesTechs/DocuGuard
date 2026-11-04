@@ -1,17 +1,21 @@
-Learn more about ignoring files:
-https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
-Dependencies
+# Learn more about ignoring files:
+# https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
 
+# Dependencies
 node_modules/
+**/node_modules/
 
-Expo
-
+# Expo
 .expo/
+.expo/*
 dist/
 expo-env.d.ts
+coverage/
 
-Native
+# Metro
+.metro-health-check*
 
+# Native build artifacts
 .kotlin/
 .orig.
 *.jks
@@ -19,38 +23,106 @@ Native
 *.p12
 *.key
 *.mobileprovision
+/ios
+/android/build/
+android/app/build/
 
-Metro
+# Signing certificates and private keys
+*.pem
+*.p12
+*.pfx
+*.keystore
+*.mobileprovision
 
-.metro-health-check*
-
-Debug
-
+# Debug logs
 npm-debug.*
 yarn-debug.*
 yarn-error.*
 
-macOS
-
+# macOS
 .DS_Store
-*.pem
 
-Local environment files
-
+# Local environment files
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
 
-Backend secrets
-
+# Backend secrets
 DocuGuard-Server/.env
 DocuGuard-Server/config/serviceAccountKey.json
+**/serviceAccountKey.json
+**/*service-account*.json
+**/*service_account*.json
 
-TypeScript
+# Firebase configuration containing project-specific credentials
+/google-services.json
+/android/app/google-services.json
+**/google-services.json
 
+# TypeScript
 *.tsbuildinfo
 
-Generated native folders
+# Local database exports and backups
+/database-backups/
+*.sql.backup
+*.dump
+*.dump.gz
 
-/ios
-D
+# Local investigation artifacts
+/DocuGuard-Server/audit-production.json
+/DocuGuard-Server/scripts/inspectDatabaseRole.local.js
+
+# Local backup and recovery artifacts
+*.bak
+*.bak-*
+*.backup
+*.backup-*
+*.before-*
+*.pre-*
+*.patch-backup
+*.expiry-fixture-backup
+*.expiry-tests-backup
+*.jwt-guard-backup
+*.accidental-powershell-backup.txt
+
+# Local test output and diagnostics
+/DocuGuard-Server/test-results.txt
+/ts-resolution.txt
+
+# Local generated artifacts
+/adddiff.txt
+/firebase-gradle-backup/
+
+# Local database maintenance and recovery utilities
+/backup-render.ps1
+/backup-supabase.ps1
+/check-db-connections.ps1
+/compare-db-accounts.ps1
+/inspect-db-schema.ps1
+/recovery-apply.js
+/recovery-preflight.js
+/recovery-sequence-check.js
+/recovery-storage-preview.js
+
+# Local diagnostic output
+/tsc.out
+
+# Local source snapshots and rollback copies
+/app/(auth)/*.token-helper-backup
+/app/(tabs)/*.session-ownership-backup
+/hooks/*-backup*
+/services/*-backup*
+/tests/*-backup*
+/DocuGuard-Server/controllers/*-backup*
+/DocuGuard-Server/controllers/*.current-snapshot.js
+/DocuGuard-Server/controllers/*.security-preview.js
+/DocuGuard-Server/migrations/*-backup-*.sql
+/DocuGuard-Server/tests/*-backup*
+
+# Local temporary scripts and historical security validation
+/add-reset.js
+/DocuGuard-Server/recovery-preview.js
+/DocuGuard-Server/tests/adminAuthSecurityPreview.validation-20261024-032558.js

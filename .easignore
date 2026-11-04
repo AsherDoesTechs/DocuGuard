@@ -56,3 +56,23 @@ DocuGuard-Server
 .kilo
 .claude
 docs
+# Additional environment files and credentials
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+credentials.json
+**/credentials.json
+
+# Additional private signing material
+*.pfx
+
+# Local backup and database artifacts
+*.bak
+*.bak-*
+*.backup
+*.backup-*
+*.dump
+*.dump.gz
+*.sql.backup
