@@ -32,9 +32,9 @@ const client =
 function getClassificationConfig() {
   const classifierId = String(process.env.AZURE_CLASSIFIER_ID || "").trim();
   const routesRaw = String(process.env.AZURE_MODEL_ROUTES_JSON || "{}");
-  const thresholdRaw = process.env.AZURE_CLASSIFICATION_THRESHOLD ?? "0.85";
+  const thresholdRaw = process.env.AZURE_CLASSIFICATION_THRESHOLD ?? "0.70";
   const fieldConfidenceThresholdRaw =
-    process.env.AZURE_FIELD_CONFIDENCE_THRESHOLD ?? "0.85";
+    process.env.AZURE_FIELD_CONFIDENCE_THRESHOLD ?? "0.70";
   const timeoutRaw = process.env.AZURE_OCR_TIMEOUT_MS ?? "120000";
   const concurrencyRaw = process.env.AZURE_OCR_MAX_CONCURRENCY ?? "3";
 
