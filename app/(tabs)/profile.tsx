@@ -1502,6 +1502,15 @@ export default function ProfileScreen() {
                           <Text style={styles.totpUriText} selectable>
                             {recoveryCodes.join("\n")}
                           </Text>
+
+                          <TouchableOpacity
+                            style={[styles.verifyButton, { marginTop: 10 }]}
+                            onPress={() => setRecoveryCodes(null)}
+                          >
+                            <Text style={styles.saveButtonText}>
+                              I Have Saved These Codes
+                            </Text>
+                          </TouchableOpacity>
                         </View>
                       )}
 
@@ -1524,25 +1533,37 @@ export default function ProfileScreen() {
 
                           <View style={styles.rowBetween}>
                             <TouchableOpacity
-                              style={styles.verifyButton}
+                              style={[
+                                styles.verifyButton,
+                                twoFactorDisableMode === "totp" && {
+                                  opacity: 0.8,
+                                },
+                              ]}
                               onPress={() => {
                                 setTwoFactorDisableMode("totp");
                                 setTwoFactorDisableCode("");
                               }}
                             >
                               <Text style={styles.saveButtonText}>
-                                Authenticator
+                                Authenticator{" "}
+                                {twoFactorDisableMode === "totp" ? "✓" : ""}
                               </Text>
                             </TouchableOpacity>
                             <TouchableOpacity
-                              style={styles.verifyButton}
+                              style={[
+                                styles.verifyButton,
+                                twoFactorDisableMode === "recovery" && {
+                                  opacity: 0.8,
+                                },
+                              ]}
                               onPress={() => {
                                 setTwoFactorDisableMode("recovery");
                                 setTwoFactorDisableCode("");
                               }}
                             >
                               <Text style={styles.saveButtonText}>
-                                Recovery Code
+                                Recovery Code{" "}
+                                {twoFactorDisableMode === "recovery" ? "✓" : ""}
                               </Text>
                             </TouchableOpacity>
                           </View>
@@ -1576,9 +1597,18 @@ export default function ProfileScreen() {
                           />
 
                           <TouchableOpacity
-                            style={styles.verifyButton}
+                            style={[
+                              styles.verifyButton,
+                              (!twoFactorDisablePassword ||
+                                !twoFactorDisableCode ||
+                                disabling2FA) && { opacity: 0.6 },
+                            ]}
                             onPress={handleDisable2FA}
-                            disabled={disabling2FA}
+                            disabled={
+                              !twoFactorDisablePassword ||
+                              !twoFactorDisableCode ||
+                              disabling2FA
+                            }
                           >
                             {disabling2FA ? (
                               <ActivityIndicator
