@@ -5,6 +5,7 @@ const {
   rehydrateFileUrls,
   validateFileType,
   deleteStorageObject,
+  createSignedUploadUrl,
 } = require("../services/storageService");
 // OCR extraction is performed exclusively by documentValidationService.
 const {
@@ -200,53 +201,32 @@ exports.getAllDocuments = async (req, res) => {
 };
 
 // Get presigned upload URL (S3 Integration)
-exports.getUploadUrl = async (req, res) => {
-  try {
-    const validation = validateSchema(uploadUrlSchema, req.query);
-    if (!validation.success) {
-      debug("Documents", "Upload URL request missing params", {
-        userId: req.user.userId,
-        fileName: !!req.query.fileName,
-        fileType: !!req.query.fileType,
-      });
-      return res.status(400).json({
-        error: Object.values(validation.errors).join(", "),
-        code: ErrorCodes.DOC_INVALID_FILE_TYPE,
-        details: validation.errors,
-      });
-    }
+exports.getUploadUrl = asyncHandler(async (req, res) => {
+  const { fileName, fileType } = req.body;
+  const userId = req.user.id;
 
-    const { fileName, fileType } = validation.data;
-
-    const result = await generatePresignedUploadUrl(
-      req.user.userId,
-      fileName,
-      fileType,
-    );
-
-    debug("Documents", "Upload URL generated", {
-      userId: req.user.userId,
-      fileName,
-    });
-    res.json(result);
-  } catch (err) {
-    logError(
-      "Documents",
-      "Error generating upload URL",
-      {
-        error: err.message,
-        stack: err.stack,
-        fileName: req.query.fileName,
-        fileType: req.query.fileType,
-      },
-      ErrorCodes.DOC_UPLOAD_FAILED,
-    );
-    res.status(500).json({
-      error: "Failed to generate upload URL",
-      code: ErrorCodes.DOC_UPLOAD_FAILED,
-    });
+  const validationError = storageService.validateFileType(fileType);
+  if (validationError) {
+    return res.status(400).json({ error: validationError });
   }
-};
+
+  // Construct a unique path for Supabase Storage
+  const filePath = `${userId}/${Date.now()}_${fileName}`;
+
+  try {
+    const { signedUrl, path } =
+      await storageService.createSignedUploadUrl(filePath);
+
+    res.status(200).json({
+      success: true,
+      uploadUrl: signedUrl,
+      filePath: path,
+    });
+  } catch (error) {
+    console.error("Error generating upload URL:", error);
+    res.status(500).json({ error: "Failed to generate upload URL" });
+  }
+});
 
 /**
  * Create a draft for an uploaded file before OCR has extracted its fields.

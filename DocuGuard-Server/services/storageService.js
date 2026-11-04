@@ -171,6 +171,28 @@ exports.getObjectMetadata = async (s3Key) => {
 };
 
 /**
+ * Mints a short-lived signed upload URL for uploading files directly to Supabase Storage.
+ */
+exports.createSignedUploadUrl = async (filePath) => {
+  if (!filePath) {
+    throw new Error("File path is required for signed upload URL");
+  }
+
+  const { data, error } = await supabaseAdmin.storage
+    .from(STORAGE_BUCKET)
+    .createSignedUploadUrl(filePath);
+
+  if (error) {
+    throw new Error(`Supabase signed upload URL error: ${error.message}`);
+  }
+
+  return {
+    signedUrl: data?.signedUrl ?? data?.signed_url,
+    path: data?.path ?? filePath,
+  };
+};
+
+/**
  * Calculate physical storage usage for a user in MB.
  * Counts distinct object keys referenced by documents (including soft-deleted).
  * Does not scan the entire bucket. Orphaned objects not referenced by DB records are not counted by this design.
