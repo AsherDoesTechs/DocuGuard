@@ -111,11 +111,18 @@ export class DocumentVerificationOrchestrator {
 
     // Support fallback keys for document/license numbers returned by Azure OCR
     const fields = azureOcrResult.fields || {};
+
+    const getFieldContent = (fieldObj: any) => {
+      if (!fieldObj) return null;
+      if (typeof fieldObj === "string") return fieldObj;
+      return fieldObj.content ?? fieldObj.value ?? null;
+    };
+
     const rawDocNum =
-      fields.documentNumber?.content ||
-      fields.licenseNumber?.content ||
-      fields.idNumber?.content ||
-      fields.cardNumber?.content;
+      getFieldContent(fields.documentNumber) ||
+      getFieldContent(fields.licenseNumber) ||
+      getFieldContent(fields.idNumber) ||
+      getFieldContent(fields.cardNumber);
 
     if (!rawDocNum) {
       return {
@@ -127,19 +134,20 @@ export class DocumentVerificationOrchestrator {
     }
 
     const documentNumber = this.cleanDocumentNumber(rawDocNum);
-    const issueDate = this.normalizeDate(fields.issueDate?.content) || "";
+    const issueDate =
+      this.normalizeDate(getFieldContent(fields.issueDate)) || "";
 
-    const rawExpiry = fields.expiryDate?.content;
+    const rawExpiry = getFieldContent(fields.expiryDate);
     const hasNoExpirationDate =
       !rawExpiry ||
-      rawExpiry.toLowerCase().includes("lifetime") ||
-      rawExpiry.toLowerCase().includes("indefinite") ||
+      String(rawExpiry).toLowerCase().includes("lifetime") ||
+      String(rawExpiry).toLowerCase().includes("indefinite") ||
       normalizedSelectedId.includes("birthcertificate") ||
       normalizedSelectedId.includes("nationalid");
 
     const expiryDate = hasNoExpirationDate
       ? null
-      : this.normalizeDate(rawExpiry);
+      : this.normalizeDate(String(rawExpiry));
 
     return {
       allow_processing: true,
