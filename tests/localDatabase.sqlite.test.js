@@ -469,19 +469,22 @@ test(
       `INSERT INTO login_sessions (user_id, device_name) VALUES (7, 'A'), (8, 'B')`,
     ).run();
     db.prepare(
-      `INSERT INTO sync_queue (table_name, record_id, operation, status) VALUES ('documents', 1, 'update', 'pending')`,
+      `INSERT INTO sync_queue (table_name, record_id, operation, status)
+       VALUES ('documents', 1, 'update', 'pending'),
+              ('documents', 2, 'update', 'pending')`,
     ).run();
     db.prepare(`INSERT INTO document_tags (document_id, tag) VALUES (1, 'important')`).run();
     db.prepare(`INSERT INTO document_history (document_id, action) VALUES (1, 'created')`).run();
 
     const purgeStatements = [
       readTemplateLiteral("DELETE FROM document_tags WHERE document_id IN"),
+      readTemplateLiteral("AND record_id IN ("),
       readTemplateLiteral("DELETE FROM documents WHERE user_id = ?"),
       readTemplateLiteral("DELETE FROM reminders WHERE user_id = ?"),
       readTemplateLiteral("DELETE FROM login_sessions WHERE user_id = ?"),
       readTemplateLiteral("DELETE FROM user_settings WHERE user_id = ?"),
       readTemplateLiteral("DELETE FROM user_profile WHERE id = ?"),
-      readTemplateLiteral("DELETE FROM sync_queue"),
+
     ];
 
     for (const statement of purgeStatements) {
@@ -519,6 +522,16 @@ test(
     const queueLeft = db
       .prepare("SELECT COUNT(*) AS c FROM sync_queue")
       .get().c;
-    assert.equal(queueLeft, 0, "the sync queue must be cleared by the purge");
+
+    const survivingQueueRecordId = db
+      .prepare("SELECT record_id FROM sync_queue")
+      .get().record_id;
+
+    assert.equal(queueLeft, 1, "the other account's queue entry must survive");
+    assert.equal(
+      survivingQueueRecordId,
+      2,
+      "only the other account's pending document sync entry must survive",
+    );
   },
 );
