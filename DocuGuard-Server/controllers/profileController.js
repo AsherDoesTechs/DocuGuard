@@ -274,7 +274,7 @@ exports.setup2FA = async (req, res) => {
        SET two_factor_secret = $1,
            two_factor_enabled_at = NULL,
            two_factor_setup_started_at = NOW()
-       WHERE id = $1
+       WHERE id = $2
          AND COALESCE(two_factor, FALSE) = FALSE
          AND two_factor_enabled_at IS NULL
        RETURNING email`,
