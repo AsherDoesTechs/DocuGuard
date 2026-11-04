@@ -21,13 +21,11 @@ export function SkeletonBlock({
     <View
       accessible={false}
       style={[
-        styles.block,
         {
           width: width as ViewStyle["width"],
           height,
           borderRadius: radius,
           backgroundColor: colors.surfaceSecondary,
-          borderColor: colors.borderLight,
         },
         style,
       ]}
@@ -35,11 +33,7 @@ export function SkeletonBlock({
   );
 }
 
-function SkeletonCard({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+function SkeletonCard({ children }: { children: React.ReactNode }) {
   const { colors } = useTheme();
 
   return (
@@ -204,9 +198,6 @@ const styles = StyleSheet.create({
     width: "100%",
     gap: 14,
     paddingBottom: 20,
-  },
-  block: {
-    borderWidth: StyleSheet.hairlineWidth,
   },
   card: {
     padding: 16,
