@@ -3,8 +3,11 @@ const {
   AzureKeyCredential,
 } = require("@azure/ai-form-recognizer");
 
-const endpoint = process.env.AZURE_ENDPOINT;
-const apiKey = process.env.AZURE_KEY;
+const endpoint =
+  process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT ||
+  process.env.AZURE_ENDPOINT;
+const apiKey =
+  process.env.AZURE_DOCUMENT_INTELLIGENCE_KEY || process.env.AZURE_KEY;
 
 /**
  * Minimum analyzer confidence for extracted fields to be treated as usable.
@@ -30,7 +33,8 @@ function getClassificationConfig() {
   const classifierId = String(process.env.AZURE_CLASSIFIER_ID || "").trim();
   const routesRaw = String(process.env.AZURE_MODEL_ROUTES_JSON || "{}");
   const thresholdRaw = process.env.AZURE_CLASSIFICATION_THRESHOLD ?? "0.85";
-  const fieldConfidenceThresholdRaw = process.env.AZURE_FIELD_CONFIDENCE_THRESHOLD ?? "0.85";
+  const fieldConfidenceThresholdRaw =
+    process.env.AZURE_FIELD_CONFIDENCE_THRESHOLD ?? "0.85";
   const timeoutRaw = process.env.AZURE_OCR_TIMEOUT_MS ?? "120000";
   const concurrencyRaw = process.env.AZURE_OCR_MAX_CONCURRENCY ?? "3";
 
@@ -39,7 +43,9 @@ function getClassificationConfig() {
   const maxConcurrency = Number(concurrencyRaw);
 
   if (!endpoint || !apiKey || !client) {
-    throw new Error("Azure OCR is not configured. Check AZURE_ENDPOINT and AZURE_KEY.");
+    throw new Error(
+      "Azure OCR is not configured. Check AZURE_ENDPOINT and AZURE_KEY.",
+    );
   }
 
   if (!classifierId) {
@@ -47,7 +53,9 @@ function getClassificationConfig() {
   }
 
   if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) {
-    throw new Error("Invalid AZURE_CLASSIFICATION_THRESHOLD; expected a number from 0 to 1.");
+    throw new Error(
+      "Invalid AZURE_CLASSIFICATION_THRESHOLD; expected a number from 0 to 1.",
+    );
   }
 
   const fieldConfidenceThreshold = Number(fieldConfidenceThresholdRaw);
@@ -56,15 +64,29 @@ function getClassificationConfig() {
     fieldConfidenceThreshold < 0 ||
     fieldConfidenceThreshold > 1
   ) {
-    throw new Error("Invalid AZURE_FIELD_CONFIDENCE_THRESHOLD; expected a number from 0 to 1.");
+    throw new Error(
+      "Invalid AZURE_FIELD_CONFIDENCE_THRESHOLD; expected a number from 0 to 1.",
+    );
   }
 
-  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 300000) {
-    throw new Error("Invalid AZURE_OCR_TIMEOUT_MS; expected an integer from 1000 to 300000.");
+  if (
+    !Number.isSafeInteger(timeoutMs) ||
+    timeoutMs < 1000 ||
+    timeoutMs > 300000
+  ) {
+    throw new Error(
+      "Invalid AZURE_OCR_TIMEOUT_MS; expected an integer from 1000 to 300000.",
+    );
   }
 
-  if (!Number.isSafeInteger(maxConcurrency) || maxConcurrency < 1 || maxConcurrency > 20) {
-    throw new Error("Invalid AZURE_OCR_MAX_CONCURRENCY; expected an integer from 1 to 20.");
+  if (
+    !Number.isSafeInteger(maxConcurrency) ||
+    maxConcurrency < 1 ||
+    maxConcurrency > 20
+  ) {
+    throw new Error(
+      "Invalid AZURE_OCR_MAX_CONCURRENCY; expected an integer from 1 to 20.",
+    );
   }
 
   let routes;
@@ -80,7 +102,9 @@ function getClassificationConfig() {
 
   for (const [label, modelId] of Object.entries(routes)) {
     if (!label.trim() || typeof modelId !== "string" || !modelId.trim()) {
-      throw new Error("Invalid AZURE_MODEL_ROUTES_JSON; labels and model IDs must be non-empty strings.");
+      throw new Error(
+        "Invalid AZURE_MODEL_ROUTES_JSON; labels and model IDs must be non-empty strings.",
+      );
     }
 
     // Model IDs are identifiers, not URLs or arbitrary expressions.
@@ -130,11 +154,15 @@ async function classifyAzureDocument(fileUrl) {
   try {
     parsedUrl = new URL(fileUrl);
   } catch {
-    throw new Error("A valid HTTPS document URL is required for classification.");
+    throw new Error(
+      "A valid HTTPS document URL is required for classification.",
+    );
   }
 
   if (parsedUrl.protocol !== "https:") {
-    throw new Error("A valid HTTPS document URL is required for classification.");
+    throw new Error(
+      "A valid HTTPS document URL is required for classification.",
+    );
   }
 
   return withOcrConcurrencyLimit(config.maxConcurrency, async () => {
@@ -178,7 +206,8 @@ async function classifyAzureDocument(fileUrl) {
         return {
           status: "manual_review",
           reason: "no_classification",
-          message: "The document could not be classified. Please review it manually.",
+          message:
+            "The document could not be classified. Please review it manually.",
         };
       }
 
@@ -190,7 +219,8 @@ async function classifyAzureDocument(fileUrl) {
         return {
           status: "manual_review",
           reason: "missing_document_type",
-          message: "The classification result did not identify a document type.",
+          message:
+            "The classification result did not identify a document type.",
         };
       }
 
@@ -200,7 +230,8 @@ async function classifyAzureDocument(fileUrl) {
         return {
           status: "manual_review",
           reason: "conflicting_document_types",
-          message: "The document classification was ambiguous. Please review it manually.",
+          message:
+            "The document classification was ambiguous. Please review it manually.",
         };
       }
 
@@ -235,7 +266,8 @@ async function classifyAzureDocument(fileUrl) {
             confidence,
             threshold: config.threshold,
           },
-          message: "The document classification is uncertain. Please review it manually.",
+          message:
+            "The document classification is uncertain. Please review it manually.",
         };
       }
 
@@ -325,11 +357,7 @@ function safeDate(value) {
   // Unambiguous year-first dates: YYYY-MM-DD or YYYY/MM/DD.
   let match = input.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
   if (match) {
-    return validatedDate(
-      Number(match[1]),
-      Number(match[2]),
-      Number(match[3]),
-    );
+    return validatedDate(Number(match[1]), Number(match[2]), Number(match[3]));
   }
 
   // Numeric dates are accepted only when their ordering is unambiguous.
@@ -358,18 +386,24 @@ function safeDate(value) {
   match = input.match(/^(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})$/);
   if (match) {
     const monthNames = [
-      "january", "february", "march", "april", "may", "june",
-      "july", "august", "september", "october", "november", "december",
+      "january",
+      "february",
+      "march",
+      "april",
+      "may",
+      "june",
+      "july",
+      "august",
+      "september",
+      "october",
+      "november",
+      "december",
     ];
 
     const monthIndex = monthNames.indexOf(match[2].toLowerCase());
     if (monthIndex < 0) return null;
 
-    return validatedDate(
-      Number(match[3]),
-      monthIndex + 1,
-      Number(match[1]),
-    );
+    return validatedDate(Number(match[3]), monthIndex + 1, Number(match[1]));
   }
 
   return null;
@@ -593,12 +627,19 @@ function normalizeAzureField(field, threshold) {
     };
   }
 
-  if (typeof field !== "object" || Array.isArray(field) || field instanceof Date) {
+  if (
+    typeof field !== "object" ||
+    Array.isArray(field) ||
+    field instanceof Date
+  ) {
     return {
       type: field instanceof Date ? "date" : typeof field,
-      value: field instanceof Date
-        ? (Number.isNaN(field.getTime()) ? null : field.toISOString())
-        : field,
+      value:
+        field instanceof Date
+          ? Number.isNaN(field.getTime())
+            ? null
+            : field.toISOString()
+          : field,
       content: null,
       confidence: null,
       needsReview: true,
@@ -606,9 +647,20 @@ function normalizeAzureField(field, threshold) {
   }
 
   const knownTypes = [
-    "String", "Date", "Time", "PhoneNumber", "Number", "Integer",
-    "Boolean", "SelectionMark", "Signature", "CountryRegion",
-    "Currency", "Address", "Array", "Object",
+    "String",
+    "Date",
+    "Time",
+    "PhoneNumber",
+    "Number",
+    "Integer",
+    "Boolean",
+    "SelectionMark",
+    "Signature",
+    "CountryRegion",
+    "Currency",
+    "Address",
+    "Array",
+    "Object",
   ];
 
   const type = typeof field.type === "string" ? field.type : null;
@@ -631,7 +683,8 @@ function normalizeAzureField(field, threshold) {
   }
 
   function normalizeNested(valueToNormalize) {
-    if (valueToNormalize === null || valueToNormalize === undefined) return null;
+    if (valueToNormalize === null || valueToNormalize === undefined)
+      return null;
 
     if (valueToNormalize instanceof Date) {
       return Number.isNaN(valueToNormalize.getTime())
@@ -651,10 +704,16 @@ function normalizeAzureField(field, threshold) {
     if (typeof valueToNormalize === "object") {
       const normalized = {};
       for (const [key, nestedValue] of Object.entries(valueToNormalize)) {
-        if (nestedValue && typeof nestedValue === "object" &&
-            !Array.isArray(nestedValue) && !(nestedValue instanceof Date) &&
-            ("type" in nestedValue || "value" in nestedValue ||
-             "content" in nestedValue || "confidence" in nestedValue)) {
+        if (
+          nestedValue &&
+          typeof nestedValue === "object" &&
+          !Array.isArray(nestedValue) &&
+          !(nestedValue instanceof Date) &&
+          ("type" in nestedValue ||
+            "value" in nestedValue ||
+            "content" in nestedValue ||
+            "confidence" in nestedValue)
+        ) {
           normalized[key] = normalizeAzureField(nestedValue, threshold);
         } else {
           normalized[key] = normalizeNested(nestedValue);
@@ -679,8 +738,7 @@ function normalizeAzureField(field, threshold) {
     value: normalizeNested(value),
     content: typeof field.content === "string" ? field.content : null,
     confidence: numericConfidence,
-    needsReview:
-      numericConfidence === null || numericConfidence < threshold,
+    needsReview: numericConfidence === null || numericConfidence < threshold,
   };
 }
 function parseAzureOutput(azureResult) {
@@ -708,7 +766,11 @@ function parseAzureOutput(azureResult) {
     const fieldThreshold = Number(
       process.env.AZURE_FIELD_CONFIDENCE_THRESHOLD ?? "0.85",
     );
-    if (!Number.isFinite(fieldThreshold) || fieldThreshold < 0 || fieldThreshold > 1) {
+    if (
+      !Number.isFinite(fieldThreshold) ||
+      fieldThreshold < 0 ||
+      fieldThreshold > 1
+    ) {
       throw new Error("Invalid AZURE_FIELD_CONFIDENCE_THRESHOLD.");
     }
 
@@ -898,11 +960,11 @@ async function analyzeDocument(fileUrl, contentType) {
     // Add timeout to prevent hanging
     const timeoutMs = 60000;
     const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error('OCR request timeout')), timeoutMs);
+      setTimeout(() => reject(new Error("OCR request timeout")), timeoutMs);
     });
     poller = await Promise.race([
       client.beginAnalyzeDocumentFromUrl(modelId, fileUrl),
-      timeoutPromise
+      timeoutPromise,
     ]);
   } catch (firstError) {
     const msg = String(firstError?.message || "");
@@ -913,17 +975,21 @@ async function analyzeDocument(fileUrl, contentType) {
       `Azure ${modelId} failed. Falling back to prebuilt-document:`,
       msg,
     );
-    if (/401|403|unauthorized|forbidden|invalid.*key|access denied|authentication/i.test(msg)) {
+    if (
+      /401|403|unauthorized|forbidden|invalid.*key|access denied|authentication/i.test(
+        msg,
+      )
+    ) {
       throw firstError;
     }
     try {
       const timeoutMs = 60000;
       const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('OCR request timeout')), timeoutMs);
+        setTimeout(() => reject(new Error("OCR request timeout")), timeoutMs);
       });
       poller = await Promise.race([
         client.beginAnalyzeDocumentFromUrl("prebuilt-document", fileUrl),
-        timeoutPromise
+        timeoutPromise,
       ]);
       modelId = "prebuilt-document";
     } catch (fallbackErr) {
@@ -937,12 +1003,9 @@ async function analyzeDocument(fileUrl, contentType) {
   try {
     const timeoutMs = 120000;
     const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error('OCR processing timeout')), timeoutMs);
+      setTimeout(() => reject(new Error("OCR processing timeout")), timeoutMs);
     });
-    const result = await Promise.race([
-      poller.pollUntilDone(),
-      timeoutPromise
-    ]);
+    const result = await Promise.race([poller.pollUntilDone(), timeoutPromise]);
 
     if (!result) {
       throw new Error("Azure returned no analysis result");
@@ -956,7 +1019,7 @@ async function analyzeDocument(fileUrl, contentType) {
     };
   } catch (pollErr) {
     if (/timeout/i.test(String(pollErr?.message || ""))) {
-      throw new Error('OCR request timeout');
+      throw new Error("OCR request timeout");
     }
     throw pollErr;
   }
@@ -971,7 +1034,9 @@ async function extractClassifiedDocumentData(fileUrl, modelId, classification) {
     typeof modelId !== "string" ||
     !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(modelId)
   ) {
-    throw new Error("A valid document URL and explicitly mapped model ID are required.");
+    throw new Error(
+      "A valid document URL and explicitly mapped model ID are required.",
+    );
   }
 
   if (
@@ -981,12 +1046,16 @@ async function extractClassifiedDocumentData(fileUrl, modelId, classification) {
     !Number.isFinite(classification.confidence) ||
     classification.confidence < config.threshold
   ) {
-    throw new Error("Verified classification is required before document extraction.");
+    throw new Error(
+      "Verified classification is required before document extraction.",
+    );
   }
 
   // Enforce the current configuration again at the extraction boundary.
   if (config.routes[classification.docType] !== modelId) {
-    throw new Error("The extraction model does not match the configured classification route.");
+    throw new Error(
+      "The extraction model does not match the configured classification route.",
+    );
   }
 
   const parsedUrl = new URL(fileUrl);
@@ -1017,11 +1086,9 @@ async function extractClassifiedDocumentData(fileUrl, modelId, classification) {
 
     try {
       const operation = (async () => {
-        poller = await client.beginAnalyzeDocumentFromUrl(
-          modelId,
-          fileUrl,
-          { abortSignal: abortController.signal },
-        );
+        poller = await client.beginAnalyzeDocumentFromUrl(modelId, fileUrl, {
+          abortSignal: abortController.signal,
+        });
 
         if (timedOut) {
           try {
@@ -1112,8 +1179,5 @@ exports.extractDocumentData = async (
 
 exports.parseAzureOutput = parseAzureOutput;
 exports.classifyDocument = classifyAzureDocument;
-
-
-
 
 exports.extractClassifiedDocumentData = extractClassifiedDocumentData;
