@@ -4,7 +4,7 @@ const { authoritativeDocumentRow } = require("./dataSyncService");
 
 async function exportUserData(userId) {
   const documents = await db.query(
-    "SELECT * FROM documents WHERE user_id = $1",
+    "SELECT * FROM documents WHERE user_id = $1 AND status <> 'deleted'",
     [userId]
   );
 

@@ -1,5 +1,7 @@
 const express = require("express");
 const cors = require("cors");
+const adminRoutes = require("./routes/admin");
+const adminAuthRoutes = require("./routes/adminAuth");
 const authRoutes = require("./routes/auth");
 const docRoutes = require("./routes/documents");
 const dashboardRoutes = require("./routes/dashboard");
@@ -8,9 +10,14 @@ const profileRoutes = require("./routes/profile");
 const notificationRoutes = require("./routes/notification");
 const exportRoutes = require("./routes/export");
 const subscriptionRoutes = require("./routes/subscription");
+const searchRoutes = require("./routes/search");
+const backupRoutes = require("./routes/backup");
 const db = require("./config/db");
 const http = require("http");
-const { attachWebSocketServer, subscribeAllUsers } = require("./services/realtimeService");
+const {
+  attachWebSocketServer,
+  subscribeAllUsers,
+} = require("./services/realtimeService");
 
 // Security & Error Middlewares
 const {
@@ -20,12 +27,14 @@ const {
   uploadLimiter,
   corsOptions,
 } = require("./middleware/security");
+const auditMiddleware = require("./middleware/audit");
 const { errorHandler } = require("./utils/errors");
 const { ErrorCodes } = require("./utils/errorCodes");
 const { assertEnvOrExit } = require("./config/env");
 
-// Import background cron job
+// Import background cron jobs
 require("./jobs/expirationChecker");
+require("./jobs/dataRetention");
 
 assertEnvOrExit();
 
@@ -46,6 +55,7 @@ app.use(express.json({ limit: "1mb" }));
 // completely unthrottled.
 app.use("/auth/login", authLimiter);
 app.use("/auth/register", authLimiter);
+app.use("/auth/admin-login", authLimiter);
 app.use("/auth/forgot-password", authLimiter);
 app.use("/auth/reset-password", authLimiter);
 app.use("/auth/verify-email", authLimiter);
@@ -106,7 +116,14 @@ app.get("/health/ready", async (req, res) => {
   }
 });
 
-// 4. API Routes
+// 4. Audit logging (before routes so res.send is wrapped before any route
+// handler calls it; req.user is read at send time, after auth middleware
+// within the route has populated it).
+app.use(auditMiddleware);
+
+// 5. API Routes
+app.use("/admin", adminRoutes);
+app.use("/admin-auth", adminAuthRoutes);
 app.use("/auth", authRoutes);
 app.use("/dashboard", dashboardRoutes);
 app.use("/documents", docRoutes);
@@ -115,8 +132,10 @@ app.use("/profile", profileRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/export", exportRoutes);
 app.use("/subscription", subscriptionRoutes);
+app.use("/api/search", searchRoutes);
+app.use("/api/backup", backupRoutes);
 
-// 5. Unmatched paths should be JSON, not Express's default HTML 404.
+// 6. Unmatched paths should be JSON, not Express's default HTML 404.
 app.use((req, res) => {
   res.status(404).json({
     status: "fail",

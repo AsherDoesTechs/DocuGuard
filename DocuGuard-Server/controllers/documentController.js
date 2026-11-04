@@ -6,18 +6,64 @@ const {
   validateFileType,
   deleteStorageObject,
 } = require("../services/storageService");
-const { extractDocumentData } = require("../services/logicEngine");
+// OCR extraction is performed exclusively by documentValidationService.
 const {
   sendProcessingCompleteNotification,
   sendVerificationNotification,
 } = require("../services/notificationService");
-const { syncDocument, syncDocumentFromAuthoritative, deleteRecord } = require("../services/dataSyncService");
+const {
+  syncDocument,
+  syncDocumentFromAuthoritative,
+  broadcastDocumentDeletion,
+} = require("../services/dataSyncService");
 const {
   SYNC_TARGET,
   resolveSyncTarget,
 } = require("../services/documentSyncResolver");
 const { ErrorCodes } = require("../utils/errorCodes");
+const {
+  validateDocumentType,
+} = require("../services/documentValidationService");
+const {
+  storeIdempotentResponse,
+  beginIdempotentRequest,
+} = require("../services/idempotencyService");
 const { debug, info, warn, error: logError } = require("../utils/debugLogger");
+const {
+  encryptFields,
+  decryptFields,
+  PII_FIELDS,
+} = require("../services/cryptoService");
+function toReadableDocumentResponse(body) {
+  if (!body || typeof body !== "object" || !body.document) {
+    return body;
+  }
+
+  const readableBody = {
+    ...body,
+    document: { ...body.document },
+  };
+
+  const document = readableBody.document;
+  const pii = {
+    issuer: document.issuer,
+    document_number: document.documentNumber ?? document.document_number,
+  };
+
+  decryptFields(pii, PII_FIELDS);
+
+  if (document.issuer !== undefined) {
+    document.issuer = pii.issuer;
+  }
+
+  if (document.documentNumber !== undefined) {
+    document.documentNumber = pii.document_number;
+  } else if (document.document_number !== undefined) {
+    document.document_number = pii.document_number;
+  }
+
+  return readableBody;
+}
 const {
   documentSchema,
   documentUpdateSchema,
@@ -103,11 +149,29 @@ exports.getAllDocuments = async (req, res) => {
 
   try {
     const result = await db.query(
-      `SELECT id, title, category, issuer, document_number AS "documentNumber",
-              issue_date AS "issueDate", expiry_date AS "expiryDate", notes, status, enable_alerts AS "enableAlerts",
-              file_url AS "fileUrl", file_type AS "fileType", s3_key AS "s3Key",
-              processing_status AS "processingStatus", risk_score AS "riskScore", risk_level AS "riskLevel"
-       FROM documents WHERE user_id = $1 AND status <> 'deleted' ORDER BY expiry_date ASC NULLS LAST`,
+      `SELECT
+     id,
+     user_id AS "userId",
+     ${UPDATED_AT_ISO_SQL} AS "updatedAt",
+     title,
+     category,
+     issuer,
+     document_number AS "documentNumber",
+     issue_date AS "issueDate",
+     expiry_date AS "expiryDate",
+     notes,
+     status,
+     enable_alerts AS "enableAlerts",
+     file_url AS "fileUrl",
+     file_type AS "fileType",
+     s3_key AS "s3Key",
+     processing_status AS "processingStatus",
+     risk_score AS "riskScore",
+     risk_level AS "riskLevel"
+   FROM documents
+   WHERE user_id = $1
+     AND status <> 'deleted'
+   ORDER BY expiry_date ASC NULLS LAST`,
       [userId],
     );
 
@@ -115,6 +179,9 @@ exports.getAllDocuments = async (req, res) => {
       userId,
       count: result.rows.length,
     });
+
+    // Decrypt PII fields at rest (document_number, issuer).
+    result.rows.forEach((row) => decryptFields(row, PII_FIELDS));
 
     // Fresh signed URLs per read, since the persisted ones have expired.
     res.json(await rehydrateFileUrls(result.rows));
@@ -287,18 +354,21 @@ exports.createOcrDraft = async (req, res) => {
           risk_score AS "riskScore",
           risk_level AS "riskLevel",
           ${UPDATED_AT_ISO_SQL} AS "updatedAt"`,
-            [
+      [
         userId,
         "Scanned Document",
         "other",
-        null, null, null, null,
+        null,
+        null,
+        null,
+        null,
         "Scanned document awaiting OCR processing.",
         true,
         "active",
         key,
         null,
         normalizedFileType,
-        "pending"
+        "pending",
       ],
     );
 
@@ -329,7 +399,6 @@ exports.createOcrDraft = async (req, res) => {
   }
 };
 
-
 // Process document with OCR/AI
 exports.processDocument = async (req, res) => {
   try {
@@ -353,12 +422,14 @@ exports.processDocument = async (req, res) => {
       SELECT
         id,
         title,
+        category,
         s3_key,
         file_url,
         file_type
       FROM documents
       WHERE id = $1
         AND user_id = $2
+        AND status <> 'deleted'
       `,
       [documentId, userId],
     );
@@ -430,7 +501,173 @@ exports.processDocument = async (req, res) => {
       [documentId, userId],
     );
 
-    const extractedData = await extractDocumentData(azureUrl, fileType);
+    const documentTypeValidation = await validateDocumentType({
+      fileUrl: azureUrl,
+      fileType: document.file_type,
+      selectedCategory: document.category || "other",
+    });
+
+    if (
+      documentTypeValidation.status === "mismatch" ||
+      documentTypeValidation.status === "unrecognized" ||
+      documentTypeValidation.status === "unsupported"
+    ) {
+      await db.query(
+        `
+        UPDATE documents
+        SET processing_status = 'failed'
+        WHERE id = $1
+          AND user_id = $2
+        `,
+        [documentId, userId],
+      );
+      try {
+        await syncDocumentFromAuthoritative(userId, documentId, "UPDATE");
+      } catch (e) {
+        // ignore
+      }
+
+      // 🔔 ADD FAILURE PUSH NOTIFICATION HERE:
+      try {
+        const tokenRes = await db.query(
+          `SELECT fcm_token, expo_push_token FROM users WHERE id = $1`,
+          [userId],
+        );
+        const pushToken =
+          tokenRes.rows[0]?.expo_push_token || tokenRes.rows[0]?.fcm_token;
+        if (pushToken) {
+          await sendVerificationNotification(
+            pushToken,
+            document.title || "Document",
+            false, // isSuccessful = false
+            documentTypeValidation.message || "Document verification failed.",
+          );
+        }
+      } catch (notifErr) {
+        warn("Documents", "Failed to send verification failure notification", {
+          error: notifErr.message,
+        });
+      }
+
+      return res.status(documentTypeValidation.httpStatus).json({
+        status: "error",
+        code: documentTypeValidation.code,
+        errorCode: documentTypeValidation.code,
+        error: documentTypeValidation.message,
+      });
+    }
+
+    if (documentTypeValidation.status === "processing_error") {
+      await db.query(
+        `
+        UPDATE documents
+        SET processing_status = 'failed'
+        WHERE id = $1
+          AND user_id = $2
+        `,
+        [documentId, userId],
+      );
+
+      try {
+        await syncDocumentFromAuthoritative(userId, documentId, "UPDATE");
+      } catch (syncError) {
+        logError(
+          "Could not mirror authoritative row after OCR failure:",
+          syncError,
+        );
+      }
+
+      // 🔔 Send Verification Halted Notification (Processing Error)
+      try {
+        const tokenRes = await db.query(
+          `SELECT fcm_token, expo_push_token FROM users WHERE id = $1`,
+          [userId],
+        );
+        const pushToken =
+          tokenRes.rows[0]?.expo_push_token || tokenRes.rows[0]?.fcm_token;
+        if (pushToken) {
+          await sendVerificationNotification(
+            pushToken,
+            document.title || "Document",
+            false,
+            documentTypeValidation.message || "Document processing failed.",
+          );
+        }
+      } catch (notifErr) {
+        warn("Documents", "Failed to send processing error notification", {
+          error: notifErr.message,
+        });
+      }
+
+      return res.status(500).json({
+        status: "error",
+        code: ErrorCodes.OCR_PROCESS_FAILED,
+        errorCode: "OCR_PROCESS_FAILED",
+        error: documentTypeValidation.message || "Document processing failed",
+      });
+    }
+    if (documentTypeValidation.status === "manual_review") {
+      await db.query(
+        `
+        UPDATE documents
+        SET processing_status = 'manual_review'
+        WHERE id = $1
+          AND user_id = $2
+        `,
+        [documentId, userId],
+      );
+
+      try {
+        await syncDocumentFromAuthoritative(userId, documentId, "UPDATE");
+      } catch (syncError) {
+        logError(
+          "Could not mirror authoritative row after OCR manual review:",
+          syncError,
+        );
+      }
+
+      // 🔔 Send Verification Halted Notification (Manual Review)
+      try {
+        const tokenRes = await db.query(
+          `SELECT fcm_token, expo_push_token FROM users WHERE id = $1`,
+          [userId],
+        );
+        const pushToken =
+          tokenRes.rows[0]?.expo_push_token || tokenRes.rows[0]?.fcm_token;
+        if (pushToken) {
+          await sendVerificationNotification(
+            pushToken,
+            document.title || "Document",
+            false,
+            documentTypeValidation.message ||
+              "Your document requires manual review.",
+          );
+        }
+      } catch (notifErr) {
+        warn("Documents", "Failed to send manual review notification", {
+          error: notifErr.message,
+        });
+      }
+
+      return res.status(422).json({
+        status: "manual_review",
+        code: documentTypeValidation.code || "DOCUMENT_EXTRACTION_REVIEW",
+        errorCode: documentTypeValidation.code || "DOCUMENT_EXTRACTION_REVIEW",
+        error:
+          documentTypeValidation.message ||
+          "The document could not be processed confidently. Please review it manually.",
+        reason: documentTypeValidation.reason || "extraction_uncertain",
+        classification: documentTypeValidation.classification || null,
+      });
+    }
+
+    const extractedData = documentTypeValidation.extractedData;
+
+    if (!extractedData || typeof extractedData !== "object") {
+      throw new Error(
+        "Classification-first OCR returned no usable extraction result.",
+      );
+    }
 
     /*
      * OCR output is a suggestion, never an authoritative value.
@@ -440,6 +677,21 @@ exports.processDocument = async (req, res) => {
      * already checked - and then the "verified" record was wrong with no way to
      * tell. Now only fields the user has not filled in are populated.
      */
+    // Encrypt PII fields before persisting (document_number, issuer).
+    // Preserve readable OCR values for the API response.
+    const responseIssuer = extractedData.issuer;
+    const responseDocumentNumber = extractedData.documentNumber;
+
+    // Encrypt PII fields before persisting.
+    extractedData.issuer = encryptFields({ issuer: extractedData.issuer }, [
+      "issuer",
+    ]).issuer;
+
+    extractedData.documentNumber = encryptFields(
+      { document_number: extractedData.documentNumber },
+      ["document_number"],
+    ).document_number;
+
     const updateResult = await db.query(
       `
       UPDATE documents
@@ -450,7 +702,7 @@ exports.processDocument = async (req, res) => {
         issuer = COALESCE(NULLIF(trim(issuer), ''), $3, issuer),
         document_number = COALESCE(NULLIF(trim(document_number), ''), $4, document_number),
         issue_date = COALESCE(issue_date, NULLIF($5, '')::date, issue_date),
-        expiry_date = COALESCE(NULLIF($6, '')::date, expiry_date),
+        expiry_date = COALESCE(expiry_date, NULLIF($6, '')::date),
         risk_score = COALESCE(risk_score, $7),
         risk_level = CASE WHEN risk_level IS NULL OR risk_level = ''
           THEN COALESCE($8, risk_level) ELSE risk_level END,
@@ -520,11 +772,46 @@ exports.processDocument = async (req, res) => {
       });
     }
 
+    // Explicit response allowlists: never serialize complete database or OCR objects.
+    const safeExtractedData = {
+      title: extractedData.title,
+      issuer: responseIssuer,
+      documentNumber: responseDocumentNumber,
+      issueDate: extractedData.issueDate,
+      expiryDate: extractedData.expiryDate,
+      category: extractedData.category,
+      confidence: extractedData.confidence,
+      riskScore: extractedData.riskScore,
+      riskLevel: extractedData.riskLevel,
+      notes: extractedData.notes,
+    };
+
+    // Keep storage identifiers, raw OCR, user IDs, and file URLs server-side.
+    const safeDocument = {
+      id: updatedDocument.id,
+      title: updatedDocument.title,
+      category: updatedDocument.category,
+      issuer: updatedDocument.issuer,
+      document_number: updatedDocument.document_number,
+      issue_date: updatedDocument.issue_date,
+      expiry_date: updatedDocument.expiry_date,
+      notes: updatedDocument.notes,
+      status: updatedDocument.status,
+      enable_alerts: updatedDocument.enable_alerts,
+      file_type: updatedDocument.file_type,
+      processing_status: updatedDocument.processing_status,
+      risk_score: updatedDocument.risk_score,
+      risk_level: updatedDocument.risk_level,
+      created_at: updatedDocument.created_at,
+      updated_at: updatedDocument.updated_at,
+      updatedAt: updatedDocument.updatedAt,
+    };
+    decryptFields(safeDocument, PII_FIELDS);
     return res.status(200).json({
       status: "success",
       message: "Document processed successfully",
-      document: updatedDocument,
-      extractedData,
+      document: safeDocument,
+      extractedData: safeExtractedData,
     });
   } catch (error) {
     logError("Document processing error:", error);
@@ -590,14 +877,14 @@ exports.verifyDocument = async (req, res) => {
     debug("Documents", "Verification request", { userId, documentId });
 
     const docResult = await db.query(
-      `SELECT title FROM documents WHERE id = $1 AND user_id = $2`,
+      `SELECT title FROM documents WHERE id = $1 AND user_id = $2 AND status <> 'deleted'`,
       [documentId, userId],
     );
 
     const result = await db.query(
       `UPDATE documents 
        SET status = 'verified', updated_at = CURRENT_TIMESTAMP 
-       WHERE id = $1 AND user_id = $2 
+       WHERE id = $1 AND user_id = $2 AND status <> 'deleted'
        RETURNING id, status`,
       [documentId, userId],
     );
@@ -642,7 +929,10 @@ exports.verifyDocument = async (req, res) => {
         userResult.rows[0]?.expo_push_token || userResult.rows[0]?.fcm_token;
       if (pushToken) {
         try {
-          await sendVerificationNotification(pushToken, docResult.rows[0].title);
+          await sendVerificationNotification(
+            pushToken,
+            docResult.rows[0].title,
+          );
           debug("Documents", "Verification notification sent", {
             userId,
             documentId,
@@ -704,7 +994,7 @@ exports.getDocumentById = async (req, res) => {
               file_url AS "fileUrl", file_type AS "fileType", s3_key AS "s3Key",
               processing_status AS "processingStatus", risk_score AS "riskScore", risk_level AS "riskLevel",
               ${UPDATED_AT_ISO_SQL} AS "updatedAt"
-       FROM documents WHERE id = $1 AND user_id = $2`,
+        FROM documents WHERE id = $1 AND user_id = $2 AND status <> 'deleted'`,
       [docId, userId],
     );
 
@@ -714,6 +1004,9 @@ exports.getDocumentById = async (req, res) => {
         code: ErrorCodes.DOC_NOT_FOUND,
       });
     }
+
+    // Decrypt PII fields at rest (document_number, issuer).
+    decryptFields(doc.rows[0], PII_FIELDS);
 
     debug("Documents", "Document fetched", { userId, docId });
 
@@ -749,7 +1042,7 @@ exports.getDocumentFileUrl = async (req, res) => {
 
   try {
     const doc = await db.query(
-      `SELECT s3_key, file_url FROM documents WHERE id = $1 AND user_id = $2`,
+      `SELECT s3_key, file_url FROM documents WHERE id = $1 AND user_id = $2 AND status <> 'deleted'`,
       [docId, userId],
     );
 
@@ -786,71 +1079,233 @@ exports.getDocumentFileUrl = async (req, res) => {
 
 // Create a new document with strict validation & automations
 exports.createDocument = async (req, res) => {
-  const validation = validateSchema(documentSchema, req.body);
-  if (!validation.success) {
+  const userId = req.user.userId;
+
+  const idempotencyKey =
+    req.headers?.["idempotency-key"] ??
+    req.headers?.["Idempotency-Key"] ??
+    req.body?.idempotencyKey;
+
+  if (
+    idempotencyKey !== undefined &&
+    idempotencyKey !== null &&
+    (typeof idempotencyKey !== "string" ||
+      idempotencyKey.trim().length === 0 ||
+      idempotencyKey.trim().length > 200)
+  ) {
     return res.status(400).json({
-      error: Object.values(validation.errors).join(", "),
+      error:
+        "Idempotency key must be a non-empty string of at most 200 characters.",
       code: ErrorCodes.DOC_VALIDATION,
-      details: validation.errors,
     });
   }
 
-  const userId = req.user.userId;
-  const {
-    title,
-    category,
-    issuer,
-    documentNumber,
-    issueDate,
-    expiryDate,
-    notes,
-    enableAlerts,
-    s3Key,
-    fileUrl,
-    fileType,
-  } = validation.data;
-
   try {
-    const newDoc = await db.query(
-      `INSERT INTO documents (
-         user_id, title, category, issuer, document_number, 
-         issue_date, expiry_date, notes, enable_alerts, status, created_at,
-         s3_key, file_url, file_type, processing_status
-       ) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'active', CURRENT_TIMESTAMP, $10, $11, $12, $13) 
-       RETURNING id, title, category, issuer, document_number AS "documentNumber",
-                 issue_date AS "issueDate", expiry_date AS "expiryDate", notes, status, enable_alerts AS "enableAlerts",
-                 file_url AS "fileUrl", file_type AS "fileType", s3_key AS "s3Key",
-                 processing_status AS "processingStatus", risk_score AS "riskScore", risk_level AS "riskLevel",
-                 ${UPDATED_AT_ISO_SQL} AS "updatedAt"`,
-      [
-        userId,
+    const outcome = await db.withTransaction(async (client) => {
+      let idempotencyFingerprint = null;
+
+      if (idempotencyKey) {
+        const requestPayload = { ...(req.body || {}) };
+        delete requestPayload.idempotencyKey;
+
+        const begin = await beginIdempotentRequest(
+          userId,
+          idempotencyKey,
+          requestPayload,
+          client,
+        );
+
+        if (begin.conflict) {
+          return {
+            kind: "response",
+            status: 409,
+            body: {
+              error: "Idempotency key conflict",
+              code: "IDEMPOTENCY_CONFLICT",
+            },
+          };
+        }
+
+        if (begin.inProgress) {
+          return {
+            kind: "response",
+            status: 409,
+            body: {
+              error:
+                "A request with this idempotency key is already in progress.",
+              code: "IDEMPOTENCY_IN_PROGRESS",
+            },
+          };
+        }
+
+        if (begin.replay) {
+          const replayBody =
+            typeof begin.replay.response_body === "string"
+              ? JSON.parse(begin.replay.response_body)
+              : begin.replay.response_body;
+
+          return {
+            kind: "response",
+            status: begin.replay.response_status,
+            body: toReadableDocumentResponse(replayBody),
+          };
+        }
+
+        if (begin.retryable || !begin.started || !begin.fingerprint) {
+          return {
+            kind: "response",
+            status: 503,
+            body: {
+              error:
+                "Unable to safely claim the idempotency key. Please retry with the same key.",
+              code: ErrorCodes.DB_QUERY_FAILED,
+            },
+          };
+        }
+
+        idempotencyFingerprint = begin.fingerprint;
+      }
+
+      const validation = validateSchema(documentSchema, req.body);
+
+      if (!validation.success) {
+        const validationBody = {
+          error: Object.values(validation.errors).join(", "),
+          code: ErrorCodes.DOC_VALIDATION,
+          details: validation.errors,
+        };
+
+        if (idempotencyKey) {
+          const stored = await storeIdempotentResponse(
+            userId,
+            idempotencyKey,
+            400,
+            validationBody,
+            idempotencyFingerprint,
+            true,
+            client,
+          );
+
+          if (!stored) {
+            throw new Error(
+              "Unable to store the document validation response.",
+            );
+          }
+        }
+
+        return {
+          kind: "response",
+          status: 400,
+          body: validationBody,
+        };
+      }
+
+      const {
         title,
         category,
         issuer,
         documentNumber,
         issueDate,
         expiryDate,
-        typeof notes === "string" ? notes.trim() : null,
-        typeof enableAlerts === "boolean" ? enableAlerts : true,
-        s3Key || null,
-        fileUrl || null,
-        fileType || null,
-        s3Key ? "processing" : "completed",
-      ],
-    );
+        notes,
+        enableAlerts,
+        s3Key,
+        fileUrl,
+        fileType,
+      } = validation.data;
 
-    info("Documents", "Document created", {
-      userId,
-      docId: newDoc.rows[0].id,
+      // Encrypt PII fields before persisting (document_number, issuer).
+      const encryptedIssuer = encryptFields({ issuer }, PII_FIELDS).issuer;
+      const encryptedDocumentNumber = encryptFields(
+        { document_number: documentNumber },
+        PII_FIELDS,
+      ).document_number;
+
+      const newDoc = await client.query(
+        `INSERT INTO documents (
+           user_id, title, category, issuer, document_number,
+           issue_date, expiry_date, notes, enable_alerts, status, created_at,
+           s3_key, file_url, file_type, processing_status
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'active', CURRENT_TIMESTAMP, $10, $11, $12, $13)
+         RETURNING id, title, category, issuer, document_number AS "documentNumber",
+                   issue_date AS "issueDate", expiry_date AS "expiryDate", notes, status, enable_alerts AS "enableAlerts",
+                   file_url AS "fileUrl", file_type AS "fileType", s3_key AS "s3Key",
+                   processing_status AS "processingStatus", risk_score AS "riskScore", risk_level AS "riskLevel",
+                   ${UPDATED_AT_ISO_SQL} AS "updatedAt"`,
+        [
+          userId,
+          title,
+          category,
+          encryptedIssuer,
+          encryptedDocumentNumber,
+          issueDate,
+          expiryDate,
+          typeof notes === "string" ? notes.trim() : null,
+          typeof enableAlerts === "boolean" ? enableAlerts : true,
+          s3Key || null,
+          fileUrl || null,
+          fileType || null,
+          s3Key ? "processing" : "completed",
+        ],
+      );
+
+      if (!newDoc.rows || !newDoc.rows[0]) {
+        throw new Error("Document insert did not return a document row.");
+      }
+
+      const storedResponseBody = {
+        message: "Document created successfully",
+        document: newDoc.rows[0],
+      };
+
+      const responseBody = toReadableDocumentResponse(storedResponseBody);
+
+      if (idempotencyKey) {
+        const stored = await storeIdempotentResponse(
+          userId,
+          idempotencyKey,
+          201,
+          storedResponseBody,
+          idempotencyFingerprint,
+          true,
+          client,
+        );
+
+        if (!stored) {
+          throw new Error(
+            "Unable to store the completed document response. The transaction must be rolled back.",
+          );
+        }
+      }
+
+      return {
+        kind: "created",
+        status: 201,
+        body: responseBody,
+        document: newDoc.rows[0],
+      };
     });
-    // A row that does not exist yet: the mirror is written as a complete
-    // record, with the column defaults for the fields the row does not have.
-    await syncDocument(userId, newDoc.rows[0], "INSERT");
-    res.status(201).json({
-      message: "Document created successfully",
-      document: newDoc.rows[0],
-    });
+
+    if (outcome.kind === "created") {
+      info("Documents", "Document created", {
+        userId,
+        docId: outcome.document.id,
+      });
+
+      // Realtime is deliberately outside the transaction. A broadcast
+      // failure must not turn a committed document creation into an error.
+      try {
+        await syncDocument(userId, outcome.document, "INSERT");
+      } catch (syncError) {
+        console.warn(
+          "[DocuGuard] Document created, but realtime broadcast failed:",
+          syncError.message,
+        );
+      }
+    }
+
+    return res.status(outcome.status).json(outcome.body);
   } catch (err) {
     logError(
       "Documents",
@@ -859,18 +1314,16 @@ exports.createDocument = async (req, res) => {
         error: err.message,
         stack: err.stack,
         userId,
-        body: req.body,
       },
       ErrorCodes.DOC_CREATE_FAILED,
     );
-    res.status(500).json({
+
+    return res.status(500).json({
       error: "Server error while creating document",
       code: ErrorCodes.DOC_CREATE_FAILED,
-      details: err.message,
     });
   }
 };
-
 // Update an existing document with strict validation & automations
 exports.updateDocument = async (req, res) => {
   const validation = validateSchema(documentUpdateSchema, {
@@ -929,6 +1382,13 @@ exports.updateDocument = async (req, res) => {
   }
 
   try {
+    // Encrypt PII fields before persisting (document_number, issuer).
+    const encryptedIssuer = encryptFields({ issuer }, PII_FIELDS).issuer;
+    const encryptedDocumentNumber = encryptFields(
+      { document_number: documentNumber },
+      PII_FIELDS,
+    ).document_number;
+
     const updated = await db.query(
       `UPDATE documents
        SET title = $1, category = $2, issuer = $3, document_number = $4,
@@ -937,15 +1397,15 @@ exports.updateDocument = async (req, res) => {
        WHERE id = $9 AND user_id = $10
          AND ($11::timestamptz IS NULL OR ${REVISION_MATCH_SQL_UPDATE})
        RETURNING id, title, category, issuer, document_number AS "documentNumber",
-                 issue_date AS "issueDate", expiry_date AS "expiryDate", notes, status, enable_alerts AS "enableAlerts",
-                 s3_key AS "s3Key", file_url AS "fileUrl", file_type AS "fileType",
-                 processing_status AS "processingStatus",
-                 ${UPDATED_AT_ISO_SQL} AS "updatedAt"`,
+                  issue_date AS "issueDate", expiry_date AS "expiryDate", notes, status, enable_alerts AS "enableAlerts",
+                  s3_key AS "s3Key", file_url AS "fileUrl", file_type AS "fileType",
+                  processing_status AS "processingStatus",
+                  ${UPDATED_AT_ISO_SQL} AS "updatedAt"`,
       [
         title,
         category,
-        issuer,
-        documentNumber,
+        encryptedIssuer,
+        encryptedDocumentNumber,
         issueDate,
         expiryDate,
         typeof notes === "string" ? notes.trim() : null,
@@ -968,7 +1428,7 @@ exports.updateDocument = async (req, res) => {
        */
       const current = await db.query(
         `SELECT ${UPDATED_AT_ISO_SQL} AS "updatedAt"
-         FROM documents WHERE id = $1 AND user_id = $2`,
+          FROM documents WHERE id = $1 AND user_id = $2 AND status <> 'deleted'`,
         [docId, userId],
       );
 
@@ -1178,7 +1638,7 @@ exports.syncDocument = async (req, res) => {
       if (updated.rows.length === 0) {
         const current = await db.query(
           `SELECT ${UPDATED_AT_ISO_SQL} AS "updatedAt"
-           FROM documents WHERE id = $1 AND user_id = $2`,
+        FROM documents WHERE id = $1 AND user_id = $2 AND status <> 'deleted'`,
           [target.rowId, userId],
         );
 
@@ -1296,7 +1756,8 @@ exports.syncDocument = async (req, res) => {
  */
 exports.deleteUploadedObject = async (req, res) => {
   const userId = req.user.userId;
-  const s3Key = typeof req.body?.s3Key === "string" ? req.body.s3Key.trim() : "";
+  const s3Key =
+    typeof req.body?.s3Key === "string" ? req.body.s3Key.trim() : "";
 
   if (!s3Key) {
     return res.status(400).json({
@@ -1320,7 +1781,7 @@ exports.deleteUploadedObject = async (req, res) => {
      * the row that references it belongs to somebody else.
      */
     const inUse = await db.query(
-      `SELECT id FROM documents WHERE s3_key = $1 LIMIT 1`,
+      `SELECT id FROM documents WHERE s3_key = $1 AND status <> 'deleted' LIMIT 1`,
       [s3Key],
     );
 
@@ -1356,13 +1817,19 @@ exports.deleteUploadedObject = async (req, res) => {
 };
 
 // Delete a document
+
 exports.deleteDocument = async (req, res) => {
   const userId = req.user.userId;
   const docId = req.params.id;
 
   try {
     const result = await db.query(
-      `DELETE FROM documents WHERE id = $1 AND user_id = $2 RETURNING id, s3_key`,
+      `UPDATE documents
+       SET status = 'deleted',
+           deleted_at = NOW(),
+           updated_at = NOW()
+       WHERE id = $1 AND user_id = $2
+       RETURNING id, s3_key`,
       [docId, userId],
     );
 
@@ -1373,26 +1840,22 @@ exports.deleteDocument = async (req, res) => {
       });
     }
 
-    info("Documents", "Document deleted", { userId, docId });
+    const deletedDocument = result.rows[0];
 
-    /*
-     * The stored object goes with the row.
-     *
-     * The row is the only thing that points at the object, so a deleted
-     * document left its file in the bucket forever: nothing could reach it
-     * any more and nothing would ever remove it. The removal is best effort -
-     * a failure here must not turn a completed delete into an error - and it
-     * only ever touches the key that belonged to the row that was just
-     * deleted.
-     */
-    const deletedKey = result.rows[0].s3_key;
+    info("Documents", "Document soft-deleted", {
+      userId,
+      docId: deletedDocument.id,
+    });
 
-    if (deletedKey) {
-      await deleteStorageObject(deletedKey);
+    // Remove the stored file while retaining the database tombstone.
+    if (deletedDocument.s3_key) {
+      await deleteStorageObject(deletedDocument.s3_key);
     }
 
-    await deleteRecord("documents", docId, userId);
-    res.json({ message: "Document deleted successfully" });
+    // Notify connected clients without hard-deleting the database row.
+    broadcastDocumentDeletion(userId, deletedDocument.id);
+
+    return res.json({ message: "Document deleted successfully" });
   } catch (err) {
     logError(
       "Documents",
@@ -1405,7 +1868,8 @@ exports.deleteDocument = async (req, res) => {
       },
       ErrorCodes.DOC_DELETE_FAILED,
     );
-    res.status(500).json({
+
+    return res.status(500).json({
       error: "Server error while deleting document",
       code: ErrorCodes.DOC_DELETE_FAILED,
     });

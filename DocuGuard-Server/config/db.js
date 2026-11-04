@@ -1,20 +1,25 @@
 const { Pool } = require("pg");
+const fs = require("fs");
+const path = require("path");
 require("dotenv").config();
 
 let connectionString = process.env.DATABASE_URL;
 
 if (!connectionString && process.env.DB_HOST) {
-  const ssl = process.env.DB_SSL === "false" ? false : { rejectUnauthorized: false };
+  const ssl =
+    process.env.DB_SSL === "false" ? false : { rejectUnauthorized: false };
   connectionString = `postgresql://${encodeURIComponent(process.env.DB_USER)}:${encodeURIComponent(process.env.DB_PASSWORD)}@${process.env.DB_HOST}:${process.env.DB_PORT || 5432}/${process.env.DB_NAME || "postgres"}?sslmode=${ssl ? "require" : "disable"}`;
 }
 
+const caPath = path.join(__dirname, "..", "certs", "supabase-ca.crt");
+const ca = fs.readFileSync(caPath, "utf8");
+
 const pool = new Pool({
   connectionString,
-
-  ssl: connectionString ? undefined : {
-    rejectUnauthorized: false,
+  ssl: {
+    ca,
+    rejectUnauthorized: true,
   },
-
   max: 10,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 10000,
@@ -26,17 +31,7 @@ pool.on("error", (err) => {
 
 module.exports = {
   query: (text, params) => pool.query(text, params),
-  /**
-   * Check out a dedicated client so callers can run BEGIN/COMMIT/ROLLBACK.
-   * Without this, multi-statement writes were running as independent autocommit
-   * statements even when the code looked transactional.
-   * The caller is responsible for releasing the client.
-   */
   getClient: () => pool.connect(),
-  /**
-   * Run `fn` inside a transaction, rolling back on any throw and always
-   * releasing the client.
-   */
   withTransaction: async (fn) => {
     const client = await pool.connect();
     try {

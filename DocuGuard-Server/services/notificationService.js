@@ -19,7 +19,7 @@ async function sendViaExpo(token, title, body, data = {}) {
     body,
     sound: "default",
     priority: "high",
-    channelId: "docuguard-reminders",
+    channelId: "docuguard-alerts-v2",
     data,
   };
 
@@ -72,7 +72,7 @@ async function sendPushNotification(token, title, body, data = {}) {
       android: {
         priority: "high",
         notification: {
-          channelId: "docuguard-reminders",
+          channelId: "docuguard-alerts-v2",
           sound: "default",
         },
       },
@@ -84,7 +84,6 @@ async function sendPushNotification(token, title, body, data = {}) {
         },
       },
     };
-
     const response = await getMessaging(app).send(message);
     console.log("FCM push notification sent:", response);
     return { success: true, messageId: response, channel: "fcm" };
@@ -124,16 +123,24 @@ async function sendExpirationReminder(
   });
 }
 
-async function sendVerificationNotification(userToken, documentTitle) {
-  return sendPushNotification(
-    userToken,
-    "✅ Document Verified",
-    `Your document "${documentTitle}" has been successfully verified.`,
-    {
-      type: "verification",
-      documentTitle,
-    },
-  );
+async function sendVerificationNotification(
+  userToken,
+  documentTitle,
+  isSuccessful = true,
+  errorMessage = "",
+) {
+  const title = isSuccessful
+    ? "✅ Document Verified"
+    : "⚠️ Verification Halted";
+  const body = isSuccessful
+    ? `Your document "${documentTitle}" has been successfully verified.`
+    : `Verification halted for "${documentTitle}". ${errorMessage || "Please upload a valid physical document."}`;
+
+  return sendPushNotification(userToken, title, body, {
+    type: "verification",
+    documentTitle,
+    status: isSuccessful ? "success" : "halted",
+  });
 }
 
 async function sendProcessingCompleteNotification(

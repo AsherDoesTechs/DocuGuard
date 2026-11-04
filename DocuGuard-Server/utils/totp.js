@@ -93,7 +93,7 @@ function generateSecret() {
  * Verifies a user-supplied code, allowing a small window of steps on either
  * side to tolerate clock drift between the phone and the server.
  */
-function verifyTOTP(secretBase32, token, window = 1) {
+function verifyTOTP(secretBase32, token, window = 0) {
   if (typeof token !== "string" || !/^\d{6}$/.test(token.trim())) {
     return false;
   }

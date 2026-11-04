@@ -7,15 +7,24 @@ const { asyncHandler } = require("../utils/asyncHandler");
 // Public Auth Endpoints
 router.post("/register", asyncHandler(authController.register));
 router.post("/login", asyncHandler(authController.login));
+router.post("/admin-login", asyncHandler(authController.adminLogin));
 router.get("/check-email", asyncHandler(authController.checkEmail));
 router.post("/verify-email", asyncHandler(authController.verifyEmail));
 router.get("/verify-email-web", asyncHandler(authController.verifyEmailWeb));
 router.get("/reset-password", asyncHandler(authController.resetPasswordWeb));
-router.post("/resend-verification", asyncHandler(authController.resendVerification));
+router.post(
+  "/resend-verification",
+  asyncHandler(authController.resendVerification),
+);
 router.post("/forgot-password", asyncHandler(authController.forgotPassword));
 router.post("/reset-password", asyncHandler(authController.resetPassword));
 
 // Protected Auth Endpoints
-router.put("/fcm-token", authMiddleware, asyncHandler(authController.updateFcmToken));
+router.post("/logout", authMiddleware, asyncHandler(authController.logout));
+router.put(
+  "/fcm-token",
+  authMiddleware,
+  asyncHandler(authController.updateFcmToken),
+);
 
 module.exports = router;

@@ -121,52 +121,93 @@ exports.deleteStorageObject = async (s3Key) => {
   }
 };
 
-exports.generatePresignedUploadUrl = async (userId, fileName, fileType) => {
-  if (!userId) {
-    throw new Error("User ID is required");
-  }
-
-  if (!fileName) {
-    throw new Error("File name is required");
-  }
-
-  const typeError = exports.validateFileType(fileType);
-  if (typeError) {
-    throw new Error(typeError);
-  }
-
-  // The stored name is fully server-generated. Taking any part of the
-  // user-supplied name verbatim is what allowed path traversal attempts to
-  // reach other users' objects.
-  const extension = (String(fileName).match(/\.[a-zA-Z0-9]{1,8}$/) || [""])[0];
-  const storagePath = `${userId}/${crypto.randomUUID()}${extension.toLowerCase()}`;
-
-  const { data, error } = await supabaseAdmin.storage
-    .from(STORAGE_BUCKET)
-    .createSignedUploadUrl(storagePath, {
-      upsert: false,
+/**
+ * Get object metadata (size) from Supabase Storage.
+ * Uses Supabase JS list API with pagination and returns verified byte size if found.
+ */
+exports.getObjectMetadata = async (s3Key) => {
+  if (!s3Key) return null;
+  try {
+    const parts = String(s3Key).split("/");
+    const fileName = parts[parts.length - 1];
+    const prefix = parts.slice(0, -1).join("/") || "";
+    const limit = 100;
+    for (let page = 0; page < 20; page++) {
+      const offset = page * limit;
+      const { data, error } = await supabaseAdmin.storage
+        .from(STORAGE_BUCKET)
+        .list(prefix, { limit, offset, search: fileName });
+      if (error) {
+        throw error;
+      }
+      if (!Array.isArray(data) || data.length === 0) {
+        break;
+      }
+      const match = data.find((d) => d && d.name === fileName);
+      if (match) {
+        const size =
+          match.metadata && typeof match.metadata.size === "number"
+            ? match.metadata.size
+            : typeof match.size === "number"
+              ? match.size
+              : null;
+        if (typeof size === "number") {
+          return { size, exists: true };
+        }
+        return { size: null, exists: true };
+      }
+      if (data.length < limit) {
+        break;
+      }
+    }
+    return null;
+  } catch (err) {
+    console.warn("Storage: Failed to get object metadata", {
+      s3Key,
+      error: err.message,
     });
-
-  if (error) {
-    throw new Error(`Supabase signed URL error: ${error.message}`);
+    throw err;
   }
+};
 
-  if (!data?.signedUrl) {
-    throw new Error("Supabase did not return a signed upload URL");
+/**
+ * Calculate physical storage usage for a user in MB.
+ * Counts distinct object keys referenced by documents (including soft-deleted).
+ * Does not scan the entire bucket. Orphaned objects not referenced by DB records are not counted by this design.
+ * Returns null if calculation cannot be completed reliably.
+ */
+exports.calculateUserStorageUsage = async (userId) => {
+  const db = require("../config/db");
+  try {
+    const result = await db.query(
+      "SELECT DISTINCT s3_key FROM documents WHERE user_id = $1 AND s3_key IS NOT NULL AND s3_key <> ''",
+      [userId],
+    );
+    let totalBytes = BigInt(0);
+    const seen = new Set();
+    for (const row of result.rows) {
+      const key = row.s3_key;
+      if (!key || seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      try {
+        const meta = await exports.getObjectMetadata(key);
+        if (!meta) {
+          return null;
+        }
+        if (typeof meta.size === "number") {
+          totalBytes += BigInt(meta.size);
+        } else {
+          return null;
+        }
+      } catch (metaErr) {
+        return null;
+      }
+    }
+    return Number(totalBytes) / (1024 * 1024);
+  } catch (err) {
+    console.warn("Storage usage calculation failed:", err.message);
+    return null;
   }
-
-  // A short-lived signed GET URL, not the permanent public object URL. The
-  // client refetches it through /documents/:id/file-url when it expires.
-  const fileUrl = await exports.getSignedDownloadUrl(storagePath).catch(
-    () => null,
-  );
-
-  return {
-    uploadUrl: data.signedUrl,
-    fileUrl,
-    storagePath,
-    s3Key: storagePath, // durable identifier; fileUrl is only a cached view
-    fileType: String(fileType).toLowerCase().split(";")[0].trim(),
-    maxBytes: MAX_FILE_BYTES,
-  };
 };

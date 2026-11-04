@@ -1,10 +1,18 @@
 const db = require("../config/db");
 const bcrypt = require("bcryptjs");
 const { ErrorCodes } = require("../utils/errorCodes");
-const { validateSchema, profileSchema } = require("../../shared/validation/schemas");
+const {
+  validateSchema,
+  profileSchema,
+} = require("../../shared/validation/schemas");
 const { z } = require("zod");
 const { Readable } = require("stream");
 const totp = require("../utils/totp");
+const {
+  generateRecoveryCodes,
+  hashRecoveryCodes,
+  verifyRecoveryCode,
+} = require("../utils/twoFactorRecovery");
 const { syncProfile } = require("../services/dataSyncService");
 
 // Get user profile data and live stats
@@ -12,7 +20,7 @@ exports.getProfile = async (req, res) => {
   const userId = req.user.userId;
   try {
     const userRes = await db.query(
-      `SELECT name, email, security_level AS "securityLevel", notifications_enabled AS "notifyPush", 
+      `SELECT name, email, occupation, security_level AS "securityLevel", notifications_enabled AS "notifyPush", 
        email_alerts AS "notifyEmail", expiry_alerts AS "notifyExpiry", two_factor AS "twoFactor" 
        FROM users WHERE id = $1`,
       [userId],
@@ -23,7 +31,7 @@ exports.getProfile = async (req, res) => {
          COUNT(*) AS "documentCount",
          COUNT(CASE WHEN expiry_date <= CURRENT_DATE + INTERVAL '30 days' THEN 1 END) AS "expiringCount",
          COUNT(CASE WHEN expiry_date < CURRENT_DATE THEN 1 END) AS "expiredCount"
-       FROM documents WHERE user_id = $1 AND status <> 'deleted'`,
+       FROM documents WHERE user_id = $1 AND status <> 'deleted' AND (processing_status IS NULL OR processing_status <> 'pending')`,
       [userId],
     );
 
@@ -31,11 +39,23 @@ exports.getProfile = async (req, res) => {
       return res.status(404).json({ error: "User not found" });
     }
 
+    let storageUsedMB = null;
+    try {
+      const {
+        calculateUserStorageUsage,
+      } = require("../services/storageService");
+      storageUsedMB = await calculateUserStorageUsage(userId);
+    } catch (storageErr) {
+      console.warn("Failed to calculate storage usage:", storageErr.message);
+      storageUsedMB = null;
+    }
+
     res.json({
       ...userRes.rows[0],
       documentCount: parseInt(statsRes.rows[0].documentCount || 0),
       expiringCount: parseInt(statsRes.rows[0].expiringCount || 0),
       expiredCount: parseInt(statsRes.rows[0].expiredCount || 0),
+      storageUsedMB,
     });
   } catch (err) {
     console.error("Error fetching profile:", err);
@@ -49,9 +69,13 @@ exports.updateSecurity = async (req, res) => {
 
   const securitySchema = z.object({
     currentPassword: z.string().min(1, "Current password is required"),
-    newPassword: z.string().min(6, "New password must be at least 6 characters").optional(),
+    newPassword: z
+      .string()
+      .min(6, "New password must be at least 6 characters")
+      .optional(),
     twoFactor: z.boolean().optional(),
     twoFactorCode: z.string().optional(),
+    recoveryCode: z.string().optional(),
   });
 
   const validation = validateSchema(securitySchema, req.body);
@@ -63,48 +87,176 @@ exports.updateSecurity = async (req, res) => {
     });
   }
 
-  const { currentPassword, newPassword, twoFactor } = validation.data;
+  const {
+    currentPassword,
+    newPassword,
+    twoFactor,
+    twoFactorCode,
+    recoveryCode,
+  } = validation.data;
 
   try {
-    const userRes = await db.query(
-      "SELECT password_hash, two_factor_secret, two_factor_enabled_at FROM users WHERE id = $1",
-      [userId],
-    );
-    const user = userRes.rows[0];
-    if (!user?.password_hash) {
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    const validPassword = await bcrypt.compare(currentPassword, user.password_hash);
-    if (!validPassword) {
-      return res.status(400).json({ error: "Incorrect current password" });
-    }
-
-    if (twoFactor === true && (!user.two_factor_secret || !user.two_factor_enabled_at)) {
+    if (twoFactor === true) {
       return res.status(400).json({
-        error: "Complete two-factor authentication setup before enabling it.",
+        error: "Enable 2FA through authenticator enrollment and verification.",
+      });
+    }
+
+    if (twoFactor === false && newPassword) {
+      return res.status(400).json({
+        error: "Disable 2FA and change your password in separate requests.",
+      });
+    }
+
+    if (twoFactor === false) {
+      const authenticatorCode =
+        typeof twoFactorCode === "string" ? twoFactorCode.trim() : "";
+      const backupCode =
+        typeof recoveryCode === "string" ? recoveryCode.trim() : "";
+
+      if (Boolean(authenticatorCode) === Boolean(backupCode)) {
+        return res.status(400).json({
+          error: "Provide exactly one authenticator code or recovery code.",
+        });
+      }
+
+      const disabled = await db.withTransaction(async (client) => {
+        const userRes = await client.query(
+          `SELECT password_hash, two_factor, two_factor_secret,
+                  two_factor_enabled_at
+           FROM users
+           WHERE id = $1
+           FOR UPDATE`,
+          [userId],
+        );
+
+        const user = userRes.rows[0];
+        if (!user?.password_hash) {
+          return { status: 404, error: "User not found." };
+        }
+
+        const validPassword = await bcrypt.compare(
+          currentPassword,
+          user.password_hash,
+        );
+        if (!validPassword) {
+          return { status: 400, error: "Incorrect current password." };
+        }
+
+        if (
+          user.two_factor !== true ||
+          !user.two_factor_secret ||
+          !user.two_factor_enabled_at
+        ) {
+          return {
+            status: 400,
+            error: "Two-factor authentication is not enabled.",
+          };
+        }
+
+        if (authenticatorCode) {
+          if (!totp.verifyTOTP(user.two_factor_secret, authenticatorCode)) {
+            return { status: 400, error: "Invalid verification code." };
+          }
+        } else {
+          const recoveryRes = await client.query(
+            `SELECT id, code_hash
+             FROM public.user_two_factor_recovery_codes
+             WHERE user_id = $1 AND used_at IS NULL
+             ORDER BY id
+             FOR UPDATE`,
+            [userId],
+          );
+
+          const matchedIndex = await verifyRecoveryCode(
+            backupCode,
+            recoveryRes.rows.map((row) => row.code_hash),
+          );
+
+          if (matchedIndex < 0) {
+            return { status: 400, error: "Invalid recovery code." };
+          }
+        }
+
+        await client.query(
+          `UPDATE users
+           SET two_factor = FALSE,
+               two_factor_secret = NULL,
+               two_factor_enabled_at = NULL,
+               two_factor_setup_started_at = NULL
+           WHERE id = $1`,
+          [userId],
+        );
+
+        await client.query(
+          `DELETE FROM public.user_two_factor_recovery_codes
+           WHERE user_id = $1`,
+          [userId],
+        );
+
+        return { status: 200 };
+      });
+
+      if (disabled.status !== 200) {
+        return res.status(disabled.status).json({ error: disabled.error });
+      }
+
+      return res.json({
+        message: "Two-factor authentication disabled successfully.",
+        twoFactor: false,
       });
     }
 
     if (newPassword) {
+      const userRes = await db.query(
+        "SELECT password_hash FROM users WHERE id = $1",
+        [userId],
+      );
+      const user = userRes.rows[0];
+
+      if (!user?.password_hash) {
+        return res.status(404).json({ error: "User not found." });
+      }
+
+      const validPassword = await bcrypt.compare(
+        currentPassword,
+        user.password_hash,
+      );
+      if (!validPassword) {
+        return res.status(400).json({ error: "Incorrect current password." });
+      }
+
       const salt = await bcrypt.genSalt(12);
       const hashedPassword = await bcrypt.hash(newPassword, salt);
 
-      await db.query(
-        "UPDATE users SET password_hash = $1, two_factor = COALESCE($2, two_factor) WHERE id = $3",
-        [hashedPassword, twoFactor ?? null, userId],
-      );
-    } else if (twoFactor !== undefined) {
-      await db.query("UPDATE users SET two_factor = $1 WHERE id = $2", [
-        twoFactor,
+      await db.query("UPDATE users SET password_hash = $1 WHERE id = $2", [
+        hashedPassword,
         userId,
       ]);
+    } else {
+      const userRes = await db.query(
+        "SELECT password_hash FROM users WHERE id = $1",
+        [userId],
+      );
+      const user = userRes.rows[0];
+
+      if (!user?.password_hash) {
+        return res.status(404).json({ error: "User not found." });
+      }
+
+      const validPassword = await bcrypt.compare(
+        currentPassword,
+        user.password_hash,
+      );
+      if (!validPassword) {
+        return res.status(400).json({ error: "Incorrect current password." });
+      }
     }
 
-    res.json({ message: "Security settings updated successfully" });
+    return res.json({ message: "Security settings updated successfully." });
   } catch (err) {
     console.error("Error updating security:", err);
-    res.status(500).json({ error: "Server error updating security" });
+    return res.status(500).json({ error: "Server error updating security." });
   }
 };
 
@@ -118,27 +270,32 @@ exports.setup2FA = async (req, res) => {
     const secret = totp.generateSecret();
 
     const userRes = await db.query(
-      "SELECT email FROM users WHERE id = $1",
-      [userId],
-    );
-    const account = userRes.rows[0]?.email || `user-${userId}`;
-
-    // Staged only: two_factor stays FALSE until /verify succeeds, so a user
-    // cannot lock themselves out by abandoning enrollment.
-    await db.query(
-      "UPDATE users SET two_factor_secret = $1, two_factor_enabled_at = NULL WHERE id = $2",
+      `UPDATE users
+       SET two_factor_secret = $1,
+           two_factor_enabled_at = NULL,
+           two_factor_setup_started_at = NOW()
+       WHERE id = $1
+         AND COALESCE(two_factor, FALSE) = FALSE
+         AND two_factor_enabled_at IS NULL
+       RETURNING email`,
       [secret, userId],
     );
 
-    res.json({
+    if (userRes.rowCount !== 1) {
+      return res.status(409).json({
+        error: "2FA is already enabled or enrollment cannot be started.",
+      });
+    }
+
+    // Removed otpauthUri as requested; Google Authenticator only needs the secret
+    return res.json({
       secret,
-      otpauthUri: totp.buildOtpAuthUri(secret, account),
       digits: 6,
       period: 30,
     });
   } catch (err) {
     console.error("Error starting 2FA setup:", err);
-    res.status(500).json({ error: "Server error starting 2FA setup" });
+    return res.status(500).json({ error: "Server error starting 2FA setup." });
   }
 };
 
@@ -160,31 +317,101 @@ exports.verify2FA = async (req, res) => {
   }
 
   try {
-    const userRes = await db.query(
-      "SELECT two_factor_secret FROM users WHERE id = $1",
-      [userId],
-    );
-    const secret = userRes.rows[0]?.two_factor_secret;
+    let recoveryCodes = null;
 
-    if (!secret) {
-      return res.status(400).json({
-        error: "Start 2FA setup before verifying a code.",
-      });
+    const activated = await db.withTransaction(async (client) => {
+      const userRes = await client.query(
+        `SELECT two_factor, two_factor_secret, two_factor_enabled_at,
+                two_factor_setup_started_at,
+                (
+                  two_factor_setup_started_at IS NOT NULL
+                  AND two_factor_setup_started_at > NOW() - INTERVAL '15 minutes'
+                ) AS "pendingEnrollmentValid"
+         FROM users
+         WHERE id = $1
+         FOR UPDATE`,
+        [userId],
+      );
+
+      const user = userRes.rows[0];
+      if (!user) return { error: "User not found.", status: 404 };
+
+      if (user.two_factor === true || user.two_factor_enabled_at) {
+        return {
+          error: "Two-factor authentication is already enabled.",
+          status: 409,
+        };
+      }
+
+      if (!user.two_factor_secret) {
+        return {
+          error: "Start 2FA setup before verifying a code.",
+          status: 400,
+        };
+      }
+
+      if (user.pendingEnrollmentValid !== true) {
+        return {
+          error: "This 2FA setup has expired. Start setup again.",
+          status: 400,
+        };
+      }
+
+      if (!totp.verifyTOTP(user.two_factor_secret, validation.data.code)) {
+        return { error: "Invalid verification code.", status: 400 };
+      }
+
+      // Only generate and hash recovery codes after the authenticator code
+      // has been verified. Invalid attempts avoid unnecessary bcrypt work.
+      recoveryCodes = generateRecoveryCodes();
+      const recoveryHashes = await hashRecoveryCodes(recoveryCodes);
+
+      await client.query(
+        `DELETE FROM public.user_two_factor_recovery_codes
+         WHERE user_id = $1`,
+        [userId],
+      );
+
+      for (const codeHash of recoveryHashes) {
+        await client.query(
+          `INSERT INTO public.user_two_factor_recovery_codes
+             (user_id, code_hash)
+           VALUES ($1, $2)`,
+          [userId, codeHash],
+        );
+      }
+
+      const updateRes = await client.query(
+        `UPDATE users
+         SET two_factor = TRUE,
+             two_factor_enabled_at = NOW(),
+             two_factor_setup_started_at = NULL
+         WHERE id = $1
+           AND COALESCE(two_factor, FALSE) = FALSE
+           AND two_factor_enabled_at IS NULL
+           AND two_factor_setup_started_at > NOW() - INTERVAL '15 minutes'`,
+        [userId],
+      );
+
+      if (updateRes.rowCount !== 1) {
+        throw new Error("2FA activation state changed unexpectedly.");
+      }
+
+      return { success: true };
+    });
+
+    if (!activated.success) {
+      return res.status(activated.status).json({ error: activated.error });
     }
 
-    if (!totp.verifyTOTP(secret, validation.data.code)) {
-      return res.status(400).json({ error: "Invalid verification code." });
-    }
-
-    await db.query(
-      "UPDATE users SET two_factor = TRUE, two_factor_enabled_at = NOW() WHERE id = $1",
-      [userId],
-    );
-
-    res.json({ message: "Two-factor authentication enabled", twoFactor: true });
+    return res.json({
+      message: "Two-factor authentication enabled.",
+      twoFactor: true,
+      recoveryCodes,
+    });
   } catch (err) {
     console.error("Error verifying 2FA:", err);
-    res.status(500).json({ error: "Server error verifying 2FA" });
+    return res.status(500).json({ error: "Server error verifying 2FA." });
   }
 };
 
@@ -260,7 +487,10 @@ exports.submitSupportTicket = async (req, res) => {
 
   const supportSchema = z.object({
     subject: z.string().min(1).max(255).optional(),
-    message: z.string().min(1, "Message cannot be empty").max(5000, "Message too long"),
+    message: z
+      .string()
+      .min(1, "Message cannot be empty")
+      .max(5000, "Message too long"),
   });
 
   const validation = validateSchema(supportSchema, req.body);
@@ -294,8 +524,14 @@ exports.handleCheckoutSubscription = async (req, res) => {
 
   const checkoutSchema = z.object({
     name: z.string().min(1, "Name is required").max(100, "Name too long"),
-    serial: z.string().min(1, "Serial number is required").max(50, "Serial too long"),
-    card: z.string().min(12, "Invalid card number").max(19, "Invalid card number"),
+    serial: z
+      .string()
+      .min(1, "Serial number is required")
+      .max(50, "Serial too long"),
+    card: z
+      .string()
+      .min(12, "Invalid card number")
+      .max(19, "Invalid card number"),
     expiry: z.string().regex(/^\d{2}\/\d{2}$/, "Invalid expiry format (MM/YY)"),
   });
 
@@ -464,16 +700,25 @@ exports.updateUserSettings = async (req, res) => {
 };
 
 // Get active login sessions
+
 exports.getLoginSessions = async (req, res) => {
   const userId = req.user.userId;
+
   try {
     const sessionsRes = await db.query(
-      `SELECT id, device_name AS "deviceName", platform, ip_address AS "ipAddress",
-              location, is_current AS "isCurrent", created_at AS "createdAt",
+      `SELECT id, device_name AS "deviceName", platform,
+              ip_address AS "ipAddress", location,
+              is_current AS "isCurrent", created_at AS "createdAt",
               last_active AS "lastActive"
-       FROM login_sessions WHERE user_id = $1 ORDER BY is_current DESC, last_active DESC`,
+       FROM login_sessions
+       WHERE user_id = $1
+         AND revoked = FALSE
+         AND revoked_at IS NULL
+         AND expires_at > NOW()
+       ORDER BY is_current DESC, last_active DESC`,
       [userId],
     );
+
     res.json({ sessions: sessionsRes.rows || [] });
   } catch (err) {
     console.error("Error fetching login sessions:", err);
@@ -487,11 +732,23 @@ exports.terminateSession = async (req, res) => {
   const { sessionId } = req.params;
   try {
     const result = await db.query(
-      `DELETE FROM login_sessions WHERE id = $1 AND user_id = $2 AND is_current = false`,
+      `UPDATE login_sessions
+   SET revoked = TRUE,
+       revoked_at = COALESCE(revoked_at, NOW()),
+       is_current = FALSE,
+       last_active = NOW()
+   WHERE id = $1
+     AND user_id = $2
+     AND is_current = FALSE
+     AND revoked = FALSE
+     AND revoked_at IS NULL
+   RETURNING id`,
       [sessionId, userId],
     );
     if (result.rowCount === 0) {
-      return res.status(404).json({ error: "Session not found or cannot terminate current session" });
+      return res.status(404).json({
+        error: "Session not found or cannot terminate current session",
+      });
     }
     res.json({ message: "Session terminated" });
   } catch (err) {
@@ -505,7 +762,16 @@ exports.terminateAllOtherSessions = async (req, res) => {
   const userId = req.user.userId;
   try {
     const result = await db.query(
-      `DELETE FROM login_sessions WHERE user_id = $1 AND is_current = false`,
+      `UPDATE login_sessions
+   SET revoked = TRUE,
+       revoked_at = COALESCE(revoked_at, NOW()),
+       is_current = FALSE,
+       last_active = NOW()
+   WHERE user_id = $1
+     AND is_current = FALSE
+     AND revoked = FALSE
+     AND revoked_at IS NULL
+   RETURNING id`,
       [userId],
     );
     res.json({ message: `Terminated ${result.rowCount} other session(s)` });
@@ -521,6 +787,7 @@ exports.updateProfile = async (req, res) => {
   const profileUpdateSchema = z.object({
     name: z.string().min(1, "Name is required").max(100).optional(),
     email: z.string().email("Invalid email address").optional(),
+    occupation: z.string().max(100).optional(),
   });
 
   const validation = validateSchema(profileUpdateSchema, req.body);
@@ -532,7 +799,7 @@ exports.updateProfile = async (req, res) => {
     });
   }
 
-  const { name, email } = validation.data;
+  const { name, email, occupation } = validation.data;
 
   try {
     const fields = [];
@@ -544,7 +811,6 @@ exports.updateProfile = async (req, res) => {
       values.push(name);
     }
     if (email !== undefined) {
-      // Check if email is already taken
       const existing = await db.query(
         `SELECT id FROM users WHERE email = $1 AND id != $2`,
         [email, userId],
@@ -555,6 +821,11 @@ exports.updateProfile = async (req, res) => {
       fields.push(`email = $${idx++}`);
       values.push(email);
     }
+    // <-- Ensure occupation is mapped here so it updates properly!
+    if (occupation !== undefined) {
+      fields.push(`occupation = $${idx++}`);
+      values.push(occupation);
+    }
 
     if (fields.length === 0) {
       return res.json({ message: "No changes to save" });
@@ -563,11 +834,16 @@ exports.updateProfile = async (req, res) => {
     fields.push(`updated_at = CURRENT_TIMESTAMP`);
     values.push(userId);
 
-    await db.query(
+    const updateResult = await db.query(
       `UPDATE users SET ${fields.join(", ")} WHERE id = $${idx}`,
       values,
     );
-    await syncProfile(userId, { name, email });
+
+    if (updateResult.rowCount === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    await syncProfile(userId, { name, email, occupation });
 
     res.json({ message: "Profile updated successfully" });
   } catch (err) {
@@ -696,12 +972,11 @@ exports.exportUserData = async (req, res) => {
 
   try {
     // Fetch all user data
-    const userRes = await db.query(
-      `SELECT * FROM users WHERE id = $1`,
-      [userId],
-    );
+    const userRes = await db.query(`SELECT * FROM users WHERE id = $1`, [
+      userId,
+    ]);
     const docsRes = await db.query(
-      `SELECT * FROM documents WHERE user_id = $1 ORDER BY created_at DESC`,
+      `SELECT * FROM documents WHERE user_id = $1 AND status <> 'deleted' ORDER BY created_at DESC`,
       [userId],
     );
     const remindersRes = await db.query(
@@ -761,10 +1036,18 @@ exports.deleteAccount = async (req, res) => {
       // Delete in order to respect foreign keys
       await client.query(`DELETE FROM reminders WHERE user_id = $1`, [userId]);
       await client.query(`DELETE FROM documents WHERE user_id = $1`, [userId]);
-      await client.query(`DELETE FROM user_settings WHERE user_id = $1`, [userId]);
-      await client.query(`DELETE FROM login_sessions WHERE user_id = $1`, [userId]);
-      await client.query(`DELETE FROM support_tickets WHERE user_id = $1`, [userId]);
-      await client.query(`DELETE FROM transactions WHERE user_id = $1`, [userId]);
+      await client.query(`DELETE FROM user_settings WHERE user_id = $1`, [
+        userId,
+      ]);
+      await client.query(`DELETE FROM login_sessions WHERE user_id = $1`, [
+        userId,
+      ]);
+      await client.query(`DELETE FROM support_tickets WHERE user_id = $1`, [
+        userId,
+      ]);
+      await client.query(`DELETE FROM transactions WHERE user_id = $1`, [
+        userId,
+      ]);
       await client.query(`DELETE FROM exports WHERE user_id = $1`, [userId]);
       await client.query(`DELETE FROM users WHERE id = $1`, [userId]);
     });

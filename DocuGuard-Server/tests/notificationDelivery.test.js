@@ -7,12 +7,22 @@
  *
  *   1. A deleted document must not produce an expiry notice. The row of a
  *      deleted document stays in the database until the device has synced
- *      the deletion, and it still carries its expiry date - so the daily job
- *      kept reminding the user about a document they had removed.
+ *      the deletion, and it still carries its expiry date - so without this
+ *      filter the job kept sending expiry reminders for a document the user
+ *      had already deleted.
  *
  *   2. A device that signs out must not keep receiving the notifications of
  *      the account it signed out of. The push token lives on the account
  *      row, so it has to be removed when the session ends.
+ *
+ * Configurable schedules:
+ *
+ *   3. Each user's `reminder_before_days` controls how far ahead the job
+ *      looks for expiring documents (default 30).
+ *   4. Users who disabled `notifications_enabled` or `expiry_alerts` are
+ *      skipped entirely.
+ *   5. Per-user interval flags (30/7/1/on_day) control which expiry
+ *      intervals trigger a notice.
  */
 
 const test = require("node:test");
@@ -44,32 +54,49 @@ require.cache[cronPath] = {
   exports: { schedule: () => {} },
 };
 
+/*
+ * The notification service is replaced so no real push is sent.
+ */
 const notificationServicePath = require.resolve("../services/notificationService");
 
+let sentNotifications = [];
 require.cache[notificationServicePath] = {
   id: notificationServicePath,
   filename: notificationServicePath,
   loaded: true,
   exports: {
-    sendExpirationReminder: async () => ({ success: true }),
+    sendExpirationReminder: async (token, title, days) => {
+      sentNotifications.push({ token, title, days });
+      return { success: true };
+    },
     sendVerificationNotification: async () => {},
     sendExpiryNotification: async () => {},
   },
 };
 
-const { runExpirationCheck } = require("../jobs/expirationChecker");
+const { runExpirationCheck, getExpiringDocumentsForUser } =
+  require("../jobs/expirationChecker");
 const notificationRoutes = require("../routes/notification");
 
 /**
- * Replaces db.query so the expiration job's single statement is observed.
+ * Replaces db.query so the expiration job's statements are observed.
  */
-function recordQueries(rows = []) {
+function recordQueries(rowsBySql = {}) {
   const calls = [];
   const originalQuery = db.query;
 
   db.query = async (sql, params) => {
     calls.push({ sql, params });
-    return { rows, rowCount: rows.length };
+
+    // Match by distinctive SQL substring (template literals may have
+    // leading whitespace/newlines, so startsWith is unreliable).
+    for (const [key, rows] of Object.entries(rowsBySql)) {
+      if (sql.includes(key)) {
+        return { rows, rowCount: rows.length };
+      }
+    }
+
+    return { rows: [], rowCount: 0 };
   };
 
   return {
@@ -82,9 +109,7 @@ function recordQueries(rows = []) {
 
 /**
  * Replaces db.withTransaction so the route runs against a fake client whose
- * queries are recorded. This is necessary because the handler checks out a
- * dedicated client (db.withTransaction / pool.connect) and calls client.query,
- * not db.query (= pool.query). Recording db.query alone would observe nothing.
+ * queries are recorded.
  */
 function recordClientQueries(rows = []) {
   const calls = [];
@@ -108,7 +133,25 @@ function recordClientQueries(rows = []) {
 }
 
 test("the daily job does not remind about a deleted document", async () => {
-  const recorder = recordQueries([]);
+  sentNotifications.length = 0;
+  const recorder = recordQueries({
+    "SELECT u.id,": [
+      {
+        id: 1,
+        email: "a@example.com",
+        expo_push_token: "ExponentPushToken:abc",
+        fcm_token: null,
+        notifications_enabled: true,
+        expiry_alerts: true,
+        reminder_before_days: 30,
+        reminder_30days: true,
+        reminder_7days: true,
+        reminder_1day: true,
+        reminder_on_day: true,
+      },
+    ],
+    "FROM documents d": [],
+  });
 
   try {
     await runExpirationCheck();
@@ -116,19 +159,39 @@ test("the daily job does not remind about a deleted document", async () => {
     recorder.restore();
   }
 
-  assert.equal(recorder.calls.length, 1);
+  assert.equal(sentNotifications.length, 0, "no notices for deleted documents");
 
-  const [statement] = recorder.calls;
-
+  // The documents query must exclude tombstones.
+  const docCall = recorder.calls.find((c) =>
+    c.sql.includes("FROM documents d")
+  );
+  assert.ok(docCall, "expected a documents query");
   assert.match(
-    statement.sql,
+    docCall.sql,
     /status <> 'deleted'/,
     "a tombstone must not produce an expiry notice",
   );
 });
 
 test("the daily job only notifies accounts that asked for it", async () => {
-  const recorder = recordQueries([]);
+  sentNotifications.length = 0;
+  const recorder = recordQueries({
+    "SELECT u.id,": [
+      {
+        id: 1,
+        email: "a@example.com",
+        expo_push_token: "ExponentPushToken:abc",
+        fcm_token: null,
+        notifications_enabled: false,
+        expiry_alerts: true,
+        reminder_before_days: 30,
+        reminder_30days: true,
+        reminder_7days: true,
+        reminder_1day: true,
+        reminder_on_day: true,
+      },
+    ],
+  });
 
   try {
     await runExpirationCheck();
@@ -136,10 +199,123 @@ test("the daily job only notifies accounts that asked for it", async () => {
     recorder.restore();
   }
 
-  const [statement] = recorder.calls;
+  assert.equal(
+    sentNotifications.length,
+    0,
+    "no notices when notifications are disabled",
+  );
+});
 
-  assert.match(statement.sql, /u\.notifications_enabled = TRUE/);
-  assert.match(statement.sql, /d\.enable_alerts = TRUE/);
+test("the daily job skips users with expiry_alerts disabled", async () => {
+  sentNotifications.length = 0;
+  const recorder = recordQueries({
+    "SELECT u.id,": [
+      {
+        id: 1,
+        email: "a@example.com",
+        expo_push_token: "ExponentPushToken:abc",
+        fcm_token: null,
+        notifications_enabled: true,
+        expiry_alerts: false,
+        reminder_before_days: 30,
+        reminder_30days: true,
+        reminder_7days: true,
+        reminder_1day: true,
+        reminder_on_day: true,
+      },
+    ],
+  });
+
+  try {
+    await runExpirationCheck();
+  } finally {
+    recorder.restore();
+  }
+
+  assert.equal(
+    sentNotifications.length,
+    0,
+    "no notices when expiry alerts are disabled",
+  );
+});
+
+test("the daily job uses per-user reminder_before_days window", async () => {
+  sentNotifications.length = 0;
+  const recorder = recordQueries({
+    "SELECT u.id,": [
+      {
+        id: 1,
+        email: "a@example.com",
+        expo_push_token: "ExponentPushToken:abc",
+        fcm_token: null,
+        notifications_enabled: true,
+        expiry_alerts: true,
+        reminder_before_days: 7,
+        reminder_30days: true,
+        reminder_7days: true,
+        reminder_1day: true,
+        reminder_on_day: true,
+      },
+    ],
+    "SELECT d.id, d.title, d.expiry_date": [],
+  });
+
+  try {
+    await runExpirationCheck();
+  } finally {
+    recorder.restore();
+  }
+
+  // The user-specific query should use reminder_before_days = 7 as the window.
+  const docCall = recorder.calls.find((c) =>
+    c.sql.includes("FROM documents d")
+  );
+  assert.ok(docCall, "expected a documents query");
+  assert.equal(
+    docCall.params[1],
+    7,
+    "the per-user reminder_before_days window should be used",
+  );
+});
+
+test("the daily job sends notifications for expiring documents", async () => {
+  sentNotifications.length = 0;
+  const recorder = recordQueries({
+    "SELECT u.id,": [
+      {
+        id: 1,
+        email: "a@example.com",
+        expo_push_token: "ExponentPushToken:abc",
+        fcm_token: null,
+        notifications_enabled: true,
+        expiry_alerts: true,
+        reminder_before_days: 30,
+        reminder_30days: true,
+        reminder_7days: true,
+        reminder_1day: true,
+        reminder_on_day: true,
+      },
+    ],
+    "SELECT d.id, d.title, d.expiry_date": [
+      {
+        id: 101,
+        title: "Passport",
+        expiry_date: "2026-11-01",
+        days_until_expiry: 5,
+      },
+    ],
+  });
+
+  try {
+    await runExpirationCheck();
+  } finally {
+    recorder.restore();
+  }
+
+  assert.equal(sentNotifications.length, 1);
+  assert.equal(sentNotifications[0].token, "ExponentPushToken:abc");
+  assert.equal(sentNotifications[0].title, "Passport");
+  assert.equal(sentNotifications[0].days, 5);
 });
 
 /**
@@ -158,14 +334,6 @@ function routeHandlers(router, path, method) {
 /**
  * Calls a route's business handler the way the server does, awaiting the full
  * async chain.
- *
- * The router stacks the auth middleware before the business handler wrapped
- * in `asyncHandler`. Express-style `next()` is fire-and-forget: `auth`
- * middleware calls `next()` and returns without awaiting the downstream async
- * work, so walking the whole middleware chain would return `res` before the
- * handler calls `res.json()`. The auth behaviour is asserted separately by the
- * no-session test below, so we invoke the business handler directly and await
- * it, which also lets us observe every `client.query` the handler issues.
  */
 async function callRoute(router, path, method, req) {
   const handlers = routeHandlers(router, path, method);
@@ -238,8 +406,6 @@ test("signing out removes the push token of the account", async () => {
 });
 
 test("registering a removal detaches the token from every other account", async () => {
-  // The account owns an expo token, so the handler must detach that same
-  // token from any other account that happens to carry it.
   const recorder = recordClientQueries([
     { expo_push_token: "device-token-1", fcm_token: null },
   ]);

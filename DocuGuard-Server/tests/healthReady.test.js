@@ -28,6 +28,8 @@ process.env.JWT_SECRET =
   process.env.JWT_SECRET || "test-secret-for-the-suite-32-chars!!";
 process.env.DATABASE_URL =
   process.env.DATABASE_URL || "postgresql://placeholder:placeholder@localhost:5432/placeholder";
+process.env.DOCUMENT_ENCRYPTION_KEY =
+  process.env.DOCUMENT_ENCRYPTION_KEY || "test-encryption-key-12345";
 process.env.FIREBASE_PROJECT_ID =
   process.env.FIREBASE_PROJECT_ID || "placeholder-project";
 process.env.FIREBASE_CLIENT_EMAIL =

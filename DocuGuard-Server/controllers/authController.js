@@ -4,6 +4,8 @@ const crypto = require("crypto");
 const db = require("../config/db");
 const { AppError, ErrorCodes } = require("../utils/errors");
 const { verifyTOTP } = require("../utils/totp");
+const { verifyRecoveryCode } = require("../utils/twoFactorRecovery");
+const { createSession, revokeSession } = require("../services/sessionService");
 const { debug, info, warn, error: logError } = require("../utils/debugLogger");
 const {
   sendVerificationEmail,
@@ -128,106 +130,231 @@ exports.register = async (req, res, next) => {
 };
 
 // 2. Login
-exports.login = async (req, res, next) => {
-  const validation = validateSchema(loginSchema, req.body);
-  if (!validation.success) {
-    return res.status(400).json({
-      error: Object.values(validation.errors).join(", "),
-      code: ErrorCodes.AUTH_LOGIN_FAILED,
-      details: validation.errors,
-    });
-  }
+const createLoginHandler =
+  (requireAdmin = false) =>
+  async (req, res, next) => {
+    const validation = validateSchema(loginSchema, req.body);
 
-  const { email, password } = validation.data;
-
-  try {
-    debug("Auth", "Login attempt", { email });
-
-    const { rows } = await db.query("SELECT * FROM users WHERE email = $1", [
-      email.trim().toLowerCase(),
-    ]);
-    if (rows.length === 0) {
-      warn("Auth", "Login failed - user not found", { email });
-      return res.status(401).json({
-        error: "Invalid credentials",
+    if (!validation.success) {
+      return res.status(400).json({
+        error: Object.values(validation.errors).join(", "),
         code: ErrorCodes.AUTH_LOGIN_FAILED,
+        details: validation.errors,
       });
     }
 
-    const user = rows[0];
+    const { email, password } = validation.data;
 
-    const isMatch = await bcrypt.compare(password, user.password_hash);
-    if (!isMatch) {
-      warn("Auth", "Login failed - password mismatch", { email });
-      return res.status(401).json({
-        error: "Invalid credentials",
-        code: ErrorCodes.AUTH_LOGIN_FAILED,
+    try {
+      debug("Auth", requireAdmin ? "Admin login attempt" : "Login attempt", {
+        email,
       });
-    }
 
-    if (!user.is_verified) {
-      return res.status(403).json({
-        error: "Please verify your email address before logging in.",
-        code: "AUTH_EMAIL_NOT_VERIFIED",
-      });
-    }
+      const { rows } = await db.query(
+        "SELECT * FROM public.users WHERE email = $1",
+        [email.trim().toLowerCase()],
+      );
 
-    // 2FA gate. Enrolling TOTP without enforcing it at login meant the second
-    // factor existed in the database and the UI but was never actually checked,
-    // so the account looked protected while a stolen password was sufficient.
-    if (user.two_factor_secret && user.two_factor_enabled_at) {
-      const code =
-        typeof req.body.totpCode === "string" ? req.body.totpCode.trim() : "";
-
-      if (!code) {
-        // No token is issued, only the fact that a second factor is required.
-        return res.status(200).json({
-          requiresTwoFactor: true,
-          user: { id: user.id, email: user.email, name: user.name },
-        });
-      }
-
-      const isValidCode = verifyTOTP(user.two_factor_secret, code);
-      if (!isValidCode) {
-        warn("Auth", "Login failed - invalid 2FA code", { userId: user.id });
+      if (rows.length === 0) {
+        warn("Auth", "Login failed - user not found", { email });
         return res.status(401).json({
-          error: "Invalid verification code.",
+          error: "Invalid credentials",
           code: ErrorCodes.AUTH_LOGIN_FAILED,
         });
       }
+
+      const user = rows[0];
+      const isMatch = await bcrypt.compare(password, user.password_hash);
+
+      if (!isMatch) {
+        warn("Auth", "Login failed - password mismatch", { email });
+        return res.status(401).json({
+          error: "Invalid credentials",
+          code: ErrorCodes.AUTH_LOGIN_FAILED,
+        });
+      }
+
+      if (!user.is_verified) {
+        return res.status(403).json({
+          error: "Please verify your email address before logging in.",
+          code: "AUTH_EMAIL_NOT_VERIFIED",
+        });
+      }
+
+      // Enforce 2FA before issuing a token or creating a login session.
+      if (user.two_factor === true && user.two_factor_enabled_at) {
+        const totpCode =
+          typeof req.body.totpCode === "string" ? req.body.totpCode.trim() : "";
+        const recoveryCode =
+          typeof req.body.recoveryCode === "string"
+            ? req.body.recoveryCode.trim()
+            : "";
+
+        if (totpCode && recoveryCode) {
+          return res.status(400).json({
+            error: "Submit either an authenticator code or a recovery code.",
+            code: ErrorCodes.AUTH_LOGIN_FAILED,
+          });
+        }
+
+        if (!totpCode && !recoveryCode) {
+          return res.status(200).json({
+            requiresTwoFactor: true,
+            user: { id: user.id, email: user.email, name: user.name },
+          });
+        }
+
+        if (totpCode) {
+          const isValidCode = verifyTOTP(user.two_factor_secret, totpCode);
+
+          if (!isValidCode) {
+            warn("Auth", "Login failed - invalid 2FA code", {
+              userId: user.id,
+            });
+
+            return res.status(401).json({
+              error: "Invalid verification code.",
+              code: ErrorCodes.AUTH_LOGIN_FAILED,
+            });
+          }
+        } else {
+          if (requireAdmin) {
+            return res.status(401).json({
+              error: "Invalid verification code.",
+              code: ErrorCodes.AUTH_LOGIN_FAILED,
+            });
+          }
+
+          const recoveryCodeConsumed = await db.withTransaction(
+            async (client) => {
+              const result = await client.query(
+                `SELECT id, code_hash
+                 FROM public.user_two_factor_recovery_codes
+                 WHERE user_id = $1 AND used_at IS NULL
+                 ORDER BY id
+                 FOR UPDATE`,
+                [user.id],
+              );
+
+              const hashes = result.rows.map((row) => row.code_hash);
+              const matchedIndex = await verifyRecoveryCode(
+                recoveryCode,
+                hashes,
+              );
+
+              if (matchedIndex < 0) return false;
+
+              const matchedRow = result.rows[matchedIndex];
+              const consumed = await client.query(
+                `UPDATE public.user_two_factor_recovery_codes
+                 SET used_at = NOW()
+                 WHERE id = $1 AND used_at IS NULL`,
+                [matchedRow.id],
+              );
+
+              return consumed.rowCount === 1;
+            },
+          );
+
+          if (!recoveryCodeConsumed) {
+            warn("Auth", "Login failed - invalid recovery code", {
+              userId: user.id,
+            });
+
+            return res.status(401).json({
+              error: "Invalid verification code.",
+              code: ErrorCodes.AUTH_LOGIN_FAILED,
+            });
+          }
+        }
+      }
+
+      let role = user.role || "user";
+
+      if (requireAdmin) {
+        let roleResult;
+
+        try {
+          // Read the current role from the database; never trust a submitted
+          // role or an older token claim for administrator authorization.
+          roleResult = await db.query(
+            "SELECT role FROM public.users WHERE id = $1 LIMIT 1",
+            [user.id],
+          );
+        } catch (roleError) {
+          console.error("Admin login role verification failed.");
+
+          return res.status(503).json({
+            error: "Administrator authorization is temporarily unavailable.",
+            code: "ADMIN_AUTH_UNAVAILABLE",
+          });
+        }
+
+        if (
+          roleResult.rows.length === 0 ||
+          roleResult.rows[0].role !== "admin"
+        ) {
+          return res.status(403).json({
+            error: "Administrator access required.",
+            code: "ADMIN_ACCESS_REQUIRED",
+          });
+        }
+
+        role = "admin";
+      }
+
+      const token = jwt.sign(
+        { userId: user.id, role },
+        process.env.JWT_SECRET,
+        { expiresIn: "7d" },
+      );
+
+      const decodedToken = jwt.decode(token);
+
+      await createSession({
+        userId: user.id,
+        token,
+        expiresAt: decodedToken.exp * 1000,
+        deviceName: req.headers["user-agent"] || null,
+        platform: req.headers["x-platform"] || null,
+        ipAddress: req.ip || null,
+      });
+
+      info(
+        "Auth",
+        requireAdmin ? "Admin login successful" : "Login successful",
+        {
+          userId: user.id,
+          email: user.email,
+        },
+      );
+
+      return res.json({
+        token,
+        user: { id: user.id, email: user.email, name: user.name },
+      });
+    } catch (err) {
+      logError(
+        "Auth",
+        requireAdmin ? "Admin login error" : "Login error",
+        { error: err.message, stack: err.stack },
+        ErrorCodes.AUTH_LOGIN_FAILED,
+      );
+
+      return next(
+        new AppError(
+          requireAdmin
+            ? "Admin login failed due to server error"
+            : "Login failed due to server error",
+          500,
+          "AUTH_LOGIN_FAILED",
+        ),
+      );
     }
+  };
 
-    const token = jwt.sign(
-      { userId: user.id, role: user.role || "user" },
-      process.env.JWT_SECRET,
-      {
-        expiresIn: "7d",
-      },
-    );
-
-    info("Auth", "Login successful", { userId: user.id, email: user.email });
-
-    res.json({
-      token,
-      user: { id: user.id, email: user.email, name: user.name },
-    });
-  } catch (err) {
-    logError(
-      "Auth",
-      "Login error",
-      { error: err.message, stack: err.stack },
-      ErrorCodes.AUTH_LOGIN_FAILED,
-    );
-    return next(
-      new AppError(
-        "Login failed due to server error",
-        500,
-        "AUTH_LOGIN_FAILED",
-      ),
-    );
-  }
-};
-
+exports.login = createLoginHandler(false);
+exports.adminLogin = createLoginHandler(true);
 // 3. Check Email Availability
 exports.checkEmail = async (req, res) => {
   try {
@@ -317,6 +444,21 @@ exports.verifyEmail = async (req, res, next) => {
       { expiresIn: "7d" },
     );
 
+    const decodedAuthToken = jwt.decode(authToken);
+
+    if (!decodedAuthToken || typeof decodedAuthToken.exp !== "number") {
+      throw new Error("Could not determine email-verification session expiry.");
+    }
+
+    await createSession({
+      userId: user.id,
+      token: authToken,
+      expiresAt: decodedAuthToken.exp * 1000,
+      deviceName: req.headers?.["user-agent"] || null,
+      platform: req.headers?.["x-platform"] || null,
+      ipAddress: req.ip || null,
+    });
+
     info("Auth", "Email verified successfully", {
       userId: user.id,
       email: user.email,
@@ -325,6 +467,11 @@ exports.verifyEmail = async (req, res, next) => {
     return res.json({
       message: "Email verified successfully!",
       token: authToken,
+      user: {
+        id: user.id,
+        email: user.email,
+        role: user.role || "user",
+      },
     });
   } catch (err) {
     logError(
@@ -763,6 +910,40 @@ exports.resetPasswordWeb = async (req, res) => {
         </body>
       </html>
     `);
+  }
+};
+
+/**
+ * Revoke the authenticated user's current bearer-token session.
+ * Requires authMiddleware to have populated req.user.
+ */
+exports.logout = async (req, res, next) => {
+  const userId = req.user?.userId;
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.startsWith("Bearer ")
+    ? authHeader.slice("Bearer ".length).trim()
+    : "";
+
+  if (!token || userId === undefined || userId === null) {
+    return res.status(401).json({
+      error: "Authentication required.",
+      code: ErrorCodes.AUTH_REQUIRED,
+    });
+  }
+
+  try {
+    const revoked = await revokeSession({ userId, token });
+
+    if (!revoked) {
+      return res.status(401).json({
+        error: "Session is not active.",
+        code: ErrorCodes.AUTH_TOKEN_INVALID,
+      });
+    }
+
+    return res.status(200).json({ message: "Signed out successfully." });
+  } catch (err) {
+    return next(err);
   }
 };
 

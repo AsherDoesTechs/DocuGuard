@@ -13,7 +13,7 @@ const apiKey = process.env.AZURE_KEY;
  * is a guess from a blurry photo, and on an identity document a wrong
  * document number is worse than an empty field waiting for the user.
  */
-const MIN_CONFIDENCE = 0.6;
+const MIN_COMPLETENESS_PERCENT = 60;
 
 if (!endpoint || !apiKey) {
   console.warn(
@@ -26,24 +26,354 @@ const client =
     ? new DocumentAnalysisClient(endpoint, new AzureKeyCredential(apiKey))
     : null;
 
-function safeDate(value) {
-  if (!value) return null;
+function getClassificationConfig() {
+  const classifierId = String(process.env.AZURE_CLASSIFIER_ID || "").trim();
+  const routesRaw = String(process.env.AZURE_MODEL_ROUTES_JSON || "{}");
+  const thresholdRaw = process.env.AZURE_CLASSIFICATION_THRESHOLD ?? "0.85";
+  const fieldConfidenceThresholdRaw = process.env.AZURE_FIELD_CONFIDENCE_THRESHOLD ?? "0.85";
+  const timeoutRaw = process.env.AZURE_OCR_TIMEOUT_MS ?? "120000";
+  const concurrencyRaw = process.env.AZURE_OCR_MAX_CONCURRENCY ?? "3";
+
+  const threshold = Number(thresholdRaw);
+  const timeoutMs = Number(timeoutRaw);
+  const maxConcurrency = Number(concurrencyRaw);
+
+  if (!endpoint || !apiKey || !client) {
+    throw new Error("Azure OCR is not configured. Check AZURE_ENDPOINT and AZURE_KEY.");
+  }
+
+  if (!classifierId) {
+    throw new Error("Classification-first OCR requires AZURE_CLASSIFIER_ID.");
+  }
+
+  if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) {
+    throw new Error("Invalid AZURE_CLASSIFICATION_THRESHOLD; expected a number from 0 to 1.");
+  }
+
+  const fieldConfidenceThreshold = Number(fieldConfidenceThresholdRaw);
+  if (
+    !Number.isFinite(fieldConfidenceThreshold) ||
+    fieldConfidenceThreshold < 0 ||
+    fieldConfidenceThreshold > 1
+  ) {
+    throw new Error("Invalid AZURE_FIELD_CONFIDENCE_THRESHOLD; expected a number from 0 to 1.");
+  }
+
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 300000) {
+    throw new Error("Invalid AZURE_OCR_TIMEOUT_MS; expected an integer from 1000 to 300000.");
+  }
+
+  if (!Number.isSafeInteger(maxConcurrency) || maxConcurrency < 1 || maxConcurrency > 20) {
+    throw new Error("Invalid AZURE_OCR_MAX_CONCURRENCY; expected an integer from 1 to 20.");
+  }
+
+  let routes;
+  try {
+    routes = JSON.parse(routesRaw);
+  } catch {
+    throw new Error("Invalid AZURE_MODEL_ROUTES_JSON; expected a JSON object.");
+  }
+
+  if (!routes || typeof routes !== "object" || Array.isArray(routes)) {
+    throw new Error("Invalid AZURE_MODEL_ROUTES_JSON; expected a JSON object.");
+  }
+
+  for (const [label, modelId] of Object.entries(routes)) {
+    if (!label.trim() || typeof modelId !== "string" || !modelId.trim()) {
+      throw new Error("Invalid AZURE_MODEL_ROUTES_JSON; labels and model IDs must be non-empty strings.");
+    }
+
+    // Model IDs are identifiers, not URLs or arbitrary expressions.
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(modelId)) {
+      throw new Error("Invalid model ID in AZURE_MODEL_ROUTES_JSON.");
+    }
+  }
+
+  return {
+    classifierId,
+    threshold,
+    fieldConfidenceThreshold,
+    timeoutMs,
+    maxConcurrency,
+    routes,
+  };
+}
+
+let activeOcrOperations = 0;
+const ocrOperationQueue = [];
+
+async function withOcrConcurrencyLimit(maxConcurrency, operation) {
+  if (activeOcrOperations >= maxConcurrency) {
+    await new Promise((resolve) => {
+      ocrOperationQueue.push(resolve);
+    });
+  }
+
+  activeOcrOperations += 1;
 
   try {
-    if (value instanceof Date) {
-      return value.toISOString().split("T")[0];
+    return await operation();
+  } finally {
+    activeOcrOperations -= 1;
+    const next = ocrOperationQueue.shift();
+    if (next) next();
+  }
+}
+async function classifyAzureDocument(fileUrl) {
+  const config = getClassificationConfig();
+
+  if (typeof fileUrl !== "string" || !fileUrl.trim()) {
+    throw new Error("Document URL is required for classification.");
+  }
+
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(fileUrl);
+  } catch {
+    throw new Error("A valid HTTPS document URL is required for classification.");
+  }
+
+  if (parsedUrl.protocol !== "https:") {
+    throw new Error("A valid HTTPS document URL is required for classification.");
+  }
+
+  return withOcrConcurrencyLimit(config.maxConcurrency, async () => {
+    const abortController = new AbortController();
+    let poller;
+    let timedOut = false;
+
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      abortController.abort();
+
+      // This stops local polling when the SDK poller supports it.
+      // It does not claim to cancel the operation already running in Azure.
+      try {
+        poller?.stopPolling?.();
+      } catch {
+        // Preserve the timeout result if local polling cannot be stopped.
+      }
+    }, config.timeoutMs);
+
+    try {
+      poller = await client.beginClassifyDocumentFromUrl(
+        config.classifierId,
+        fileUrl,
+        { abortSignal: abortController.signal },
+      );
+
+      const result = await poller.pollUntilDone({
+        abortSignal: abortController.signal,
+      });
+
+      if (timedOut) {
+        throw new Error("Azure document classification timed out.");
+      }
+
+      const documents = Array.isArray(result?.documents)
+        ? result.documents
+        : [];
+
+      if (documents.length === 0) {
+        return {
+          status: "manual_review",
+          reason: "no_classification",
+          message: "The document could not be classified. Please review it manually.",
+        };
+      }
+
+      const labels = documents.map((item) =>
+        typeof item?.docType === "string" ? item.docType.trim() : "",
+      );
+
+      if (labels.some((label) => !label)) {
+        return {
+          status: "manual_review",
+          reason: "missing_document_type",
+          message: "The classification result did not identify a document type.",
+        };
+      }
+
+      const uniqueLabels = [...new Set(labels)];
+
+      if (uniqueLabels.length !== 1) {
+        return {
+          status: "manual_review",
+          reason: "conflicting_document_types",
+          message: "The document classification was ambiguous. Please review it manually.",
+        };
+      }
+
+      const confidences = documents.map((item) => item?.confidence);
+
+      if (
+        confidences.some(
+          (confidence) =>
+            typeof confidence !== "number" ||
+            !Number.isFinite(confidence) ||
+            confidence < 0 ||
+            confidence > 1,
+        )
+      ) {
+        return {
+          status: "manual_review",
+          reason: "invalid_classification_confidence",
+          message: "The classification confidence could not be verified.",
+        };
+      }
+
+      // When Azure returns multiple entries with the same label, use the
+      // lowest confidence rather than overstating certainty.
+      const confidence = Math.min(...confidences);
+
+      if (confidence < config.threshold) {
+        return {
+          status: "manual_review",
+          reason: "low_classification_confidence",
+          classification: {
+            docType: uniqueLabels[0],
+            confidence,
+            threshold: config.threshold,
+          },
+          message: "The document classification is uncertain. Please review it manually.",
+        };
+      }
+
+      const docType = uniqueLabels[0];
+      const modelId = config.routes[docType];
+
+      if (typeof modelId !== "string" || !modelId.trim()) {
+        return {
+          status: "manual_review",
+          reason: "unmapped_document_type",
+          classification: {
+            docType,
+            confidence,
+            threshold: config.threshold,
+          },
+          message: "No extraction model is configured for this document type.",
+        };
+      }
+
+      return {
+        status: "classified",
+        classification: {
+          docType,
+          confidence,
+          threshold: config.threshold,
+        },
+        modelId,
+      };
+    } catch (error) {
+      if (timedOut) {
+        throw new Error("Azure document classification timed out.");
+      }
+
+      // Avoid exposing signed URLs, credentials, or raw SDK request details.
+      throw new Error("Azure document classification failed.");
+    } finally {
+      clearTimeout(timeout);
+    }
+  });
+}
+function safeDate(value) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return null;
+    return value.toISOString().slice(0, 10);
+  }
+
+  if (typeof value !== "string") return null;
+
+  const input = value.trim();
+  if (!input) return null;
+
+  function validatedDate(year, month, day) {
+    if (
+      !Number.isInteger(year) ||
+      !Number.isInteger(month) ||
+      !Number.isInteger(day) ||
+      year < 1000 ||
+      year > 9999 ||
+      month < 1 ||
+      month > 12 ||
+      day < 1
+    ) {
+      return null;
     }
 
-    const parsed = new Date(value);
+    const candidate = new Date(Date.UTC(year, month - 1, day));
 
-    if (!Number.isNaN(parsed.getTime())) {
-      return parsed.toISOString().split("T")[0];
+    if (
+      candidate.getUTCFullYear() !== year ||
+      candidate.getUTCMonth() !== month - 1 ||
+      candidate.getUTCDate() !== day
+    ) {
+      return null;
     }
-  } catch (_) {}
+
+    return [
+      String(year).padStart(4, "0"),
+      String(month).padStart(2, "0"),
+      String(day).padStart(2, "0"),
+    ].join("-");
+  }
+
+  // Unambiguous year-first dates: YYYY-MM-DD or YYYY/MM/DD.
+  let match = input.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  if (match) {
+    return validatedDate(
+      Number(match[1]),
+      Number(match[2]),
+      Number(match[3]),
+    );
+  }
+
+  // Numeric dates are accepted only when their ordering is unambiguous.
+  match = input.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+  if (match) {
+    const first = Number(match[1]);
+    const second = Number(match[2]);
+    const year = Number(match[3]);
+
+    if (first <= 12 && second <= 12) {
+      return null;
+    }
+
+    if (first > 12 && second <= 12) {
+      return validatedDate(year, second, first);
+    }
+
+    if (second > 12 && first <= 12) {
+      return validatedDate(year, first, second);
+    }
+
+    return null;
+  }
+
+  // Accept explicit day-month-name-year dates, e.g. 5 February 2025.
+  match = input.match(/^(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})$/);
+  if (match) {
+    const monthNames = [
+      "january", "february", "march", "april", "may", "june",
+      "july", "august", "september", "october", "november", "december",
+    ];
+
+    const monthIndex = monthNames.indexOf(match[2].toLowerCase());
+    if (monthIndex < 0) return null;
+
+    return validatedDate(
+      Number(match[3]),
+      monthIndex + 1,
+      Number(match[1]),
+    );
+  }
 
   return null;
 }
-
 function normalizeText(value) {
   if (value === undefined || value === null) {
     return null;
@@ -137,7 +467,7 @@ function findDocumentNumber(text) {
   const patterns = [
     /(?:document\s*(?:no|number)|passport\s*(?:no|number)|id\s*(?:no|number)|license\s*(?:no|number)|registration\s*(?:no|number))[\s:#-]*([A-Z0-9][A-Z0-9-]{3,20})/i,
 
-    /(?:No\.?|Number|Nº)\s*[:#-]?\s*([A-Z0-9][A-Z0-9-]{3,20})/i,
+    /(?:No\.?|Number|NÂº)\s*[:#-]?\s*([A-Z0-9][A-Z0-9-]{3,20})/i,
   ];
 
   for (const pattern of patterns) {
@@ -249,9 +579,110 @@ function inferTitle(text, docType) {
     return docType;
   }
 
-  return "Scanned Document";
+  return null;
 }
 
+function normalizeAzureField(field, threshold) {
+  if (field === null || field === undefined) {
+    return {
+      type: null,
+      value: null,
+      content: null,
+      confidence: null,
+      needsReview: true,
+    };
+  }
+
+  if (typeof field !== "object" || Array.isArray(field) || field instanceof Date) {
+    return {
+      type: field instanceof Date ? "date" : typeof field,
+      value: field instanceof Date
+        ? (Number.isNaN(field.getTime()) ? null : field.toISOString())
+        : field,
+      content: null,
+      confidence: null,
+      needsReview: true,
+    };
+  }
+
+  const knownTypes = [
+    "String", "Date", "Time", "PhoneNumber", "Number", "Integer",
+    "Boolean", "SelectionMark", "Signature", "CountryRegion",
+    "Currency", "Address", "Array", "Object",
+  ];
+
+  const type = typeof field.type === "string" ? field.type : null;
+  let value = null;
+
+  if (type && Object.prototype.hasOwnProperty.call(field, `value${type}`)) {
+    value = field[`value${type}`];
+  } else {
+    for (const candidate of knownTypes) {
+      const key = `value${candidate}`;
+      if (Object.prototype.hasOwnProperty.call(field, key)) {
+        value = field[key];
+        break;
+      }
+    }
+  }
+
+  if (value === null && Object.prototype.hasOwnProperty.call(field, "value")) {
+    value = field.value;
+  }
+
+  function normalizeNested(valueToNormalize) {
+    if (valueToNormalize === null || valueToNormalize === undefined) return null;
+
+    if (valueToNormalize instanceof Date) {
+      return Number.isNaN(valueToNormalize.getTime())
+        ? null
+        : valueToNormalize.toISOString();
+    }
+
+    if (Array.isArray(valueToNormalize)) {
+      return valueToNormalize.map((item) => {
+        if (item && typeof item === "object") {
+          return normalizeAzureField(item, threshold);
+        }
+        return normalizeNested(item);
+      });
+    }
+
+    if (typeof valueToNormalize === "object") {
+      const normalized = {};
+      for (const [key, nestedValue] of Object.entries(valueToNormalize)) {
+        if (nestedValue && typeof nestedValue === "object" &&
+            !Array.isArray(nestedValue) && !(nestedValue instanceof Date) &&
+            ("type" in nestedValue || "value" in nestedValue ||
+             "content" in nestedValue || "confidence" in nestedValue)) {
+          normalized[key] = normalizeAzureField(nestedValue, threshold);
+        } else {
+          normalized[key] = normalizeNested(nestedValue);
+        }
+      }
+      return normalized;
+    }
+
+    return valueToNormalize;
+  }
+
+  const numericConfidence =
+    typeof field.confidence === "number" &&
+    Number.isFinite(field.confidence) &&
+    field.confidence >= 0 &&
+    field.confidence <= 1
+      ? field.confidence
+      : null;
+
+  return {
+    type,
+    value: normalizeNested(value),
+    content: typeof field.content === "string" ? field.content : null,
+    confidence: numericConfidence,
+    needsReview:
+      numericConfidence === null || numericConfidence < threshold,
+  };
+}
 function parseAzureOutput(azureResult) {
   const result = {
     title: null,
@@ -274,6 +705,19 @@ function parseAzureOutput(azureResult) {
       azureResult?.content || azureResult?.documents?.[0]?.content || "";
 
     const fields = document?.fields || {};
+    const fieldThreshold = Number(
+      process.env.AZURE_FIELD_CONFIDENCE_THRESHOLD ?? "0.85",
+    );
+    if (!Number.isFinite(fieldThreshold) || fieldThreshold < 0 || fieldThreshold > 1) {
+      throw new Error("Invalid AZURE_FIELD_CONFIDENCE_THRESHOLD.");
+    }
+
+    result.extractedFields = Object.fromEntries(
+      Object.entries(fields).map(([name, field]) => [
+        name,
+        normalizeAzureField(field, fieldThreshold),
+      ]),
+    );
 
     const docType = document?.docType || "";
 
@@ -419,7 +863,7 @@ async function analyzeDocument(fileUrl, contentType) {
     throw new Error("Document URL is required");
   }
 
-  console.log(`Analyzing document with Azure: ${fileUrl}`);
+  console.log("Analyzing document with Azure (URL redacted).");
   console.log(`Document content type: ${contentType || "unknown"}`);
 
   /*
@@ -451,9 +895,20 @@ async function analyzeDocument(fileUrl, contentType) {
   let poller;
 
   try {
-    poller = await client.beginAnalyzeDocumentFromUrl(modelId, fileUrl);
+    // Add timeout to prevent hanging
+    const timeoutMs = 60000;
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('OCR request timeout')), timeoutMs);
+    });
+    poller = await Promise.race([
+      client.beginAnalyzeDocumentFromUrl(modelId, fileUrl),
+      timeoutPromise
+    ]);
   } catch (firstError) {
     const msg = String(firstError?.message || "");
+    if (/timeout/i.test(msg)) {
+      throw firstError;
+    }
     console.warn(
       `Azure ${modelId} failed. Falling back to prebuilt-document:`,
       msg,
@@ -461,27 +916,162 @@ async function analyzeDocument(fileUrl, contentType) {
     if (/401|403|unauthorized|forbidden|invalid.*key|access denied|authentication/i.test(msg)) {
       throw firstError;
     }
-    poller = await client.beginAnalyzeDocumentFromUrl(
-      "prebuilt-document",
-      fileUrl,
-    );
-    modelId = "prebuilt-document";
+    try {
+      const timeoutMs = 60000;
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('OCR request timeout')), timeoutMs);
+      });
+      poller = await Promise.race([
+        client.beginAnalyzeDocumentFromUrl("prebuilt-document", fileUrl),
+        timeoutPromise
+      ]);
+      modelId = "prebuilt-document";
+    } catch (fallbackErr) {
+      if (/timeout/i.test(String(fallbackErr?.message || ""))) {
+        throw fallbackErr;
+      }
+      throw fallbackErr;
+    }
   }
 
-  const result = await poller.pollUntilDone();
+  try {
+    const timeoutMs = 120000;
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('OCR processing timeout')), timeoutMs);
+    });
+    const result = await Promise.race([
+      poller.pollUntilDone(),
+      timeoutPromise
+    ]);
 
-  if (!result) {
-    throw new Error("Azure returned no analysis result");
+    if (!result) {
+      throw new Error("Azure returned no analysis result");
+    }
+
+    console.log(`Azure analysis completed using ${modelId}`);
+
+    return {
+      ...result,
+      _modelId: modelId,
+    };
+  } catch (pollErr) {
+    if (/timeout/i.test(String(pollErr?.message || ""))) {
+      throw new Error('OCR request timeout');
+    }
+    throw pollErr;
   }
-
-  console.log(`Azure analysis completed using ${modelId}`);
-
-  return {
-    ...result,
-    _modelId: modelId,
-  };
 }
 
+async function extractClassifiedDocumentData(fileUrl, modelId, classification) {
+  const config = getClassificationConfig();
+
+  if (
+    typeof fileUrl !== "string" ||
+    !fileUrl.trim() ||
+    typeof modelId !== "string" ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(modelId)
+  ) {
+    throw new Error("A valid document URL and explicitly mapped model ID are required.");
+  }
+
+  if (
+    !classification ||
+    typeof classification.docType !== "string" ||
+    typeof classification.confidence !== "number" ||
+    !Number.isFinite(classification.confidence) ||
+    classification.confidence < config.threshold
+  ) {
+    throw new Error("Verified classification is required before document extraction.");
+  }
+
+  // Enforce the current configuration again at the extraction boundary.
+  if (config.routes[classification.docType] !== modelId) {
+    throw new Error("The extraction model does not match the configured classification route.");
+  }
+
+  const parsedUrl = new URL(fileUrl);
+  if (parsedUrl.protocol !== "https:") {
+    throw new Error("A valid HTTPS document URL is required for extraction.");
+  }
+
+  return withOcrConcurrencyLimit(config.maxConcurrency, async () => {
+    const abortController = new AbortController();
+    let poller;
+    let timedOut = false;
+    let timeout;
+
+    const timeoutPromise = new Promise((_, reject) => {
+      timeout = setTimeout(() => {
+        timedOut = true;
+        abortController.abort();
+
+        try {
+          poller?.stopPolling?.();
+        } catch {
+          // Preserve the timeout error.
+        }
+
+        reject(new Error("Azure document extraction timed out."));
+      }, config.timeoutMs);
+    });
+
+    try {
+      const operation = (async () => {
+        poller = await client.beginAnalyzeDocumentFromUrl(
+          modelId,
+          fileUrl,
+          { abortSignal: abortController.signal },
+        );
+
+        if (timedOut) {
+          try {
+            poller.stopPolling?.();
+          } catch {
+            // Local polling cleanup is best-effort.
+          }
+          throw new Error("Azure document extraction timed out.");
+        }
+
+        const result = await poller.pollUntilDone({
+          abortSignal: abortController.signal,
+        });
+
+        if (timedOut) {
+          throw new Error("Azure document extraction timed out.");
+        }
+
+        if (!result) {
+          throw new Error("Azure returned no document extraction result.");
+        }
+
+        return { ...result, _modelId: modelId };
+      })();
+
+      const azureResult = await Promise.race([operation, timeoutPromise]);
+      const parsed = parseAzureOutput(azureResult);
+
+      return {
+        ...parsed,
+        classification: {
+          docType: classification.docType,
+          confidence: classification.confidence,
+          threshold: config.threshold,
+        },
+        extractedFields: parsed.extractedFields || {},
+        raw: azureResult,
+      };
+    } catch (error) {
+      if (timedOut) {
+        throw new Error("Azure document extraction timed out.");
+      }
+
+      // Do not expose signed URLs, keys, or raw SDK request details.
+      throw new Error("Azure document extraction failed.");
+    } finally {
+      clearTimeout(timeout);
+    }
+  });
+}
 exports.extractDocumentData = async (
   fileUrl,
   contentType = "application/pdf",
@@ -503,10 +1093,10 @@ exports.extractDocumentData = async (
     // Below this confidence the fields are guesses, not extractions. They are
     // still returned (so the user can review them) but flagged so the caller
     // does not treat them as usable data.
-    if (parsed.confidence < MIN_CONFIDENCE) {
-      console.warn("Logic engine: low-confidence extraction", {
+    if (parsed.confidence < MIN_COMPLETENESS_PERCENT) {
+      console.warn("Logic engine: low-completeness extraction", {
         confidence: parsed.confidence,
-        threshold: MIN_CONFIDENCE,
+        threshold: MIN_COMPLETENESS_PERCENT,
       });
     }
 
@@ -521,3 +1111,9 @@ exports.extractDocumentData = async (
 };
 
 exports.parseAzureOutput = parseAzureOutput;
+exports.classifyDocument = classifyAzureDocument;
+
+
+
+
+exports.extractClassifiedDocumentData = extractClassifiedDocumentData;

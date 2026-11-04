@@ -37,7 +37,7 @@ function keyGenerator(req) {
     }
   }
 
-  return ipKeyGenerator(req);
+  return ipKeyGenerator(req.ip);
 }
 
 // 1. General API Rate Limiter
@@ -60,7 +60,7 @@ const authLimiter = rateLimit({
   max: 10, // Limit each IP to 10 login/register attempts per hour
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: ipKeyGenerator,
+  keyGenerator: (req) => ipKeyGenerator(req.ip),
   message: {
     status: "fail",
     code: ErrorCodes.AUTH_RATE_LIMIT_EXCEEDED,
@@ -80,6 +80,58 @@ const uploadLimiter = rateLimit({
     code: ErrorCodes.DOC_UPLOAD_FAILED,
     error: "Too many upload requests, please try again later.",
   },
+});
+// Dedicated IP-based limits for the controlled administrator authentication flow.
+const adminLoginLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => ipKeyGenerator(req.ip),
+  message: {
+    status: "fail",
+    code: ErrorCodes.AUTH_RATE_LIMIT_EXCEEDED,
+    error: "Too many administrator login attempts. Please try again later."
+  }
+});
+
+const adminChallengeLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => ipKeyGenerator(req.ip),
+  message: {
+    status: "fail",
+    code: ErrorCodes.AUTH_RATE_LIMIT_EXCEEDED,
+    error: "Too many administrator challenge requests. Please try again shortly."
+  }
+});
+
+const adminDeviceProofLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => ipKeyGenerator(req.ip),
+  message: {
+    status: "fail",
+    code: ErrorCodes.AUTH_RATE_LIMIT_EXCEEDED,
+    error: "Too many administrator device verification attempts. Please try again shortly."
+  }
+});
+
+const adminEnrollmentLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => ipKeyGenerator(req.ip),
+  message: {
+    status: "fail",
+    code: ErrorCodes.AUTH_RATE_LIMIT_EXCEEDED,
+    error: "Too many administrator device enrollment attempts. Please try again later."
+  }
 });
 
 /**
@@ -126,5 +178,9 @@ module.exports = {
   apiLimiter,
   authLimiter,
   uploadLimiter,
+  adminLoginLimiter,
+  adminChallengeLimiter,
+  adminDeviceProofLimiter,
+  adminEnrollmentLimiter,
   corsOptions,
 };

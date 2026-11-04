@@ -11,6 +11,7 @@ const REQUIRED = [
   { name: "JWT_SECRET", minLength: 32 },
   { name: "SUPABASE_URL" },
   { name: "SUPABASE_SERVICE_ROLE_KEY" },
+  { name: "DOCUMENT_ENCRYPTION_KEY", minLength: 16 },
 ];
 
 function validateEnv() {
@@ -21,6 +22,13 @@ function validateEnv() {
     problems.push("JWT_SECRET is not set");
   } else if (jwtSecret.length < 32) {
     problems.push("JWT_SECRET must be at least 32 characters");
+  }
+
+  const docKey = process.env.DOCUMENT_ENCRYPTION_KEY;
+  if (!docKey) {
+    problems.push("DOCUMENT_ENCRYPTION_KEY is not set");
+  } else if (docKey.length < 16) {
+    problems.push("DOCUMENT_ENCRYPTION_KEY must be at least 16 characters");
   }
 
   // The pool accepts either a connection string or the discrete DB_* vars.

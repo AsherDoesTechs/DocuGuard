@@ -48,7 +48,7 @@ async function resolveSyncTarget(db, target) {
 
   if (Number.isInteger(cloudId) && cloudId > 0) {
     const owned = await db.query(
-      `SELECT id FROM documents WHERE id = $1 AND user_id = $2`,
+      `SELECT id FROM documents WHERE id = $1 AND user_id = $2 AND status <> 'deleted'`,
       [cloudId, userId],
     );
 
@@ -71,7 +71,7 @@ async function resolveSyncTarget(db, target) {
   if (typeof s3Key === "string" && s3Key.length > 0) {
     const byKey = await db.query(
       `SELECT id FROM documents
-        WHERE s3_key = $1 AND user_id = $2
+        WHERE s3_key = $1 AND user_id = $2 AND status <> 'deleted'
         ORDER BY id ASC
         LIMIT 1`,
       [s3Key, userId],
@@ -96,7 +96,7 @@ async function resolveSyncTarget(db, target) {
   if (lookupValue) {
     const byNumber = await db.query(
       `SELECT id, title FROM documents
-        WHERE document_number = $1 AND user_id = $2
+        WHERE document_number = $1 AND user_id = $2 AND status <> 'deleted'
         ORDER BY id ASC`,
       [lookupValue, userId],
     );
