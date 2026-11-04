@@ -1650,7 +1650,7 @@ export default function ProfileScreen() {
                           No active sessions found.
                         </Text>
                       ) : (
-                        loginSessions.map((session) => (
+                        loginSessions.slice(0, 3).map((session) => (
                           <View key={session.id} style={styles.sessionRow}>
                             <View>
                               <Text style={styles.sessionDevice}>
@@ -1658,7 +1658,7 @@ export default function ProfileScreen() {
                                 {session.browser || "Browser"})
                               </Text>
                               <Text style={styles.sessionMeta}>
-                                {session.location || "Unknown Location"} Â·{" "}
+                                {session.location || "Unknown Location"} ·{" "}
                                 {session.lastActive || "Recently"}
                               </Text>
                             </View>
