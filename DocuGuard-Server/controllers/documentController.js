@@ -269,11 +269,9 @@ exports.createOcrDraft = async (req, res) => {
     const prefix = `${String(userId)}/`;
     const keyPart = key.startsWith(prefix) ? key.slice(prefix.length) : "";
 
-    if (
-      !keyPart ||
-      keyPart.includes("/") ||
-      !/^[0-9a-f-]{36}(?:\.[a-z0-9]{1,8})?$/i.test(keyPart)
-    ) {
+    // Ensure the s3Key starts with the current user's ID followed by a slash
+    const expectedPrefix = `${req.user.id}/`;
+    if (!s3Key || !String(s3Key).startsWith(expectedPrefix)) {
       return res.status(403).json({
         error: "The uploaded file does not belong to this account",
         code: ErrorCodes.DOC_VALIDATION,
