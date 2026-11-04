@@ -32,9 +32,9 @@ const client =
 function getClassificationConfig() {
   const classifierId = String(process.env.AZURE_CLASSIFIER_ID || "").trim();
   const routesRaw = String(process.env.AZURE_MODEL_ROUTES_JSON || "{}");
-  const thresholdRaw = process.env.AZURE_CLASSIFICATION_THRESHOLD ?? "0.70";
+  const thresholdRaw = process.env.AZURE_CLASSIFICATION_THRESHOLD ?? "0.50";
   const fieldConfidenceThresholdRaw =
-    process.env.AZURE_FIELD_CONFIDENCE_THRESHOLD ?? "0.70";
+    process.env.AZURE_FIELD_CONFIDENCE_THRESHOLD ?? "0.50";
   const timeoutRaw = process.env.AZURE_OCR_TIMEOUT_MS ?? "120000";
   const concurrencyRaw = process.env.AZURE_OCR_MAX_CONCURRENCY ?? "3";
 
@@ -198,12 +198,15 @@ async function classifyAzureDocument(fileUrl) {
         throw new Error("Azure document classification timed out.");
       }
 
-     const documents = Array.isArray(result?.documents)
+      const documents = Array.isArray(result?.documents)
         ? result.documents
         : [];
 
       // 👉 ADD THIS LINE TO SEE THE EXACT LABEL AZURE RETURNS IN RENDER LOGS:
-      console.log("AZURE_CLASSIFIER_RAW_DOCUMENTS:", JSON.stringify(documents, null, 2));
+      console.log(
+        "AZURE_CLASSIFIER_RAW_DOCUMENTS:",
+        JSON.stringify(documents, null, 2),
+      );
 
       if (documents.length === 0) {
         return {
@@ -767,7 +770,7 @@ function parseAzureOutput(azureResult) {
 
     const fields = document?.fields || {};
     const fieldThreshold = Number(
-      process.env.AZURE_FIELD_CONFIDENCE_THRESHOLD ?? "0.85",
+      process.env.AZURE_FIELD_CONFIDENCE_THRESHOLD ?? "0.50",
     );
     if (
       !Number.isFinite(fieldThreshold) ||
