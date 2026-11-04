@@ -5,6 +5,8 @@ import {
   StyleSheet,
   ScrollView,
   Pressable,
+  Animated,
+  PanResponder,
   useWindowDimensions,
   NativeSyntheticEvent,
   NativeScrollEvent,
@@ -26,6 +28,7 @@ const COLORS = {
   blue: "#3478F6",
   lightBlue: "#EAF2FF",
   muted: "#7B8BA1",
+  successGreen: "#16A34A",
 };
 
 const slides = [
@@ -63,9 +66,46 @@ export default function OnboardingScreen({
 
   const isLastSlide = currentIndex === slides.length - 1;
 
+  // Slider animation setup for the "Slide to Get Started" interaction
+  const sliderWidth = width - 48; // Account for container padding (24 * 2)
+  const thumbSize = 52;
+  const maxTranslateX = sliderWidth - thumbSize - 8; // 4px padding on each side
+  const panX = useRef(new Animated.Value(0)).current;
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => !isFinishing,
+      onPanResponderMove: (_, gestureState) => {
+        if (isFinishing) return;
+        if (gestureState.dx >= 0 && gestureState.dx <= maxTranslateX) {
+          panX.setValue(gestureState.dx);
+        }
+      },
+      onPanResponderRelease: (_, gestureState) => {
+        if (isFinishing) return;
+        if (gestureState.dx >= maxTranslateX * 0.75) {
+          // Trigger completion if dragged 75% or more
+          Animated.timing(panX, {
+            toValue: maxTranslateX,
+            duration: 150,
+            useNativeDriver: false,
+          }).start(() => {
+            void finishOnboarding();
+          });
+        } else {
+          // Snap back if released too early
+          Animated.spring(panX, {
+            toValue: 0,
+            bounciness: 4,
+            useNativeDriver: false,
+          }).start();
+        }
+      },
+    }),
+  ).current;
+
   const handleScrollEnd = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const index = Math.round(event.nativeEvent.contentOffset.x / width);
-
     setCurrentIndex(Math.max(0, Math.min(index, slides.length - 1)));
   };
 
@@ -84,12 +124,7 @@ export default function OnboardingScreen({
   };
 
   const handleNext = () => {
-    if (isFinishing) return;
-
-    if (isLastSlide) {
-      void finishOnboarding();
-      return;
-    }
+    if (isFinishing || isLastSlide) return;
 
     const nextIndex = currentIndex + 1;
 
@@ -109,22 +144,9 @@ export default function OnboardingScreen({
             <View style={styles.brandIcon}>
               <Ionicons name="shield-checkmark" size={19} color={COLORS.blue} />
             </View>
-
             <Text style={styles.brandName}>DocuGuard</Text>
           </View>
-
-          {!isLastSlide && (
-            <Pressable
-              onPress={() => void finishOnboarding()}
-              disabled={isFinishing}
-              accessibilityRole="button"
-              accessibilityLabel="Skip onboarding"
-              hitSlop={10}
-              style={styles.skipButton}
-            >
-              <Text style={styles.skipText}>Skip</Text>
-            </Pressable>
-          )}
+          {/* Skip button removed completely as requested */}
         </View>
 
         <ScrollView
@@ -161,9 +183,7 @@ export default function OnboardingScreen({
 
               <View style={styles.textArea}>
                 <Text style={styles.eyebrow}>{slide.eyebrow}</Text>
-
                 <Text style={styles.title}>{slide.title}</Text>
-
                 <Text style={styles.description}>{slide.description}</Text>
               </View>
             </View>
@@ -186,33 +206,40 @@ export default function OnboardingScreen({
             ))}
           </View>
 
-          <Pressable
-            onPress={handleNext}
-            disabled={isFinishing}
-            accessibilityRole="button"
-            accessibilityLabel={isLastSlide ? "Get started" : "Continue"}
-            style={({ pressed }) => [
-              styles.primaryButton,
-              pressed && styles.primaryButtonPressed,
-              isFinishing && styles.primaryButtonDisabled,
-            ]}
-          >
-            <Text style={styles.primaryButtonText}>
-              {isFinishing
-                ? "Please wait..."
-                : isLastSlide
-                  ? "Get Started"
-                  : "Continue"}
-            </Text>
-
-            {!isFinishing && (
-              <Ionicons
-                name={isLastSlide ? "arrow-forward" : "chevron-forward"}
-                size={20}
-                color={COLORS.white}
-              />
-            )}
-          </Pressable>
+          {isLastSlide ? (
+            /* Interactive Slide-to-Get-Started Track */
+            <View style={[styles.sliderTrack, { width: sliderWidth }]}>
+              <Text style={styles.sliderText}>
+                {isFinishing ? "Loading..." : "Slide to Get Started"}
+              </Text>
+              <Animated.View
+                style={[
+                  styles.sliderThumb,
+                  {
+                    transform: [{ translateX: panX }],
+                  },
+                ]}
+                {...panResponder.panHandlers}
+              >
+                <Ionicons name="arrow-forward" size={22} color={COLORS.white} />
+              </Animated.View>
+            </View>
+          ) : (
+            /* Standard Continue Button for earlier slides */
+            <Pressable
+              onPress={handleNext}
+              disabled={isFinishing}
+              accessibilityRole="button"
+              accessibilityLabel="Continue"
+              style={({ pressed }) => [
+                styles.primaryButton,
+                pressed && styles.primaryButtonPressed,
+              ]}
+            >
+              <Text style={styles.primaryButtonText}>Continue</Text>
+              <Ionicons name="chevron-forward" size={20} color={COLORS.white} />
+            </Pressable>
+          )}
 
           <Text style={styles.footerNote}>PRIVATE. SECURE. ORGANIZED.</Text>
         </View>
@@ -254,15 +281,6 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: "700",
     letterSpacing: -0.4,
-  },
-  skipButton: {
-    paddingVertical: 10,
-    paddingHorizontal: 8,
-  },
-  skipText: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: COLORS.muted,
   },
   carousel: {
     flex: 1,
@@ -385,13 +403,42 @@ const styles = StyleSheet.create({
   primaryButtonPressed: {
     opacity: 0.88,
   },
-  primaryButtonDisabled: {
-    opacity: 0.65,
-  },
   primaryButtonText: {
     color: COLORS.white,
     fontSize: 16,
     fontWeight: "700",
+  },
+  sliderTrack: {
+    height: 56,
+    borderRadius: 16,
+    backgroundColor: COLORS.lightBlue,
+    justifyContent: "center",
+    alignItems: "center",
+    position: "relative",
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "#D3E3FD",
+  },
+  sliderText: {
+    color: COLORS.blue,
+    fontSize: 15,
+    fontWeight: "700",
+    letterSpacing: 0.3,
+  },
+  sliderThumb: {
+    position: "absolute",
+    left: 4,
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: COLORS.blue,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: COLORS.navy,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 2,
   },
   footerNote: {
     marginTop: 19,

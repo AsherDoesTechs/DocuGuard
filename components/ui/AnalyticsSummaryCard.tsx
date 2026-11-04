@@ -1,7 +1,7 @@
 import React from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { Card } from ".";
+import Card from "./Card";
 import { COLORS } from "@/constants";
 
 type SummaryProps = {
@@ -118,3 +118,4 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
 });
+

@@ -138,7 +138,7 @@ export const TabBar: React.FC<TabBarProps> = React.memo(
           styles.container,
           {
             backgroundColor: colors.tabBarBackground,
-            borderTopColor: colors.tabBarBorder,
+            borderColor: colors.tabBarBorder,
             height: containerHeight,
             paddingBottom: bottomPadding,
           },
@@ -281,9 +281,18 @@ TabBar.displayName = "TabBar";
 const styles = StyleSheet.create({
   container: {
     flexDirection: "row",
-    borderTopWidth: StyleSheet.hairlineWidth,
+    alignItems: "center",
     position: "relative",
-    width: "100%",
+    alignSelf: "stretch",
+    marginHorizontal: 16,
+    marginBottom: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 30,
+    width: undefined,
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.14,
+    shadowRadius: 12,
+    elevation: 8,
   },
   tab: {
     flex: 1,
@@ -305,7 +314,7 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    marginTop: -16,
+    marginTop: -26,
   },
   centerButton: {
     width: 52,
