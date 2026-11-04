@@ -8,6 +8,8 @@ const {
   createSignedUploadUrl,
 } = require("../services/storageService");
 // OCR extraction is performed exclusively by documentValidationService.
+const storageService = require("../services/storageService");
+const asyncHandler = require("../utils/asyncHandler");
 const {
   sendProcessingCompleteNotification,
   sendVerificationNotification,
