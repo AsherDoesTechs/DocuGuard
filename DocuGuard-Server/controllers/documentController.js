@@ -208,7 +208,6 @@ exports.getAllDocuments = async (req, res) => {
 
 // Get presigned upload URL (S3 Integration)
 exports.getUploadUrl = asyncHandler(async (req, res) => {
-  // Support both POST (body) and GET (query) parameters seamlessly
   const fileName = req.body?.fileName || req.query?.fileName;
   const fileType = req.body?.fileType || req.query?.fileType;
   const userId = req.user.id;
@@ -229,6 +228,7 @@ exports.getUploadUrl = asyncHandler(async (req, res) => {
       success: true,
       uploadUrl: signedUrl,
       filePath: path,
+      s3Key: path,
     });
   } catch (error) {
     console.error("Error generating upload URL:", error);
