@@ -18,6 +18,7 @@ import { COLORS as BASE_COLORS, DOCUMENT_CATEGORIES } from "../../constants";
 import { useTheme } from "@/context/ThemeContext";
 import { formatShortDate, classifyExpiration } from "../../utils";
 import { RefreshableContainer } from "@/components/ui/RefreshableContainer";
+import { DocumentsSkeleton } from "@/components/ui/Skeleton";
 
 import {
   getAllDocuments,
@@ -27,8 +28,147 @@ import {
   type LocalDocument,
   type DocumentDashboardSummary,
 } from "../../services/localDatabase";
-
+import { pullDocumentsFromCloud } from "@/services/syncService";
 import { cancelExpiringSoonNotifications } from "../../services/notificationScheduler";
+
+interface DocumentItemProps {
+  doc: LocalDocument;
+  COLORS: typeof BASE_COLORS;
+  onPress: (id: string | number) => void;
+  maskNumber: (num?: string) => string;
+  getSyncIcon: (doc: LocalDocument) => {
+    name: any;
+    color: string;
+    label: string;
+  };
+}
+
+const DocumentItem = React.memo(
+  ({ doc, COLORS, onPress, maskNumber, getSyncIcon }: DocumentItemProps) => {
+    const syncIcon = getSyncIcon(doc);
+
+    return (
+      <TouchableOpacity
+        accessibilityRole="button"
+        accessibilityLabel={`Open document ${doc.title || "Untitled Document"}`}
+        activeOpacity={0.75}
+        onPress={() => onPress(doc.id ?? doc.documentNumber ?? "")}
+      >
+        <Card
+          style={{
+            paddingHorizontal: 12,
+            paddingVertical: 12,
+            backgroundColor: COLORS.surface,
+          }}
+        >
+          <View
+            style={{
+              flexDirection: "row",
+              justifyContent: "space-between",
+              alignItems: "flex-start",
+              gap: 8,
+            }}
+          >
+            <View style={{ flex: 1, minWidth: 0, marginRight: 4 }}>
+              <View style={{ flexDirection: "row", alignItems: "center" }}>
+                <Ionicons
+                  name="document-text-outline"
+                  size={18}
+                  color={COLORS.primary}
+                  style={{ marginRight: 6 }}
+                />
+                <Text
+                  style={{
+                    fontSize: 16,
+                    fontWeight: "600",
+                    color: COLORS.text,
+                    flex: 1,
+                  }}
+                  numberOfLines={1}
+                >
+                  {doc.title || "Untitled Document"}
+                </Text>
+              </View>
+
+              <Text
+                style={{
+                  fontSize: 13,
+                  color: COLORS.textSecondary,
+                  marginTop: 4,
+                }}
+                numberOfLines={2}
+              >
+                Issuing Agency: {doc.issuer || "Unknown"}
+              </Text>
+
+              <View
+                style={{
+                  marginTop: 8,
+                  gap: 8,
+                  flexDirection: "row",
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: 12,
+                    color: COLORS.textSecondary,
+                    fontWeight: "500",
+                  }}
+                >
+                  ID: {maskNumber(doc.documentNumber)}
+                </Text>
+
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 4,
+                    maxWidth: "100%",
+                  }}
+                  accessibilityLabel={syncIcon.label}
+                >
+                  <Ionicons
+                    name={syncIcon.name}
+                    size={14}
+                    color={syncIcon.color}
+                  />
+                  <Text
+                    style={{
+                      fontSize: 11,
+                      fontWeight: "500",
+                      color: syncIcon.color,
+                      flexShrink: 1,
+                    }}
+                    numberOfLines={1}
+                  >
+                    {syncIcon.label}
+                  </Text>
+                </View>
+
+                <View
+                  style={{ flexDirection: "row", alignItems: "center", gap: 4 }}
+                >
+                  <Ionicons
+                    name="calendar-outline"
+                    size={14}
+                    color={COLORS.textSecondary}
+                  />
+                  <Text style={{ fontSize: 12, color: COLORS.textSecondary }}>
+                    Expires {formatShortDate(doc.expiryDate)}
+                  </Text>
+                </View>
+              </View>
+            </View>
+
+            <StatusBadge status={doc.status} />
+          </View>
+        </Card>
+      </TouchableOpacity>
+    );
+  },
+);
 
 export default function DocumentsScreen() {
   const router = useRouter();
@@ -58,6 +198,13 @@ export default function DocumentsScreen() {
     [colors],
   );
 
+  const handleOpenDocument = useCallback(
+    (id: string | number) => {
+      router.push(`/document-details/${String(id)}` as any);
+    },
+    [router],
+  );
+
   const styles = useMemo(() => createStyles(COLORS), [COLORS]);
 
   const [search, setSearch] = useState("");
@@ -81,6 +228,14 @@ export default function DocumentsScreen() {
   const fetchDocuments = useCallback(async () => {
     try {
       setLoadError(false);
+      try {
+        await pullDocumentsFromCloud();
+      } catch (cloudError) {
+        console.warn(
+          "Cloud document pull failed; continuing with local documents:",
+          cloudError,
+        );
+      }
 
       const expiredDocs = await getExpiredDocuments();
 
@@ -240,19 +395,36 @@ export default function DocumentsScreen() {
           <View style={styles.headerTop}>
             <Text style={styles.title}>Documents</Text>
 
-            <TouchableOpacity
-              accessibilityRole="button"
-              accessibilityLabel="Open sync"
-              onPress={() => router.push("/(tabs)/sync")}
-              style={styles.syncButton}
-              activeOpacity={0.75}
-            >
-              <Ionicons
-                name="cloud-upload-outline"
-                size={20}
-                color={COLORS.primary}
-              />
-            </TouchableOpacity>
+            <View style={styles.headerActions}>
+              <TouchableOpacity
+                accessibilityRole="button"
+                accessibilityLabel="Sync documents with cloud"
+                onPress={() => router.push("/(tabs)/sync")}
+                style={styles.syncButton}
+                activeOpacity={0.75}
+              >
+                <Ionicons
+                  name="cloud-upload-outline"
+                  size={20}
+                  color={COLORS.primary}
+                />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                accessibilityRole="button"
+                accessibilityLabel="Import documents from cloud"
+                onPress={() => router.push("/(tabs)/import" as any)}
+                style={styles.importButton}
+                activeOpacity={0.8}
+              >
+                <Ionicons
+                  name="cloud-download-outline"
+                  size={20}
+                  color={colors.buttonPrimaryText}
+                />
+                <Text style={styles.importButtonText}>Import</Text>
+              </TouchableOpacity>
+            </View>
           </View>
 
           <Text style={styles.subtitle}>
@@ -348,11 +520,7 @@ export default function DocumentsScreen() {
 
         {/* Initial loading and error states */}
         {loading ? (
-          <ActivityIndicator
-            size="large"
-            color={COLORS.primary}
-            style={styles.loadingIndicator}
-          />
+          <DocumentsSkeleton />
         ) : loadError && documents.length === 0 ? (
           <EmptyState
             illustration="documents"
@@ -390,84 +558,16 @@ export default function DocumentsScreen() {
                 actionIcon={hasActiveFilters ? "close-circle-outline" : "add"}
               />
             ) : (
-              filtered.map((doc: LocalDocument) => {
-                const syncIcon = getSyncIcon(doc);
-
-                return (
-                  <TouchableOpacity
-                    key={doc.id ?? doc.documentNumber}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Open document ${doc.title || "Untitled Document"}`}
-                    activeOpacity={0.75}
-                    onPress={() =>
-                      router.push(`/document-details/${String(doc.id)}` as any)
-                    }
-                  >
-                    <Card style={styles.docCard}>
-                      <View style={styles.docCardContent}>
-                        <View style={styles.docInfo}>
-                          <View style={styles.titleRow}>
-                            <Ionicons
-                              name="document-text-outline"
-                              size={18}
-                              color={COLORS.primary}
-                              style={styles.documentIcon}
-                            />
-
-                            <Text style={styles.docTitle} numberOfLines={1}>
-                              {doc.title || "Untitled Document"}
-                            </Text>
-                          </View>
-
-                          <Text style={styles.docIssuer} numberOfLines={2}>
-                            Issuing Agency: {doc.issuer || "Unknown"}
-                          </Text>
-
-                          <View style={styles.docMeta}>
-                            <Text style={styles.docNumber}>
-                              ID: {maskDocumentNumber(doc.documentNumber)}
-                            </Text>
-
-                            <View
-                              style={styles.syncStatus}
-                              accessibilityLabel={syncIcon.label}
-                            >
-                              <Ionicons
-                                name={syncIcon.name}
-                                size={14}
-                                color={syncIcon.color}
-                              />
-                              <Text
-                                style={[
-                                  styles.syncStatusText,
-                                  { color: syncIcon.color },
-                                ]}
-                                numberOfLines={1}
-                              >
-                                {syncIcon.label}
-                              </Text>
-                            </View>
-
-                            <View style={styles.docDate}>
-                              <Ionicons
-                                name="calendar-outline"
-                                size={14}
-                                color={COLORS.textSecondary}
-                              />
-
-                              <Text style={styles.docDateText}>
-                                Expires {formatShortDate(doc.expiryDate)}
-                              </Text>
-                            </View>
-                          </View>
-                        </View>
-
-                        <StatusBadge status={doc.status} />
-                      </View>
-                    </Card>
-                  </TouchableOpacity>
-                );
-              })
+              filtered.map((doc: LocalDocument) => (
+                <DocumentItem
+                  key={doc.id ?? doc.documentNumber}
+                  doc={doc}
+                  COLORS={COLORS}
+                  onPress={handleOpenDocument}
+                  maskNumber={maskDocumentNumber}
+                  getSyncIcon={getSyncIcon}
+                />
+              ))
             )}
           </View>
         )}
@@ -638,7 +738,7 @@ export default function DocumentsScreen() {
         style={styles.floatingAddButton}
         onPress={openAddDocument}
       >
-        <Ionicons name="add" size={24} color="#FFFFFF" />
+        <Ionicons name="add" size={24} color={colors.buttonPrimaryText} />
         <Text style={styles.floatingButtonText}>Add Document</Text>
       </TouchableOpacity>
     </SafeAreaView>
@@ -742,91 +842,31 @@ const createStyles = (COLORS: typeof BASE_COLORS) =>
       color: COLORS.primary,
     },
 
-    loadingIndicator: {
-      marginTop: 40,
-    },
-
     docsList: {
       gap: 12,
     },
 
-    docCard: {
+    headerActions: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 10,
+    },
+
+    importButton: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 6,
       paddingHorizontal: 12,
-      paddingVertical: 12,
-      backgroundColor: COLORS.surface,
+      paddingVertical: 10,
+      backgroundColor: COLORS.primary,
+      borderRadius: 10,
     },
 
-    docCardContent: {
-      flexDirection: "row",
-      justifyContent: "space-between",
-      alignItems: "flex-start",
-      gap: 8,
-    },
-
-    titleRow: {
-      flexDirection: "row",
-      alignItems: "center",
-    },
-
-    documentIcon: {
-      marginRight: 6,
-    },
-
-    docInfo: {
-      flex: 1,
-      minWidth: 0,
-      marginRight: 4,
-    },
-
-    docTitle: {
-      fontSize: 16,
-      fontWeight: "600",
-      color: COLORS.text,
-      flex: 1,
-    },
-
-    docIssuer: {
+    importButtonText: {
       fontSize: 13,
-      color: COLORS.textSecondary,
-      marginTop: 4,
-    },
-
-    docMeta: {
-      marginTop: 8,
-      gap: 8,
-      flexDirection: "row",
-      flexWrap: "wrap",
-      alignItems: "center",
-    },
-
-    docNumber: {
-      fontSize: 12,
-      color: COLORS.textSecondary,
-      fontWeight: "500",
-    },
-
-    syncStatus: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 4,
-      maxWidth: "100%",
-    },
-
-    syncStatusText: {
-      fontSize: 11,
-      fontWeight: "500",
-      flexShrink: 1,
-    },
-
-    docDate: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 4,
-    },
-
-    docDateText: {
-      fontSize: 12,
-      color: COLORS.textSecondary,
+      fontWeight: "600",
+      color: COLORS.buttonPrimaryText,
     },
 
     modalOverlay: {
@@ -838,7 +878,7 @@ const createStyles = (COLORS: typeof BASE_COLORS) =>
 
     modalBackdrop: {
       ...StyleSheet.absoluteFill,
-      backgroundColor: COLORS.overlay || "rgba(0, 0, 0, 0.55)",
+      backgroundColor: COLORS.overlay,
     },
 
     modalContent: {
@@ -921,7 +961,7 @@ const createStyles = (COLORS: typeof BASE_COLORS) =>
     },
 
     floatingButtonText: {
-      color: "#FFFFFF",
+      color: COLORS.buttonPrimaryText,
       fontSize: 15,
       fontWeight: "600",
     },

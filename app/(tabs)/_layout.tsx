@@ -3,6 +3,7 @@ import { useCallback, useMemo } from "react";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { runOnJS } from "react-native-reanimated";
 import { TabBar } from "../../components/ui/TabBar";
+import { useColors } from "@/context/ThemeContext"; // <-- Import useColors
 
 const TAB_ITEMS = [
   {
@@ -17,9 +18,9 @@ const TAB_ITEMS = [
   },
   {
     name: "add-document",
-    icon: "add" as const,
+    icon: "scan-outline" as const,
     label: "Scan",
-    isActionBtn: true, // Special flag to style this item differently in your custom TabBar component
+    isCenterAction: true,
   },
   {
     name: "reminders",
@@ -39,22 +40,20 @@ const TAB_ROUTES = ["/", "/documents", "/reminders", "/profile"] as const;
 export default function TabsLayout() {
   const router = useRouter();
   const pathname = usePathname();
+  const colors = useColors(); // <-- Get theme colors
 
   const handleTabPress = useCallback(
     (tabName: string) => {
-      // If the middle action button is clicked, navigate to add document
       if (tabName === "add-document") {
         router.push("/add-document" as any);
         return;
       }
 
-      // Home/index route
       if (tabName === "index") {
         router.push("/");
         return;
       }
 
-      // Other standard tab routes
       router.push(`/${tabName}` as any);
     },
     [router],
@@ -95,8 +94,6 @@ export default function TabsLayout() {
         .onEnd((event) => {
           const horizontalDistance = event.translationX;
 
-          runOnJS(console.log)("[TabSwipe] Gesture ended:", horizontalDistance);
-
           if (Math.abs(horizontalDistance) < 80) {
             return;
           }
@@ -113,6 +110,16 @@ export default function TabsLayout() {
       <Tabs
         screenOptions={{
           headerShown: false,
+          // Make the native tab bar container background completely transparent
+          tabBarStyle: {
+            backgroundColor: "transparent",
+            borderTopWidth: 0,
+            elevation: 0,
+          },
+          // Use sceneStyle instead of sceneContainerStyle
+          sceneStyle: {
+            backgroundColor: colors.background,
+          },
         }}
         tabBar={() => (
           <TabBar
@@ -147,6 +154,14 @@ export default function TabsLayout() {
           name="profile"
           options={{
             title: "Profile",
+          }}
+        />
+
+        <Tabs.Screen
+          name="import"
+          options={{
+            href: null,
+            title: "Import",
           }}
         />
       </Tabs>

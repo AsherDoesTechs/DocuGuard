@@ -23,6 +23,7 @@ import * as DocumentPicker from "expo-document-picker";
 
 import { COLORS } from "@/constants";
 import { DocumentScannerComponent } from "@/components/ui/DocumentScanner";
+import { verifyDocumentWithOrchestrator } from "@/services/documentVerificationClient";
 import { extractDocumentData } from "../utils/ocr";
 import { LocalDocument } from "../services/localDatabase";
 import { saveDocumentToVault } from "@/services/documentSaveService";
@@ -48,7 +49,7 @@ const MAX_ISSUER_LENGTH = 150;
 const MAX_DOCUMENT_NUMBER_LENGTH = 50;
 const MAX_NOTES_LENGTH = 1000;
 
-const STEPS = ["Type", "Category", "Document", "Scan", "Review"] as const;
+const STEPS = ["Type", "Category", "Document", "Select", "Review"] as const;
 
 interface CategoryItem {
   id: string;
@@ -74,8 +75,8 @@ interface ExtractedData {
   expiryDate: string;
   category: string;
   confidence: number;
-  authenticity: "real" | "replica" | "fake";
-  authenticityScore: number;
+  authenticity: "not_assessed" | "real" | "replica" | "fake";
+  authenticityScore: number | null;
   authenticityReason: string;
 }
 
@@ -772,22 +773,15 @@ function normalizeExtractedData(extracted: any): ExtractedData {
 
   const authenticityScore = Number.isFinite(extracted?.authenticityScore)
     ? Math.max(0, Math.min(100, Math.round(extracted.authenticityScore)))
-    : 0;
+    : null;
 
-  let authenticity: "real" | "replica" | "fake" = extracted?.authenticity;
-
-  if (
-    authenticity !== "real" &&
-    authenticity !== "replica" &&
-    authenticity !== "fake"
-  ) {
-    authenticity =
-      authenticityScore >= 80
-        ? "real"
-        : authenticityScore >= 50
-          ? "replica"
-          : "fake";
-  }
+  const suppliedAuthenticity = extracted?.authenticity;
+  const authenticity: ExtractedData["authenticity"] =
+    suppliedAuthenticity === "real" ||
+    suppliedAuthenticity === "replica" ||
+    suppliedAuthenticity === "fake"
+      ? suppliedAuthenticity
+      : "not_assessed";
 
   return {
     title: sanitizeText(extracted?.title || "", MAX_TITLE_LENGTH),
@@ -799,7 +793,10 @@ function normalizeExtractedData(extracted: any): ExtractedData {
     confidence,
     authenticity,
     authenticityScore,
-    authenticityReason: extracted?.authenticityReason || "",
+    authenticityReason:
+      typeof extracted?.authenticityReason === "string"
+        ? extracted.authenticityReason
+        : "",
   };
 }
 
@@ -833,7 +830,8 @@ function Field({
   keyboardType = "default",
   suggestions = [],
   onSelectSuggestion,
-}: FieldProps) {
+  editable = true,
+}: FieldProps & { editable?: boolean }) {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [filteredSuggestions, setFilteredSuggestions] = useState<string[]>([]);
 
@@ -865,6 +863,7 @@ function Field({
         value={value}
         placeholder={placeholder}
         placeholderTextColor="#9CA3AF"
+        editable={editable}
         onChangeText={(text) => {
           onChangeText(text);
         }}
@@ -879,6 +878,9 @@ function Field({
           styles.input,
           multiline ? styles.multilineInput : null,
           error ? { borderColor: COLORS.danger } : null,
+          !editable
+            ? { backgroundColor: "#F3F4F6", color: COLORS.textSecondary }
+            : null,
         ]}
       />
       {error ? (
@@ -955,6 +957,17 @@ export default function AddDocumentScreen() {
 
   const saveInProgressRef = React.useRef(false);
 
+  const [idempotencyKeyRef] = React.useState(
+    () => `save_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+  );
+  const saveIdempotencyKeyRef = React.useRef(idempotencyKeyRef);
+
+  function generateNewSaveKey() {
+    const key = `save_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    saveIdempotencyKeyRef.current = key;
+    return key;
+  }
+
   /*
    * The storage key of a file that was uploaded for this document.
    *
@@ -1001,6 +1014,7 @@ export default function AddDocumentScreen() {
     /** Normalised server id of the OCR draft. Always a positive integer. */
     documentId?: number;
   } | null>(null);
+  const scanRequestIdRef = React.useRef<number>(0);
   const [datePicker, setDatePicker] = useState<
     "issueDate" | "expiryDate" | null
   >(null);
@@ -1017,16 +1031,27 @@ export default function AddDocumentScreen() {
     return DOCUMENTS_BY_CATEGORY[category.id] || [];
   }, [category]);
 
-  useEffect(() => {
-    if (specificDocument) {
-      if (!title) setTitle(specificDocument.title);
-      if (specificDocument.defaultIssuer && !issuer) {
-        setIssuer(specificDocument.defaultIssuer);
-      }
-    }
-  }, [specificDocument]);
+  function resetOcrState() {
+    scanRequestIdRef.current += 1;
+    setOcrLoading(false);
+    setExtractedData(null);
+    setOcrUploadMeta(null);
+    uploadedFileRef.current = null;
+  }
 
   function selectDocumentType(type: "legal" | "non-legal") {
+    resetOcrState();
+    setSelectedFile(null);
+    setTitle("");
+    setDocumentNumber("");
+    setIssuer("");
+    setIssueDate("");
+    setExpiryDate("");
+    setHasNoExpirationDate(false);
+    setNotes("");
+    setExtractedData(null);
+    setOcrUploadMeta(null);
+    setFieldErrors({});
     setDocumentType(type);
     setCategory(null);
     setSpecificDocument(null);
@@ -1034,17 +1059,37 @@ export default function AddDocumentScreen() {
   }
 
   function selectCategory(item: CategoryItem) {
+    resetOcrState();
+    setSelectedFile(null);
+    setTitle("");
+    setDocumentNumber("");
+    setIssuer("");
+    setIssueDate("");
+    setExpiryDate("");
+    setHasNoExpirationDate(false);
+    setNotes("");
+    setExtractedData(null);
+    setOcrUploadMeta(null);
+    setFieldErrors({});
     setCategory(item);
     setSpecificDocument(null);
     setTimeout(() => setStep(2), 150);
   }
 
   function selectSpecificDocument(item: SpecificDocumentItem) {
-    setSpecificDocument(item);
+    resetOcrState();
+    setSelectedFile(null);
     setTitle(item.title);
-    if (item.defaultIssuer) {
-      setIssuer(item.defaultIssuer);
-    }
+    setDocumentNumber("");
+    setIssuer(item.defaultIssuer || "");
+    setIssueDate("");
+    setExpiryDate("");
+    setHasNoExpirationDate(false);
+    setNotes("");
+    setExtractedData(null);
+    setOcrUploadMeta(null);
+    setFieldErrors({});
+    setSpecificDocument(item);
     setTimeout(() => setStep(3), 150);
   }
 
@@ -1063,7 +1108,7 @@ export default function AddDocumentScreen() {
        * A different file means a different upload, so the key of a previous
        * upload is dropped.
        */
-      uploadedFileRef.current = null;
+      resetOcrState();
 
       setSelectedFile({
         name: asset.name,
@@ -1071,6 +1116,14 @@ export default function AddDocumentScreen() {
         size: asset.size || 0,
         mimeType: asset.mimeType ?? undefined,
       });
+
+      setTitle(specificDocument?.title || "");
+      setDocumentNumber("");
+      setIssuer(specificDocument?.defaultIssuer || "");
+      setIssueDate("");
+      setExpiryDate("");
+      setHasNoExpirationDate(false);
+      setFieldErrors({});
 
       setStep(4);
       feedbackService.success("Document selected. Ready for review.");
@@ -1173,53 +1226,108 @@ export default function AddDocumentScreen() {
   }
 
   const processScan = async (uri: string, mimeType = "image/jpeg") => {
+    const requestId = ++scanRequestIdRef.current;
     setOcrLoading(true);
 
     try {
-      const raw = await extractDocumentData(uri);
+      const raw: any = await extractDocumentData(uri);
 
-              const extracted = normalizeExtractedData(raw);
-        setExtractedData(extracted);
-        setOcrUploadMeta({
-          fileUrl: raw?.fileUrl,
-          s3Key: raw?.s3Key,
-          storagePath: raw?.storagePath,
-          documentId: raw?.documentId,
-        });
+      if (requestId !== scanRequestIdRef.current) {
+        return;
+      }
 
-        // Only overwrite fields that are empty - preserve user-entered values
-        if (!title && extracted.title) {
-          setTitle(extracted.title);
-        }
-        if (!documentNumber && extracted.documentNumber) {
-          setDocumentNumber(extracted.documentNumber);
-        }
-        if (!issuer && extracted.issuer) {
-          setIssuer(extracted.issuer);
-        }
-        if (!issueDate && extracted.issueDate) {
-          setIssueDate(extracted.issueDate);
-        }
-        if (!expiryDate && extracted.expiryDate) {
-          setExpiryDate(extracted.expiryDate);
-        }
+      // ==========================================
+      // PHASE 1: STRICT ZERO-TRUST ORCHESTRATION
+      // ==========================================
+      const verification = verifyDocumentWithOrchestrator({
+        selectedSpecificId: specificDocument?.id || "other",
+        azureOcrResult: {
+          documentType: raw?.documentType || raw?.category,
+          passportModel: raw?.passportModel || raw?.documentType === "passport",
+          fields: {
+            documentNumber: {
+              content:
+                raw?.documentNumber || raw?.fields?.documentNumber?.content,
+            },
+            issueDate: {
+              content: raw?.issueDate || raw?.fields?.issueDate?.content,
+            },
+            expiryDate: {
+              content: raw?.expiryDate || raw?.fields?.expiryDate?.content,
+            },
+          },
+        },
+      });
 
-        setStep(4);
+      if (!verification.allow_processing) {
+        feedbackService.error(verification.message);
+        setStep(3);
+        return;
+      }
 
+      // ==========================================
+      // PHASE 2: EXTRACT & FILL FORM FIELDS
+      // ==========================================
+      const extracted = normalizeExtractedData(raw);
+      setExtractedData(extracted);
+      setOcrUploadMeta({
+        fileUrl: raw?.fileUrl,
+        s3Key: raw?.s3Key,
+        storagePath: raw?.storagePath,
+        documentId: raw?.documentId,
+      });
+
+      const {
+        documentNumber: cleanDocNum,
+        issueDate: verifiedIssue,
+        expiryDate: verifiedExpiry,
+        hasNoExpirationDate: noExp,
+      } = verification.extracted_data;
+
+      if (specificDocument?.title) {
+        setTitle(specificDocument.title);
+      } else if (extracted.title && !title) {
+        setTitle(extracted.title);
+      }
+
+      if (specificDocument?.defaultIssuer) {
+        setIssuer(specificDocument.defaultIssuer);
+      } else if (extracted.issuer && !issuer) {
+        setIssuer(extracted.issuer);
+      }
+
+      if (cleanDocNum) setDocumentNumber(cleanDocNum);
+      if (verifiedIssue) setIssueDate(verifiedIssue);
+
+      if (noExp) {
+        setHasNoExpirationDate(true);
+        setExpiryDate("");
+      } else if (verifiedExpiry) {
+        setExpiryDate(verifiedExpiry);
+      }
+
+      setStep(4);
 
       feedbackService.success(
-        `Document scanned successfully (${extracted.confidence}% extraction completeness)`,
+        `Document scanned and verified successfully (${extracted.confidence}% extraction completeness)`,
       );
     } catch (error: any) {
+      if (requestId !== scanRequestIdRef.current) {
+        return;
+      }
       console.error("Document OCR error:", error);
 
       feedbackService.warning(
-        error?.message || "The document could not be processed.",
+        (error?.code ?? error?.errorCode) === "DOCUMENT_CLASSIFICATION_REVIEW"
+          ? "We couldn't confidently identify this document. Please check the image and try again, or enter the document details manually."
+          : error?.message || "The document could not be processed.",
       );
 
       setStep(4);
     } finally {
-      setOcrLoading(false);
+      if (requestId === scanRequestIdRef.current) {
+        setOcrLoading(false);
+      }
     }
   };
 
@@ -1230,12 +1338,21 @@ export default function AddDocumentScreen() {
     const imageArray = Array.isArray(data.images) ? data.images : [data.images];
     const firstImage = imageArray[0];
 
+    resetOcrState();
     setSelectedFile({
       name: "Scanned Document",
       uri: firstImage.uri,
       size: 0,
       mimeType: "image/jpeg",
     });
+    // Reset form fields for fresh scan
+    setTitle(specificDocument?.title || "");
+    setDocumentNumber("");
+    setIssuer(specificDocument?.defaultIssuer || "");
+    setIssueDate("");
+    setExpiryDate("");
+    setHasNoExpirationDate(false);
+    setFieldErrors({});
     await processScan(firstImage.uri);
   }
 
@@ -1438,6 +1555,8 @@ export default function AddDocumentScreen() {
        * document.
        */
       const result = await saveDocumentToVault(payload);
+      // Ensure a new key for next save
+      generateNewSaveKey();
 
       setSaving(false);
 
@@ -1543,6 +1662,19 @@ export default function AddDocumentScreen() {
     if (step === 0) {
       router.back();
       return;
+    }
+    if (step === 3) {
+      // Going back from scan step - reset scan state
+      resetOcrState();
+      setSelectedFile(null);
+      setExtractedData(null);
+      setOcrUploadMeta(null);
+    }
+    if (step === 4) {
+      // Going back from review - clear extracted data to prevent stale state
+      resetOcrState();
+      setExtractedData(null);
+      setOcrUploadMeta(null);
     }
     setStep((current) => current - 1);
   }
@@ -1795,11 +1927,16 @@ export default function AddDocumentScreen() {
               <Text style={styles.extractionTitle}>Automatic Extraction</Text>
             </View>
             <View style={styles.confidenceRow}>
-              <Text style={styles.confidenceLabel}>Extraction confidence</Text>
+              <Text style={styles.confidenceLabel}>Fields detected</Text>
               <Text style={styles.confidenceValue}>
                 {extractedData.confidence}%
               </Text>
             </View>
+            <Text style={styles.extractionNote}>
+              This percentage shows extraction completeness, not accuracy.
+              Review every extracted detail and correct any mistakes before
+              saving.
+            </Text>
           </View>
         ) : null}
 
@@ -1809,14 +1946,9 @@ export default function AddDocumentScreen() {
           placeholder="e.g. Philippine Passport"
           required
           error={fieldErrors.title}
-          onChangeText={(value) => {
-            setTitle(sanitizeText(value, MAX_TITLE_LENGTH));
-            setFieldErrors((current) => ({
-              ...current,
-              title: undefined,
-            }));
-          }}
-          suggestions={titles}
+          editable={false}
+          onChangeText={() => {}}
+          suggestions={[]}
         />
 
         <Field
@@ -1841,11 +1973,9 @@ export default function AddDocumentScreen() {
           placeholder="e.g. Department of Foreign Affairs"
           required
           error={fieldErrors.issuer}
-          onChangeText={(value) => {
-            setIssuer(sanitizeText(value, MAX_ISSUER_LENGTH));
-            setFieldErrors((current) => ({ ...current, issuer: undefined }));
-          }}
-          suggestions={issuers}
+          editable={false}
+          onChangeText={() => {}}
+          suggestions={[]}
         />
 
         <View style={styles.field}>
@@ -2536,6 +2666,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "700",
     color: COLORS.primary,
+  },
+  extractionNote: {
+    fontSize: 12,
+    lineHeight: 18,
+    color: COLORS.textSecondary,
+    marginTop: 8,
   },
   suggestionsList: {
     position: "absolute",

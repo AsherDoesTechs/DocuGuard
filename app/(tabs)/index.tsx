@@ -6,6 +6,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Card } from "../../components/ui";
 import { COLORS as BASE_COLORS, Spacing, BORDER_RADIUS } from "@/constants";
 import { useTheme } from "@/context/ThemeContext";
+import { HomeSkeleton } from "@/components/ui/Skeleton";
 import { formatShortDate } from "../../utils";
 import { RefreshableContainer } from "@/components/ui/RefreshableContainer";
 import {
@@ -117,7 +118,7 @@ export default function HomeScreen() {
 
           return (b.id || 0) - (a.id || 0);
         })
-        .slice(0, 5);
+        .slice(0, 3);
 
       setRecentDocs(sortedRecent);
       setExpiringDocs(expiringList.slice(0, 3));
@@ -228,17 +229,9 @@ export default function HomeScreen() {
         contentContainerStyle={styles.content}
       >
         <View style={styles.container}>
-          {loading && (
-            <View style={styles.loadingBanner}>
-              <Ionicons
-                name="refresh-outline"
-                size={16}
-                color={COLORS.primary}
-              />
-              <Text style={styles.loadingText}>Loading your vault...</Text>
-            </View>
-          )}
 
+          {loading ? <HomeSkeleton /> : (
+            <>
           {/* Greeting and dashboard title */}
           <View style={styles.header}>
             <Text style={styles.greeting}>{getGreeting()}</Text>
@@ -489,60 +482,150 @@ export default function HomeScreen() {
             ) : (
               recentDocs.map((doc) => {
                 const docImage =
+                  (doc as any).thumbnailUri ||
+                  (doc as any).thumbnailPath ||
+                  (doc as any).imageUri ||
                   (doc as any).imagePath ||
-                  (doc as any).filePath ||
-                  (doc as any).imageUri;
+                  (doc as any).filePath;
+
+                const documentType =
+                  (doc as any).documentType ||
+                  (doc as any).type ||
+                  (doc as any).category ||
+                  "Document";
+
+                const expiryDate = doc.expiryDate
+                  ? formatShortDate(doc.expiryDate)
+                  : "No expiration date";
+
+                const isExpired =
+                  !!doc.expiryDate &&
+                  new Date(doc.expiryDate).getTime() <
+                    new Date().setHours(0, 0, 0, 0);
+
+                const isExpiringSoon =
+                  !!doc.expiryDate &&
+                  !isExpired &&
+                  new Date(doc.expiryDate).getTime() <=
+                    Date.now() + 30 * 24 * 60 * 60 * 1000;
+
+                const status = isExpired
+                  ? "Expired"
+                  : isExpiringSoon
+                    ? "Expiring Soon"
+                    : "Valid";
+
+                const statusColor = isExpired
+                  ? COLORS.danger
+                  : isExpiringSoon
+                    ? COLORS.warning
+                    : COLORS.success;
 
                 return (
                   <TouchableOpacity
                     key={doc.id || doc.documentNumber}
                     accessibilityRole="button"
+                    accessibilityLabel={`Open ${doc.title || "document"} details`}
                     onPress={() =>
                       router.push(`/document-details/${doc.id}` as any)
                     }
+                    activeOpacity={0.85}
                   >
-                    <Card style={styles.docCard}>
-                      <View style={styles.docRow}>
-                        {docImage ? (
-                          <Image
-                            source={{ uri: docImage }}
-                            style={styles.docImage}
-                          />
-                        ) : (
+                    <Card style={styles.recentDocumentCard}>
+                      <View style={styles.recentDocumentRow}>
+                        <View style={styles.recentPreviewFrame}>
+                          {docImage ? (
+                            <Image
+                              source={{ uri: docImage }}
+                              style={styles.recentPreviewImage}
+                              resizeMode="cover"
+                              onError={() =>
+                                console.warn(
+                                  "Recent document preview unavailable:",
+                                  doc.id,
+                                )
+                              }
+                            />
+                          ) : (
+                            <View style={styles.recentPreviewFallback}>
+                              <Ionicons
+                                name="document-text-outline"
+                                size={30}
+                                color={COLORS.primary}
+                              />
+                              <Text style={styles.previewFallbackText}>
+                                Preview
+                              </Text>
+                            </View>
+                          )}
+                        </View>
+
+                        <View style={styles.recentDocumentInfo}>
                           <View
                             style={[
-                              styles.docImage,
-                              styles.docImagePlaceholder,
+                              styles.recentStatusBadge,
+                              { backgroundColor: `${statusColor}18` },
                             ]}
                           >
-                            <Ionicons
-                              name="document-text"
-                              size={24}
-                              color={COLORS.primary}
+                            <View
+                              style={[
+                                styles.recentStatusDot,
+                                { backgroundColor: statusColor },
+                              ]}
                             />
+                            <Text
+                              style={[
+                                styles.recentStatusText,
+                                { color: statusColor },
+                              ]}
+                            >
+                              {status}
+                            </Text>
                           </View>
-                        )}
 
-                        <View style={styles.docInfo}>
-                          <Text style={styles.docTitle} numberOfLines={1}>
+                          <Text
+                            style={styles.recentDocumentTitle}
+                            numberOfLines={2}
+                          >
                             {doc.title || "Untitled Document"}
                           </Text>
 
-                          <Text style={styles.docSubtitle} numberOfLines={1}>
-                            Issuer: {doc.issuer || "Unknown"}
+                          <Text
+                            style={styles.recentDocumentType}
+                            numberOfLines={1}
+                          >
+                            {documentType}
                           </Text>
 
-                          <Text style={styles.docDate}>
-                            Expires:{" "}
-                            {doc.expiryDate
-                              ? formatShortDate(doc.expiryDate)
-                              : "N/A"}
+                          <Text
+                            style={styles.recentDocumentNumber}
+                            numberOfLines={1}
+                          >
+                            No. {doc.documentNumber || "Not provided"}
                           </Text>
+
+                          <View style={styles.recentExpiryRow}>
+                            <Ionicons
+                              name="calendar-outline"
+                              size={14}
+                              color={statusColor}
+                            />
+                            <Text
+                              style={[
+                                styles.recentExpiryText,
+                                { color: statusColor },
+                              ]}
+                              numberOfLines={2}
+                            >
+                              {isExpired ? "Expired: " : "Expires: "}
+                              {expiryDate}
+                            </Text>
+                          </View>
                         </View>
 
                         <Ionicons
                           name="chevron-forward"
-                          size={20}
+                          size={19}
                           color={COLORS.textSecondary}
                         />
                       </View>
@@ -581,6 +664,8 @@ export default function HomeScreen() {
                   : "All documents up to date"}
             </Text>
           </View>
+            </>
+          )}
         </View>
       </RefreshableContainer>
     </SafeAreaView>
@@ -738,6 +823,105 @@ const createStyles = (COLORS: typeof BASE_COLORS) =>
       color: COLORS.primary,
     },
 
+    recentDocumentCard: {
+      marginBottom: 12,
+      padding: 12,
+      backgroundColor: COLORS.surface,
+      borderRadius: BORDER_RADIUS.md,
+      borderWidth: 1,
+      borderColor: COLORS.border,
+    },
+
+    recentDocumentRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+    },
+
+    recentPreviewFrame: {
+      width: 100,
+      height: 124,
+      borderRadius: BORDER_RADIUS.sm,
+      overflow: "hidden",
+      backgroundColor: COLORS.primaryLight,
+    },
+
+    recentPreviewImage: {
+      width: "100%",
+      height: "100%",
+    },
+
+    recentPreviewFallback: {
+      flex: 1,
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 6,
+      padding: 4,
+    },
+
+    previewFallbackText: {
+      fontSize: 10,
+      color: COLORS.primary,
+      fontWeight: "600",
+    },
+
+    recentDocumentInfo: {
+      flex: 1,
+      minWidth: 0,
+      gap: 5,
+    },
+
+    recentStatusBadge: {
+      alignSelf: "flex-start",
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 5,
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 20,
+    },
+
+    recentStatusDot: {
+      width: 6,
+      height: 6,
+      borderRadius: 3,
+    },
+
+    recentStatusText: {
+      fontSize: 10,
+      fontWeight: "700",
+    },
+
+    recentDocumentTitle: {
+      fontSize: 15,
+      fontWeight: "700",
+      color: COLORS.text,
+    },
+
+    recentDocumentType: {
+      fontSize: 12,
+      color: COLORS.textSecondary,
+    },
+
+    recentDocumentNumber: {
+      fontSize: 12,
+      color: COLORS.text,
+      fontWeight: "500",
+    },
+
+    recentExpiryRow: {
+      flexDirection: "row",
+      alignItems: "flex-start",
+      gap: 5,
+      marginTop: 3,
+    },
+
+    recentExpiryText: {
+      flex: 1,
+      fontSize: 11,
+      fontWeight: "600",
+    },
+
     emptyCard: {
       alignItems: "center",
       padding: 24,
@@ -766,7 +950,7 @@ const createStyles = (COLORS: typeof BASE_COLORS) =>
     },
 
     emptyButtonText: {
-      color: "#FFFFFF",
+      color: COLORS.buttonPrimaryText,
       fontWeight: "600",
       fontSize: 14,
     },
@@ -881,3 +1065,4 @@ const createStyles = (COLORS: typeof BASE_COLORS) =>
       color: COLORS.textSecondary,
     },
   });
+

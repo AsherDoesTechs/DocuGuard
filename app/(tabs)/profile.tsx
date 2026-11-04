@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import {
   View,
+  DeviceEventEmitter,
   Text,
   StyleSheet,
   ScrollView,
@@ -11,22 +12,26 @@ import {
   KeyboardAvoidingView,
   Platform,
   Modal,
+  FlatList,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { Card } from "../../components/ui";
 import { SubscriptionView } from "../../components/ui/SubscriptionView";
-import { COLORS } from "@/constants";
 import { RefreshableContainer } from "@/components/ui/RefreshableContainer";
+import { ProfileSkeleton } from "@/components/ui/Skeleton";
 import * as SecureStore from "expo-secure-store";
-import { api, setAuthToken } from "../../services/api";
+import { api } from "../../services/api";
+import {
+  exportLocalBackup,
+  importLocalBackup,
+} from "../../services/backupService";
 import {
   getUserProfile,
   getAllDocuments,
-  clearLocalSession,
+  getLocalDataOwnerIdForSessionExpiration,
   purgeLocalDataForUser,
-  getLocalDataOwnerId,
   saveUserProfile,
 } from "../../services/localDatabase";
 import { removePushTokenFromBackend } from "../../hooks/usePushNotifications";
@@ -34,12 +39,13 @@ import { resolveSignOutTokenOutcome } from "@/shared/sync/pushTokenOwnership";
 import { setNotificationsEnabled } from "../../services/notificationPreferences";
 import { checkAndScheduleAlerts } from "../../services/notificationScheduler";
 import * as LocalAuthentication from "expo-local-authentication";
+import * as Clipboard from "expo-clipboard";
 import {
   feedbackService,
   useFeedbackService,
 } from "../../services/feedbackService";
 import { useTheme } from "@/context/ThemeContext";
-import type { ThemeMode } from "@/constants/colors";
+import type { ThemeMode, ColorScheme } from "@/constants/colors";
 
 type SettingsTab =
   | "none"
@@ -50,7 +56,8 @@ type SettingsTab =
   | "appearance"
   | "subscription"
   | "support"
-  | "privacy";
+  | "privacy"
+  | "backup";
 
 type IconName = keyof typeof Ionicons.glyphMap;
 
@@ -65,6 +72,7 @@ interface SubscriptionDetails {
 interface UserProfile {
   name: string;
   email: string;
+  occupation?: string;
   securityLevel: string;
   documentCount: number;
   expiringCount: number;
@@ -95,6 +103,8 @@ interface BiometricState {
 }
 
 interface SettingRowProps {
+  colors: ColorScheme;
+  styles: Record<string, any>;
   icon: IconName;
   title: string;
   subtitle: string;
@@ -103,7 +113,33 @@ interface SettingRowProps {
   isDestructive?: boolean;
 }
 
+const OCCUPATION_LIST = [
+  "Student",
+  "OFW",
+  "Senior Citizen",
+  "Freelancer",
+  "Registered Nurse",
+  "Software Engineer",
+  "Teacher / Educator",
+  "Accountant",
+  "Business Owner",
+  "Virtual Assistant",
+  "Civil Engineer",
+  "Graphic Designer",
+  "Medical Doctor",
+  "Sales Professional",
+  "Customer Service Representative",
+  "Police Officer / Military",
+  "Government Employee",
+  "Driver / Delivery Personnel",
+  "Chef / Cook",
+  "Electrician / Plumber",
+  "Others",
+];
+
 const SettingRow = ({
+  colors,
+  styles,
   icon,
   title,
   subtitle,
@@ -116,35 +152,51 @@ const SettingRow = ({
     accessibilityRole="button"
     accessibilityLabel={title}
   >
-    <View style={[styles.settingRow, isActive && styles.activeSettingRow]}>
+    <View
+      style={[
+        styles.settingRow,
+        {
+          backgroundColor: colors.surface,
+          borderColor: isActive ? colors.primary : colors.border,
+        },
+      ]}
+    >
       <Ionicons
         name={icon}
         size={22}
-        color={isDestructive ? COLORS.danger : COLORS.primary}
+        color={isDestructive ? colors.error : colors.primary}
       />
       <View style={styles.settingInfo}>
         <Text
           style={[
             styles.settingTitle,
-            isDestructive && { color: COLORS.danger },
+            { color: isDestructive ? colors.error : colors.text },
           ]}
         >
           {title}
         </Text>
-        <Text style={styles.settingSubtitle}>{subtitle}</Text>
+        <Text style={[styles.settingSubtitle, { color: colors.textSecondary }]}>
+          {subtitle}
+        </Text>
       </View>
       <Ionicons
         name={isActive ? "chevron-down" : "chevron-forward"}
         size={20}
-        color={isActive ? COLORS.primary : COLORS.border}
+        color={isActive ? colors.primary : colors.border}
       />
     </View>
   </TouchableOpacity>
 );
 
-const { themeMode, setThemeMode, colors, isDark } = useTheme();
-
-const UniqueAvatar = ({ name }: { name: string }) => {
+const UniqueAvatar = ({
+  name,
+  colors,
+  styles,
+}: {
+  name: string;
+  colors: ColorScheme;
+  styles: Record<string, any>;
+}) => {
   const getInitials = (str: string) => {
     if (!str) return "??";
     const parts = str.trim().split(" ");
@@ -172,9 +224,11 @@ const getApiErrorMessage = (err: any, fallback: string): string => {
 };
 
 export default function ProfileScreen() {
+  const { themeMode, setThemeMode, colors, isDark } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<SettingsTab>("none");
-  const [, setLoading] = useState(true);
+  const [loading, setLoading] = useState(true);
   const [user, setUser] = useState<UserProfile | null>(null);
 
   useFeedbackService();
@@ -193,6 +247,13 @@ export default function ProfileScreen() {
     otpauthUri: string;
   } | null>(null);
   const [twoFactorCode, setTwoFactorCode] = useState("");
+  const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
+  const [twoFactorDisablePassword, setTwoFactorDisablePassword] = useState("");
+  const [twoFactorDisableCode, setTwoFactorDisableCode] = useState("");
+  const [twoFactorDisableMode, setTwoFactorDisableMode] = useState<
+    "totp" | "recovery"
+  >("totp");
+  const [disabling2FA, setDisabling2FA] = useState(false);
 
   const [biometric, setBiometric] = useState<BiometricState>({
     available: false,
@@ -212,9 +273,15 @@ export default function ProfileScreen() {
     name: "",
     email: "",
     phone: "",
+    occupation: "",
   });
   const [savingPersonal, setSavingPersonal] = useState(false);
   const [maskPersonalData, setMaskPersonalData] = useState(true);
+
+  // Dropdown States for "What I do"
+  const [dropdownVisible, setDropdownVisible] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [isCustomOccupation, setIsCustomOccupation] = useState(false);
 
   const [loginSessions, setLoginSessions] = useState<LoginSession[]>([]);
   const [loadingSessions, setLoadingSessions] = useState(false);
@@ -320,8 +387,6 @@ export default function ProfileScreen() {
           expiringCount: localDocs.filter((d) => d.status === "expiring")
             .length,
           notifyEmail: localProfile.notifyEmail ?? true,
-          // The local profile row has no `notifyPush` column: the push
-          // preference lives in `notificationsEnabled`.
           notifyPush: localProfile.notificationsEnabled ?? false,
           notifyExpiry: localProfile.notifyExpiry ?? true,
           twoFactor: localProfile.twoFactor ?? false,
@@ -337,10 +402,17 @@ export default function ProfileScreen() {
           appLockEnabled: false,
         });
 
+        const initialOcc = localProfile.occupation || "";
+        const isStandard = OCCUPATION_LIST.includes(initialOcc);
+        if (initialOcc && !isStandard) {
+          setIsCustomOccupation(true);
+        }
+
         setPersonalInfo({
           name: localProfile.name || "",
           email: localProfile.email || "",
           phone: localProfile.phone || "",
+          occupation: initialOcc,
         });
 
         setTwoFactor(localProfile.twoFactor ?? false);
@@ -355,19 +427,39 @@ export default function ProfileScreen() {
         try {
           const res = await api.client.get("/profile");
           const subData = res.data.subscription || {};
+          const remoteOcc = res.data.occupation || "";
+          const isStandardRemote = OCCUPATION_LIST.includes(remoteOcc);
+          if (remoteOcc && !isStandardRemote) {
+            setIsCustomOccupation(true);
+          }
 
           setUser((prev) => ({
             ...prev!,
             ...res.data,
+            storageUsedMB:
+              typeof res.data.storageUsedMB === "number" &&
+              isFinite(res.data.storageUsedMB)
+                ? res.data.storageUsedMB
+                : res.data.storageUsedMB === null
+                  ? null
+                  : undefined,
             serialNumber:
-              res.data.serialNumber || prev?.serialNumber || serialNumber,
+              res.data.serialNumber ||
+              res.data.user?.serialNumber ||
+              subData.serialNumber ||
+              prev?.serialNumber ||
+              "DG-USER-0000",
             subscription: {
               planName:
                 subData.planName || prev?.subscription?.planName || "Free",
-              renewalDate: subData.renewalDate || "N/A",
-              storageUsed: subData.storageUsed ?? localDocs.length * 0.5,
-              storageTotal: subData.storageTotal ?? 50,
-              serialNumber: res.data.serialNumber || serialNumber,
+              renewalDate:
+                subData.renewalDate || prev?.subscription?.renewalDate || "N/A",
+              storageUsed:
+                subData.storageUsed || prev?.subscription?.storageUsed || 0,
+              storageTotal:
+                subData.storageTotal || prev?.subscription?.storageTotal || 50,
+              serialNumber:
+                subData.serialNumber || prev?.subscription?.serialNumber,
             },
           }));
 
@@ -375,6 +467,7 @@ export default function ProfileScreen() {
             name: res.data.name || "",
             email: res.data.email || "",
             phone: res.data.phone || "",
+            occupation: remoteOcc,
           });
 
           if (res.data.twoFactor !== undefined) {
@@ -385,12 +478,9 @@ export default function ProfileScreen() {
             setDocPreferences(res.data.documentPreferences);
           }
         } catch (err) {
-          // Keep the locally loaded profile if the server profile request fails.
           console.warn("Failed to load remote profile:", err);
         }
 
-        // Load the persisted reminder lead time separately.
-        // The endpoint returns { settings: { reminderBeforeDays: number } }.
         try {
           const settingsResponse = await api.profile.getSettings();
           const savedDays = settingsResponse?.settings?.reminderBeforeDays;
@@ -403,7 +493,6 @@ export default function ProfileScreen() {
             setExpiryLeadDays(String(savedDays));
           }
         } catch (settingsError) {
-          // Preserve the current/default value if settings cannot be fetched.
           console.warn("Failed to load profile settings:", settingsError);
         }
       }
@@ -418,20 +507,6 @@ export default function ProfileScreen() {
     fetchProfile();
     checkBiometrics();
   }, [fetchProfile, checkBiometrics]);
-
-  useEffect(() => {
-    if (user?.subscription?.storageUsed && user?.subscription?.storageTotal) {
-      const percentage =
-        (user.subscription.storageUsed / user.subscription.storageTotal) * 100;
-      if (percentage >= 80) {
-        feedbackService.showStorageWarning({
-          used: user.subscription.storageUsed,
-          total: user.subscription.storageTotal,
-          action: "Consider upgrading your plan or removing old documents.",
-        });
-      }
-    }
-  }, [user?.subscription?.storageUsed, user?.subscription?.storageTotal]);
 
   const handleSetup2FA = async () => {
     try {
@@ -466,20 +541,31 @@ export default function ProfileScreen() {
     try {
       setVerifying2FA(true);
       const token = await SecureStore.getItemAsync("userToken");
-      await api.client.post(
+      if (!token) {
+        throw new Error("Your session has expired. Please sign in again.");
+      }
+
+      const res = await api.client.post(
         "/profile/security/2fa/verify",
-        {
-          code: twoFactorCode,
-        },
+        { code: twoFactorCode },
         {
           headers: { Authorization: `Bearer ${token}` },
         },
       );
+
+      const issuedCodes = res.data?.recoveryCodes;
+      if (!Array.isArray(issuedCodes) || issuedCodes.length !== 10) {
+        throw new Error(
+          "2FA was enabled, but recovery codes were not returned. Contact support before signing out.",
+        );
+      }
+
+      setRecoveryCodes(issuedCodes);
       setTwoFactor(true);
       setTwoFactorSetup(null);
       setTwoFactorCode("");
       feedbackService.success(
-        "Two-factor authentication enabled successfully.",
+        "Two-factor authentication enabled. Save your recovery codes now.",
       );
     } catch (error) {
       feedbackService.error(
@@ -487,6 +573,68 @@ export default function ProfileScreen() {
       );
     } finally {
       setVerifying2FA(false);
+    }
+  };
+
+  const handleDisable2FA = async () => {
+    if (!twoFactorDisablePassword.trim()) {
+      feedbackService.error("Enter your current password to disable 2FA.");
+      return;
+    }
+
+    const normalizedCode = twoFactorDisableCode
+      .replace(/[\s-]/g, "")
+      .toUpperCase();
+
+    if (twoFactorDisableMode === "totp" && !/^\d{6}$/.test(normalizedCode)) {
+      feedbackService.error("Enter a valid 6-digit authenticator code.");
+      return;
+    }
+
+    if (
+      twoFactorDisableMode === "recovery" &&
+      !/^[A-F0-9]{32}$/.test(normalizedCode)
+    ) {
+      feedbackService.error("Enter a valid 32-character recovery code.");
+      return;
+    }
+
+    try {
+      setDisabling2FA(true);
+      const token = await SecureStore.getItemAsync("userToken");
+      if (!token) {
+        throw new Error("Your session has expired. Please sign in again.");
+      }
+
+      const payload: Record<string, unknown> = {
+        currentPassword: twoFactorDisablePassword,
+        twoFactor: false,
+      };
+
+      if (twoFactorDisableMode === "totp") {
+        payload.twoFactorCode = normalizedCode;
+      } else {
+        payload.recoveryCode = normalizedCode;
+      }
+
+      await api.client.patch("/profile/security", payload, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      setTwoFactor(false);
+      setRecoveryCodes(null);
+      setTwoFactorSetup(null);
+      setTwoFactorDisablePassword("");
+      setTwoFactorDisableCode("");
+      setTwoFactorDisableMode("totp");
+
+      feedbackService.success("Two-factor authentication disabled.");
+    } catch (error) {
+      feedbackService.error(
+        getApiErrorMessage(error, "Unable to disable 2FA."),
+      );
+    } finally {
+      setDisabling2FA(false);
     }
   };
 
@@ -512,6 +660,7 @@ export default function ProfileScreen() {
     try {
       await SecureStore.setItemAsync("biometricEnabled", String(value));
       setBiometric((prev) => ({ ...prev, enabled: value }));
+      DeviceEventEmitter.emit("docuguard.securityPreferencesChanged");
       feedbackService.success(
         value ? "Biometrics enabled" : "Biometrics disabled",
       );
@@ -521,21 +670,13 @@ export default function ProfileScreen() {
   };
 
   const handleToggleAppLock = async (value: boolean) => {
-    if (value && (!biometric.available || !biometric.enrolled)) {
-      feedbackService.alert({
-        title: "Error",
-        message:
-          "App lock requires device biometrics or passcode to be configured.",
-        type: "error",
-      });
-      return;
-    }
     try {
       await SecureStore.setItemAsync(
         "docuguard.appLock.enabled",
         String(value),
       );
       setAppLockEnabled(value);
+      DeviceEventEmitter.emit("docuguard.securityPreferencesChanged");
       feedbackService.success(
         value ? "App Lock enabled successfully" : "App Lock disabled",
       );
@@ -563,9 +704,6 @@ export default function ProfileScreen() {
       const token = await SecureStore.getItemAsync("userToken");
       const payload: Record<string, unknown> = {
         currentPassword: passwords.current,
-        twoFactor,
-        biometricEnabled: biometric.enabled,
-        appLockEnabled,
       };
       if (passwords.new) {
         payload.newPassword = passwords.new;
@@ -594,9 +732,24 @@ export default function ProfileScreen() {
     try {
       setSavingPersonal(true);
       const token = await SecureStore.getItemAsync("userToken");
+
+      // 1. Save to backend/Supabase via API
       await api.client.patch("/profile", personalInfo, {
         headers: { Authorization: `Bearer ${token}` },
       });
+
+      // 2. Persist locally including phone and occupation
+      const currentLocalProfile = await getUserProfile();
+      if (currentLocalProfile) {
+        await saveUserProfile({
+          ...currentLocalProfile,
+          name: personalInfo.name,
+          email: personalInfo.email,
+          occupation: personalInfo.occupation,
+          phone: personalInfo.phone, // Cast or include if local database supports it
+        } as any);
+      }
+
       setUser((prev) => (prev ? { ...prev, ...personalInfo } : null));
       feedbackService.success("Personal information updated securely.");
     } catch (err: any) {
@@ -640,21 +793,6 @@ export default function ProfileScreen() {
     }
   };
 
-  /**
-   * Persists one of the three notification switches.
-   *
-   * The switches used to be plain component state: they moved when the user
-   * flipped them and were gone the next time the screen mounted. Nothing was
-   * written to the local profile, nothing was sent to the server, and the
-   * scheduler never heard about it - so a user who turned alerts off was
-   * still asked for every document.
-   *
-   * Each switch is written in both places:
-   *   - the local profile row, which is what the scheduler and the local
-   *     screens read, and
-   *   - the server, so the setting survives a reinstall and reaches the
-   *     devices that push.
-   */
   const handleNotificationPreferenceChange = async (
     key: "notifyEmail" | "notifyPush" | "notifyExpiry",
     value: boolean,
@@ -681,12 +819,6 @@ export default function ProfileScreen() {
         });
       }
 
-      /*
-       * The push switch is the one the scheduler reads, so it is the one that
-       * has to reach `setNotificationsEnabled`. Turning it off also has to
-       * withdraw the alerts that are already scheduled, otherwise the
-       * notifications that were booked keep arriving.
-       */
       if (key === "notifyPush") {
         await setNotificationsEnabled(value);
         await checkAndScheduleAlerts();
@@ -757,7 +889,9 @@ export default function ProfileScreen() {
   };
 
   const handleConfirmAccountDeletion = async () => {
-    if (!deletePassword) {
+    const password = deletePassword;
+
+    if (!password) {
       feedbackService.error(
         "Please enter your account password to confirm deletion.",
       );
@@ -766,31 +900,44 @@ export default function ProfileScreen() {
 
     setDeletingAccount(true);
 
-    /*
-     * The device stops being registered for this account.
-     *
-     * The push token lives on the account row. Removing it while the session
-     * is still valid detaches the device from the account that is being
-     * deleted, so the expiry job cannot keep pushing that account's documents
-     * to this device after the account is gone. The removal is best effort:
-     * if it fails the account is still deleted, and the user is warned.
-     */
-    let tokenRemoved = false;
+    let token: string | null;
+    let ownerId: number | null;
+
     try {
-      tokenRemoved = await removePushTokenFromBackend();
+      [token, ownerId] = await Promise.all([
+        api.getStoredToken(),
+        getLocalDataOwnerIdForSessionExpiration(),
+      ]);
+
+      if (!token || !ownerId || ownerId <= 0) {
+        throw new Error(
+          "The active account session or local account owner could not be verified.",
+        );
+      }
+    } catch (error) {
+      console.error("Could not capture the account deletion session:", error);
+      feedbackService.error(
+        "Could not verify the active account. Please sign in again before deleting your account.",
+      );
+      setDeletingAccount(false);
+      return;
+    }
+
+    let tokenRemoved = false;
+
+    try {
+      tokenRemoved = await removePushTokenFromBackend(token);
     } catch {
       tokenRemoved = false;
     }
 
     try {
-      const token = await SecureStore.getItemAsync("userToken");
       await api.client.post(
         "/profile/delete-account",
-        { password: deletePassword },
+        { password },
         { headers: { Authorization: `Bearer ${token}` } },
       );
     } catch (err: any) {
-      // The account still exists, so nothing was removed anywhere.
       feedbackService.error(
         getApiErrorMessage(
           err,
@@ -801,40 +948,38 @@ export default function ProfileScreen() {
       return;
     }
 
-    /*
-     * The account is gone on the server. From here on the local copy has to
-     * go too, and the session has to be closed, whatever the local database
-     * does.
-     *
-     * The two used to be one step: a local failure skipped the session
-     * closing and reported "the password may be incorrect" for an account
-     * that had already been deleted - the local documents of a deleted
-     * account stayed on the device and stayed readable.
-     */
     let localCleanupFailed = false;
 
     try {
-      const owner = await getLocalDataOwnerId();
-
-      if (owner === null) {
-        // Without an account id there is no way to tell which rows belong to
-        // the deleted account, and clearing everything would delete the rows
-        // of an account that is still signed in on this device.
-        throw new Error("The account of the local data is unknown.");
-      }
-
-      await purgeLocalDataForUser(owner);
+      await purgeLocalDataForUser(ownerId);
     } catch (error) {
       localCleanupFailed = true;
       console.error("Failed to remove the local copy of a deleted account:", {
         error,
+        ownerId,
       });
     }
 
-    await clearLocalSession();
-    await setAuthToken(null);
+    let originalSessionClosed = false;
+
+    try {
+      originalSessionClosed = await api.auth.logout(token, ownerId);
+    } catch (error) {
+      console.error(
+        "Could not conditionally close the deleted account session:",
+        error,
+      );
+    }
+
     setDeleteModalVisible(false);
     setDeletingAccount(false);
+
+    if (!originalSessionClosed) {
+      feedbackService.warning(
+        "The account was deleted, but a different or newer session is active. DocuGuard left that session untouched. Please verify the active account before continuing.",
+      );
+      return;
+    }
 
     const cleanupFailed = localCleanupFailed || !tokenRemoved;
 
@@ -867,38 +1012,29 @@ export default function ProfileScreen() {
       destructive: true,
       onConfirm: async () => {
         try {
-          /*
-           * The device stops being registered for this account.
-           *
-           * The push token is stored on the account. Without this call the
-           * server kept pushing this account's document titles and expiry
-           * dates to the device, even after another account had signed in.
-           * The call happens before the session token is deleted, so the
-           * server still knows whose token it is.
-           */
-          const removalSucceeded = await removePushTokenFromBackend();
-          const outcome = resolveSignOutTokenOutcome({ removalSucceeded });
+          // 1. Immediately wipe local auth state and redirect away from protected screens first
+          await SecureStore.deleteItemAsync("userToken");
+          await SecureStore.deleteItemAsync("refreshToken");
+          await SecureStore.deleteItemAsync("biometric_credentials");
 
-          await clearLocalSession();
-          await setAuthToken(null);
-          await SecureStore.deleteItemAsync("biometricEnabled");
-          await SecureStore.deleteItemAsync("docuguard.appLock.enabled");
           router.replace("/(auth)/login" as any);
 
-          if (outcome.warnUser) {
-            /*
-             * The device is still registered for the account. The
-             * notifications of the account the user just left can still reach
-             * the device, so the user is told instead of being left with a
-             * silent leak. The token is detached from the account the next
-             * time an account signs in on this device.
-             */
-            feedbackService.warning(
-              "You are signed out, but this device could not be unregistered for push notifications. The notifications of the account you left can still reach this device until it reconnects.",
-            );
+          // 2. Perform server session cleanup & push-token removal in the background
+          const [token, ownerId] = await Promise.all([
+            api.getStoredToken(),
+            getLocalDataOwnerIdForSessionExpiration(),
+          ]);
+
+          if (token && ownerId && ownerId > 0) {
+            await api.auth.logout(token, ownerId).catch((err) => {
+              console.warn("Server session revocation failed or offline:", err);
+            });
+            await removePushTokenFromBackend(token).catch(() => {});
           }
-        } catch {
-          feedbackService.error("Failed to sign out cleanly");
+        } catch (error) {
+          console.error("Failed to sign out cleanly:", error);
+          // Fallback redirect just in case
+          router.replace("/(auth)/login" as any);
         }
       },
       onCancel: () => {},
@@ -915,6 +1051,10 @@ export default function ProfileScreen() {
     return `${maskedName}@${parts[1]}`;
   };
 
+  const filteredOccupations = OCCUPATION_LIST.filter((item) =>
+    item.toLowerCase().includes(searchQuery.toLowerCase()),
+  );
+
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
       <KeyboardAvoidingView
@@ -926,524 +1066,1015 @@ export default function ProfileScreen() {
             contentContainerStyle={styles.scrollContent}
             keyboardShouldPersistTaps="handled"
           >
-            {/* Header Profile Section */}
-            <View style={styles.headerContainer}>
-              <UniqueAvatar name={user?.name || "User"} />
-              <View style={styles.headerTextContainer}>
-                <Text style={styles.userName}>
-                  {user?.name || "Loading..."}
-                </Text>
-                <Text style={styles.userEmail}>
-                  {maskEmail(user?.email || "user@example.com")}
-                </Text>
-                <View style={styles.badgeContainer}>
-                  <Text style={styles.badgeText}>
-                    Plan: {user?.subscription.planName || "Free"}
-                  </Text>
-                  <Text style={styles.serialText}>
-                    ID: {user?.serialNumber || "DG-USER-0000"}
-                  </Text>
-                </View>
-              </View>
-            </View>
+            {loading ? (
+              <ProfileSkeleton />
+            ) : (
+              <>
+                {/* Header Profile Section */}
+                <View style={styles.headerContainer}>
+                  <UniqueAvatar
+                    name={user?.name || "User"}
+                    colors={colors}
+                    styles={styles}
+                  />
+                  <View style={styles.headerTextContainer}>
+                    <Text style={styles.userName}>
+                      {user?.name || "Loading..."}
+                    </Text>
+                    <Text style={styles.userEmail}>
+                      {maskEmail(user?.email || "user@example.com")}
+                    </Text>
 
-            {/* Storage Card Section */}
-            <Card style={styles.storageCard}>
-              <View style={styles.storageHeader}>
-                <Ionicons
-                  name="cloud-outline"
-                  size={20}
-                  color={COLORS.primary}
-                />
-                <Text style={styles.storageTitle}>Vault Storage Usage</Text>
-              </View>
-              <Text style={styles.storageDetails}>
-                {(user?.subscription.storageUsed || 0).toFixed(1)} MB /{" "}
-                {user?.subscription.storageTotal || 50} MB (
-                {user?.documentCount || 0} documents)
-              </Text>
-              <View style={styles.progressBarBackground}>
-                <View
-                  style={[
-                    styles.progressBarFill,
-                    {
-                      width: `${Math.min(100, ((user?.subscription.storageUsed || 0) / (user?.subscription.storageTotal || 50)) * 100)}%`,
-                    },
-                  ]}
-                />
-              </View>
-            </Card>
+                    {/* --- Prominent Occupation Badge --- */}
+                    {user?.occupation ? (
+                      <View style={styles.occupationBadge}>
+                        <Ionicons
+                          name="briefcase-outline"
+                          size={12}
+                          color={colors.primary}
+                          style={{ marginRight: 4 }}
+                        />
+                        <Text style={styles.occupationText}>
+                          {user.occupation}
+                        </Text>
+                      </View>
+                    ) : null}
+                    {/* ----------------------------------- */}
 
-            {/* Settings Navigation Sections */}
-            <View style={styles.sectionsContainer}>
-              {/* Personal Information */}
-              <SettingRow
-                icon="person-outline"
-                title="Personal Information"
-                subtitle="Anti-theft masking, update name and contact details"
-                isActive={activeTab === "personal"}
-                onPress={() =>
-                  setActiveTab(activeTab === "personal" ? "none" : "personal")
-                }
-              />
-              {activeTab === "personal" && (
-                <View style={styles.expandedSection}>
-                  <View style={styles.rowBetween}>
-                    <Text style={styles.label}>Mask Sensitive On Screen</Text>
-                    <Switch
-                      value={maskPersonalData}
-                      onValueChange={setMaskPersonalData}
-                    />
-                  </View>
-                  <Text style={styles.inputLabel}>Full Name</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Enter your full name"
-                    placeholderTextColor="#9CA3AF"
-                    value={personalInfo.name}
-                    onChangeText={(text) =>
-                      setPersonalInfo({ ...personalInfo, name: text })
-                    }
-                  />
-                  <Text style={styles.inputLabel}>Email Address</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Enter your email address"
-                    placeholderTextColor="#9CA3AF"
-                    value={personalInfo.email}
-                    autoCapitalize="none"
-                    keyboardType="email-address"
-                    onChangeText={(text) =>
-                      setPersonalInfo({ ...personalInfo, email: text })
-                    }
-                  />
-                  <Text style={styles.inputLabel}>Phone Number (Optional)</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="+63 900 000 0000"
-                    placeholderTextColor="#9CA3AF"
-                    keyboardType="phone-pad"
-                    value={personalInfo.phone}
-                    onChangeText={(text) =>
-                      setPersonalInfo({ ...personalInfo, phone: text })
-                    }
-                  />
-                  <TouchableOpacity
-                    style={styles.saveButton}
-                    onPress={handleSavePersonalInfo}
-                    disabled={savingPersonal}
-                  >
-                    {savingPersonal ? (
-                      <ActivityIndicator color="#fff" />
-                    ) : (
-                      <Text style={styles.saveButtonText}>
-                        Save Personal Info
+                    <View style={styles.badgeContainer}>
+                      <Text style={styles.badgeText}>
+                        Plan: {user?.subscription.planName || "Free"}
                       </Text>
-                    )}
-                  </TouchableOpacity>
-                </View>
-              )}
-
-              {/* Security & Authentication */}
-              <SettingRow
-                icon="shield-checkmark-outline"
-                title="Security & Authentication"
-                subtitle="Password, 2FA setup, biometrics and app lock"
-                isActive={activeTab === "security"}
-                onPress={() => {
-                  setActiveTab(activeTab === "security" ? "none" : "security");
-                  if (activeTab !== "security") fetchLoginSessions();
-                }}
-              />
-              {activeTab === "security" && (
-                <View style={styles.expandedSection}>
-                  <Text style={styles.sectionSubtitle}>Change Password</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Current Password"
-                    placeholderTextColor="#9CA3AF"
-                    secureTextEntry
-                    value={passwords.current}
-                    onChangeText={(t) =>
-                      setPasswords({ ...passwords, current: t })
-                    }
-                  />
-                  <TextInput
-                    style={styles.input}
-                    placeholder="New Password (min 12 chars)"
-                    placeholderTextColor="#9CA3AF"
-                    secureTextEntry
-                    value={passwords.new}
-                    onChangeText={(t) => setPasswords({ ...passwords, new: t })}
-                  />
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Confirm New Password"
-                    placeholderTextColor="#9CA3AF"
-                    secureTextEntry
-                    value={passwords.confirm}
-                    onChangeText={(t) =>
-                      setPasswords({ ...passwords, confirm: t })
-                    }
-                  />
-
-                  <Text style={[styles.sectionSubtitle, { marginTop: 15 }]}>
-                    Two-Factor Authentication (2FA)
-                  </Text>
-                  <View style={styles.rowBetween}>
-                    <Text style={styles.label}>Enable Authenticator App</Text>
-                    <Switch
-                      value={twoFactor}
-                      onValueChange={(val) => {
-                        setTwoFactor(val);
-                        if (val && !twoFactorSetup) handleSetup2FA();
-                      }}
-                    />
-                  </View>
-
-                  {twoFactorSetup && !twoFactor && (
-                    <View style={styles.totpSetupContainer}>
-                      <Text style={styles.totpInstructions}>
-                        Scan this URI key string in your Authenticator App:
+                      <Text style={styles.serialText}>
+                        ID: {user?.serialNumber || "DG-USER-0000"}
                       </Text>
-                      <Text style={styles.totpUriText} selectable>
-                        {twoFactorSetup.otpauthUri}
+                    </View>
+                  </View>
+                </View>
+
+                {/* Storage Card Section */}
+                <Card style={styles.storageCard}>
+                  <View style={styles.storageHeader}>
+                    <Ionicons
+                      name="cloud-outline"
+                      size={20}
+                      color={colors.primary}
+                    />
+                    <Text style={styles.storageTitle}>Vault Storage Usage</Text>
+                  </View>
+                  {(() => {
+                    const storageUsedMB = (user as any)?.storageUsedMB;
+                    if (
+                      typeof storageUsedMB === "number" &&
+                      isFinite(storageUsedMB)
+                    ) {
+                      return (
+                        <>
+                          <Text style={styles.storageDetails}>
+                            {storageUsedMB.toFixed(1)} MB /{" "}
+                            {user?.subscription?.storageTotal || 50} MB (
+                            {user?.documentCount || 0} documents)
+                          </Text>
+                          <View style={styles.progressBarBackground}>
+                            <View
+                              style={[
+                                styles.progressBarFill,
+                                {
+                                  width: `${Math.min(
+                                    100,
+                                    (storageUsedMB /
+                                      (user?.subscription?.storageTotal ||
+                                        50)) *
+                                      100,
+                                  )}%`,
+                                },
+                              ]}
+                            />
+                          </View>
+                        </>
+                      );
+                    } else {
+                      return (
+                        <>
+                          <Text style={styles.storageDetails}>
+                            Storage usage unavailable
+                          </Text>
+                          <Text
+                            style={{
+                              fontSize: 11,
+                              color: colors.textSecondary,
+                              marginTop: 4,
+                            }}
+                          >
+                            Physical storage usage could not be verified from
+                            stored objects.
+                          </Text>
+                        </>
+                      );
+                    }
+                  })()}
+                </Card>
+
+                {/* Settings Navigation Sections */}
+                <View style={styles.sectionsContainer}>
+                  {/* Personal Information */}
+                  <SettingRow
+                    colors={colors}
+                    styles={styles}
+                    icon="person-outline"
+                    title="Personal Information"
+                    subtitle="Anti-theft masking, update name and contact details"
+                    isActive={activeTab === "personal"}
+                    onPress={() =>
+                      setActiveTab(
+                        activeTab === "personal" ? "none" : "personal",
+                      )
+                    }
+                  />
+                  {activeTab === "personal" && (
+                    <View style={styles.expandedSection}>
+                      <View style={styles.rowBetween}>
+                        <Text style={styles.label}>
+                          Mask Sensitive On Screen
+                        </Text>
+                        <Switch
+                          value={maskPersonalData}
+                          onValueChange={setMaskPersonalData}
+                        />
+                      </View>
+                      <Text style={styles.inputLabel}>Full Name</Text>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Enter your full name"
+                        placeholderTextColor="#9CA3AF"
+                        value={personalInfo.name}
+                        onChangeText={(text) =>
+                          setPersonalInfo({ ...personalInfo, name: text })
+                        }
+                      />
+
+                      <Text style={styles.inputLabel}>Email Address</Text>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Enter your email address"
+                        placeholderTextColor="#9CA3AF"
+                        value={personalInfo.email}
+                        autoCapitalize="none"
+                        keyboardType="email-address"
+                        onChangeText={(text) =>
+                          setPersonalInfo({ ...personalInfo, email: text })
+                        }
+                      />
+
+                      {/* --- What I do Dropdown Selection --- */}
+                      <Text style={styles.inputLabel}>What I do</Text>
+                      <TouchableOpacity
+                        style={styles.dropdownSelectorButton}
+                        onPress={() => setDropdownVisible(true)}
+                      >
+                        <Text
+                          style={[
+                            styles.dropdownSelectorText,
+                            !personalInfo.occupation && { color: "#9CA3AF" },
+                          ]}
+                        >
+                          {personalInfo.occupation || "Select what you do..."}
+                        </Text>
+                        <Ionicons
+                          name="chevron-down"
+                          size={18}
+                          color={colors.textSecondary}
+                        />
+                      </TouchableOpacity>
+
+                      {/* Manual Input Container if "Others" is chosen */}
+                      {isCustomOccupation && (
+                        <View style={{ marginTop: 8 }}>
+                          <Text
+                            style={[
+                              styles.inputLabel,
+                              { fontSize: 12, color: colors.textSecondary },
+                            ]}
+                          >
+                            Please specify your occupation:
+                          </Text>
+                          <TextInput
+                            style={styles.input}
+                            placeholder="Type what you do..."
+                            placeholderTextColor="#9CA3AF"
+                            value={personalInfo.occupation}
+                            onChangeText={(text) =>
+                              setPersonalInfo({
+                                ...personalInfo,
+                                occupation: text,
+                              })
+                            }
+                          />
+                        </View>
+                      )}
+                      {/* ------------------------------------- */}
+
+                      <Text style={styles.inputLabel}>
+                        Phone Number (Optional)
                       </Text>
                       <TextInput
                         style={styles.input}
-                        placeholder="Enter 6-digit code to verify"
+                        placeholder="+63 900 000 0000"
                         placeholderTextColor="#9CA3AF"
-                        keyboardType="number-pad"
-                        maxLength={6}
-                        value={twoFactorCode}
-                        onChangeText={setTwoFactorCode}
+                        keyboardType="phone-pad"
+                        value={personalInfo.phone}
+                        onChangeText={(text) =>
+                          setPersonalInfo({ ...personalInfo, phone: text })
+                        }
                       />
                       <TouchableOpacity
-                        style={styles.verifyButton}
-                        onPress={handleVerify2FA}
-                        disabled={verifying2FA}
+                        style={styles.saveButton}
+                        onPress={handleSavePersonalInfo}
+                        disabled={savingPersonal}
                       >
-                        {verifying2FA ? (
-                          <ActivityIndicator color="#fff" />
+                        {savingPersonal ? (
+                          <ActivityIndicator color={colors.buttonPrimaryText} />
                         ) : (
                           <Text style={styles.saveButtonText}>
-                            Verify & Enable 2FA
+                            Save Personal Info
                           </Text>
                         )}
                       </TouchableOpacity>
                     </View>
                   )}
 
-                  <Text style={[styles.sectionSubtitle, { marginTop: 15 }]}>
-                    Device Biometrics ({biometric.type.toUpperCase()})
-                  </Text>
-                  <View style={styles.rowBetween}>
-                    <Text style={styles.label}>
-                      Use {biometric.type} for Login
-                    </Text>
-                    <Switch
-                      disabled={!biometric.available || !biometric.enrolled}
-                      value={biometric.enabled}
-                      onValueChange={handleToggleBiometric}
-                    />
-                  </View>
-
-                  <Text style={[styles.sectionSubtitle, { marginTop: 15 }]}>
-                    App Protection
-                  </Text>
-                  <View style={styles.rowBetween}>
-                    <Text style={styles.label}>
-                      Require App Lock on Startup
-                    </Text>
-                    <Switch
-                      disabled={!biometric.available || !biometric.enrolled}
-                      value={appLockEnabled}
-                      onValueChange={handleToggleAppLock}
-                    />
-                  </View>
-
-                  {!biometric.enrolled && (
-                    <Text style={styles.warningText}>
-                      Biometrics not enrolled on device settings.
-                    </Text>
-                  )}
-
-                  <TouchableOpacity
-                    style={[styles.saveButton, { marginTop: 20 }]}
-                    onPress={handleSaveSecurity}
-                    disabled={savingSecurity}
-                  >
-                    {savingSecurity ? (
-                      <ActivityIndicator color="#fff" />
-                    ) : (
-                      <Text style={styles.saveButtonText}>
-                        Save Security Changes
+                  {/* Security & Authentication */}
+                  <SettingRow
+                    colors={colors}
+                    styles={styles}
+                    icon="shield-checkmark-outline"
+                    title="Security & Authentication"
+                    subtitle="Password, 2FA setup, biometrics and app lock"
+                    isActive={activeTab === "security"}
+                    onPress={() => {
+                      setActiveTab(
+                        activeTab === "security" ? "none" : "security",
+                      );
+                      if (activeTab !== "security") fetchLoginSessions();
+                    }}
+                  />
+                  {activeTab === "security" && (
+                    <View style={styles.expandedSection}>
+                      <Text style={styles.sectionSubtitle}>
+                        Change Password
                       </Text>
-                    )}
-                  </TouchableOpacity>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Current Password"
+                        placeholderTextColor="#9CA3AF"
+                        secureTextEntry
+                        value={passwords.current}
+                        onChangeText={(t) =>
+                          setPasswords({ ...passwords, current: t })
+                        }
+                      />
+                      <TextInput
+                        style={styles.input}
+                        placeholder="New Password (min 12 chars)"
+                        placeholderTextColor="#9CA3AF"
+                        secureTextEntry
+                        value={passwords.new}
+                        onChangeText={(t) =>
+                          setPasswords({ ...passwords, new: t })
+                        }
+                      />
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Confirm New Password"
+                        placeholderTextColor="#9CA3AF"
+                        secureTextEntry
+                        value={passwords.confirm}
+                        onChangeText={(t) =>
+                          setPasswords({ ...passwords, confirm: t })
+                        }
+                      />
 
-                  <Text style={[styles.sectionSubtitle, { marginTop: 20 }]}>
-                    Active Login Sessions
-                  </Text>
-                  {loadingSessions ? (
-                    <ActivityIndicator color={COLORS.primary} />
-                  ) : loginSessions.length === 0 ? (
-                    <Text style={styles.emptySessionText}>
-                      No active sessions found.
-                    </Text>
-                  ) : (
-                    loginSessions.map((session) => (
-                      <View key={session.id} style={styles.sessionRow}>
-                        <View>
-                          <Text style={styles.sessionDevice}>
-                            {session.device || "Unknown Device"} (
-                            {session.browser || "Browser"})
-                          </Text>
-                          <Text style={styles.sessionMeta}>
-                            {session.location || "Unknown Location"} ·{" "}
-                            {session.lastActive || "Recently"}
-                          </Text>
-                        </View>
-                        {!session.current && (
+                      <Text style={[styles.sectionSubtitle, { marginTop: 15 }]}>
+                        Two-Factor Authentication (2FA)
+                      </Text>
+
+                      <View style={styles.rowBetween}>
+                        <Text style={styles.label}>
+                          Authenticator App:{" "}
+                          {twoFactor ? "Enabled" : "Disabled"}
+                        </Text>
+                        {!twoFactor && !twoFactorSetup && (
                           <TouchableOpacity
-                            onPress={() => revokeSession(session.id)}
+                            style={styles.verifyButton}
+                            onPress={handleSetup2FA}
                           >
-                            <Text style={styles.revokeText}>Revoke</Text>
+                            <Text style={styles.saveButtonText}>
+                              Set Up 2FA
+                            </Text>
                           </TouchableOpacity>
                         )}
                       </View>
-                    ))
-                  )}
-                </View>
-              )}
 
-              {/* Notifications */}
-              <SettingRow
-                icon="notifications-outline"
-                title="Notifications"
-                subtitle="Manage push alerts, email digests, and lead times"
-                isActive={activeTab === "notifications"}
-                onPress={() =>
-                  setActiveTab(
-                    activeTab === "notifications" ? "none" : "notifications",
-                  )
-                }
-              />
-              {activeTab === "notifications" && (
-                <View style={styles.expandedSection}>
-                  <View style={styles.rowBetween}>
-                    <Text style={styles.label}>Email Alerts</Text>
-                    <Switch
-                      value={notifyEmail}
-                      onValueChange={(value) =>
-                        handleNotificationPreferenceChange("notifyEmail", value)
-                      }
-                    />
-                  </View>
-                  <View style={styles.rowBetween}>
-                    <Text style={styles.label}>Push Notifications</Text>
-                    <Switch
-                      value={notifyPush}
-                      onValueChange={(value) =>
-                        handleNotificationPreferenceChange("notifyPush", value)
-                      }
-                    />
-                  </View>
-                  <View style={styles.rowBetween}>
-                    <Text style={styles.label}>Document Expiry Reminders</Text>
-                    <Switch
-                      value={notifyExpiry}
-                      onValueChange={(value) =>
-                        handleNotificationPreferenceChange(
-                          "notifyExpiry",
-                          value,
-                        )
-                      }
-                    />
-                  </View>
-                  <Text style={styles.inputLabel}>
-                    Alert Lead Time (Days Before Expiry)
-                  </Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="30"
-                    placeholderTextColor="#9CA3AF"
-                    keyboardType="numeric"
-                    value={expiryLeadDays}
-                    onChangeText={setExpiryLeadDays}
-                    onEndEditing={() => {
-                      void handleExpiryLeadDaysSave();
-                    }}
-                  />
-                </View>
-              )}
+                      {twoFactorSetup && !twoFactor && (
+                        <View style={styles.totpSetupContainer}>
+                          <Text style={styles.totpInstructions}>
+                            Add this key to your authenticator app or copy the
+                            details below:
+                          </Text>
 
-              {/* Document Preferences */}
-              <SettingRow
-                icon="document-text-outline"
-                title="Document Preferences"
-                subtitle="Auto-scan settings, sorting preferences, defaults"
-                isActive={activeTab === "documents"}
-                onPress={() =>
-                  setActiveTab(activeTab === "documents" ? "none" : "documents")
-                }
-              />
-              {activeTab === "documents" && (
-                <View style={styles.expandedSection}>
-                  <View style={styles.rowBetween}>
-                    <Text style={styles.label}>Auto-Scan Document Edges</Text>
-                    <Switch
-                      value={docPreferences.autoScan}
-                      onValueChange={(val) =>
-                        setDocPreferences({ ...docPreferences, autoScan: val })
-                      }
-                    />
-                  </View>
-                  <View style={styles.rowBetween}>
-                    <Text style={styles.label}>
-                      AI Auto-Categorize Documents
-                    </Text>
-                    <Switch
-                      value={docPreferences.autoCategorize}
-                      onValueChange={(val) =>
-                        setDocPreferences({
-                          ...docPreferences,
-                          autoCategorize: val,
-                        })
-                      }
-                    />
-                  </View>
-                  <Text style={styles.inputLabel}>
-                    Default Expiry Buffer (Days)
-                  </Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="30"
-                    placeholderTextColor="#9CA3AF"
-                    keyboardType="number-pad"
-                    value={String(docPreferences.expiryReminderDays)}
-                    onChangeText={(val) =>
-                      setDocPreferences({
-                        ...docPreferences,
-                        expiryReminderDays: val === "" ? 30 : Number(val),
-                      })
-                    }
-                  />
-                </View>
-              )}
-
-              {/* Appearance */}
-              <SettingRow
-                icon="color-palette-outline"
-                title="Appearance"
-                subtitle={`Theme selection (${themeMode === "system" ? "System" : themeMode === "light" ? "Light" : "Dark"})`}
-                isActive={activeTab === "appearance"}
-                onPress={() =>
-                  setActiveTab(
-                    activeTab === "appearance" ? "none" : "appearance",
-                  )
-                }
-              />
-
-              {activeTab === "appearance" && (
-                <View style={styles.expandedSection}>
-                  <Text style={styles.inputLabel}>Theme Selector</Text>
-
-                  <View style={styles.selectorRow}>
-                    {(["system", "light", "dark"] as ThemeMode[]).map(
-                      (themeOption) => {
-                        const selected = themeMode === themeOption;
-
-                        return (
-                          <TouchableOpacity
-                            key={themeOption}
-                            accessibilityRole="button"
-                            accessibilityState={{ selected }}
-                            style={[
-                              styles.selectorChip,
-                              selected && styles.selectorChipActive,
-                            ]}
-                            onPress={async () => {
-                              try {
-                                await setThemeMode(themeOption);
-
-                                feedbackService.success(
-                                  `Theme updated to ${themeOption.toUpperCase()}`,
-                                );
-                              } catch {
-                                feedbackService.error(
-                                  "Unable to update theme. Please try again.",
-                                );
-                              }
-                            }}
-                          >
+                          {/* Secret Key Field with Copy Button */}
+                          <View style={styles.rowBetween}>
                             <Text
                               style={[
-                                styles.selectorChipText,
-                                selected && styles.selectorChipTextActive,
+                                styles.label,
+                                {
+                                  fontFamily:
+                                    Platform.OS === "ios"
+                                      ? "Courier"
+                                      : "monospace",
+                                  fontSize: 12,
+                                },
                               ]}
                             >
-                              {themeOption.toUpperCase()}
+                              Secret: {twoFactorSetup.secret}
+                            </Text>
+                            <TouchableOpacity
+                              style={{
+                                padding: 6,
+                                backgroundColor: colors.primary,
+                                borderRadius: 6,
+                              }}
+                              onPress={async () => {
+                                await Clipboard.setStringAsync(
+                                  twoFactorSetup.secret,
+                                );
+                                feedbackService.success(
+                                  "Secret copied to clipboard!",
+                                );
+                              }}
+                            >
+                              <Ionicons
+                                name="copy-outline"
+                                size={16}
+                                color="#fff"
+                              />
+                            </TouchableOpacity>
+                          </View>
+
+                          {/* Provisioning URI with Copy Button */}
+                          <Text
+                            style={[styles.totpUriText, { marginTop: 8 }]}
+                            numberOfLines={2}
+                            selectable
+                          >
+                            {twoFactorSetup.otpauthUri}
+                          </Text>
+                          <TouchableOpacity
+                            style={[
+                              styles.saveButton,
+                              {
+                                padding: 8,
+                                marginTop: 4,
+                                flexDirection: "row",
+                                gap: 6,
+                                justifyContent: "center",
+                              },
+                            ]}
+                            onPress={async () => {
+                              await Clipboard.setStringAsync(
+                                twoFactorSetup.otpauthUri,
+                              );
+                              feedbackService.success(
+                                "Setup URI copied to clipboard!",
+                              );
+                            }}
+                          >
+                            <Ionicons
+                              name="copy-outline"
+                              size={16}
+                              color={colors.buttonPrimaryText}
+                            />
+                            <Text
+                              style={[styles.saveButtonText, { fontSize: 12 }]}
+                            >
+                              Copy Setup URI
                             </Text>
                           </TouchableOpacity>
-                        );
-                      },
-                    )}
-                  </View>
-                </View>
-              )}
 
-              {/* Subscription & Plan */}
-              <SettingRow
-                icon="card-outline"
-                title="Subscription & Plan"
-                subtitle="Manage billing status and storage upgrades"
-                isActive={activeTab === "subscription"}
-                onPress={() =>
-                  setActiveTab(
-                    activeTab === "subscription" ? "none" : "subscription",
-                  )
-                }
-              />
-              {activeTab === "subscription" && (
-                <View style={styles.expandedSection}>
-                  <SubscriptionView
-                    planName={user?.subscription.planName || "Free"}
-                    renewalDate={user?.subscription.renewalDate || "N/A"}
-                    storageUsed={user?.subscription.storageUsed || 0}
-                    storageTotal={user?.subscription.storageTotal || 50}
+                          <TextInput
+                            style={[styles.input, { marginTop: 12 }]}
+                            placeholder="Enter 6-digit code"
+                            placeholderTextColor="#9CA3AF"
+                            keyboardType="number-pad"
+                            maxLength={6}
+                            value={twoFactorCode}
+                            onChangeText={(value) =>
+                              setTwoFactorCode(
+                                value.replace(/\D/g, "").slice(0, 6),
+                              )
+                            }
+                          />
+                          <TouchableOpacity
+                            style={styles.verifyButton}
+                            onPress={handleVerify2FA}
+                            disabled={verifying2FA}
+                          >
+                            {verifying2FA ? (
+                              <ActivityIndicator
+                                color={colors.buttonPrimaryText}
+                              />
+                            ) : (
+                              <Text style={styles.saveButtonText}>
+                                Verify & Enable 2FA
+                              </Text>
+                            )}
+                          </TouchableOpacity>
+                        </View>
+                      )}
+
+                      {twoFactor && recoveryCodes && (
+                        <View style={styles.totpSetupContainer}>
+                          <Text style={styles.totpInstructions}>
+                            Save these recovery codes in a secure location. Each
+                            code can only be used once. They will not be shown
+                            again after leaving this screen.
+                          </Text>
+                          <Text style={styles.totpUriText} selectable>
+                            {recoveryCodes.join("\n")}
+                          </Text>
+                        </View>
+                      )}
+
+                      {twoFactor && (
+                        <View style={styles.totpSetupContainer}>
+                          <Text style={styles.totpInstructions}>
+                            To disable 2FA, confirm your current password and
+                            provide either an authenticator code or an unused
+                            recovery code.
+                          </Text>
+
+                          <TextInput
+                            style={styles.input}
+                            placeholder="Current password"
+                            placeholderTextColor="#9CA3AF"
+                            secureTextEntry
+                            value={twoFactorDisablePassword}
+                            onChangeText={setTwoFactorDisablePassword}
+                          />
+
+                          <View style={styles.rowBetween}>
+                            <TouchableOpacity
+                              style={styles.verifyButton}
+                              onPress={() => {
+                                setTwoFactorDisableMode("totp");
+                                setTwoFactorDisableCode("");
+                              }}
+                            >
+                              <Text style={styles.saveButtonText}>
+                                Authenticator
+                              </Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={styles.verifyButton}
+                              onPress={() => {
+                                setTwoFactorDisableMode("recovery");
+                                setTwoFactorDisableCode("");
+                              }}
+                            >
+                              <Text style={styles.saveButtonText}>
+                                Recovery Code
+                              </Text>
+                            </TouchableOpacity>
+                          </View>
+
+                          <TextInput
+                            style={styles.input}
+                            placeholder={
+                              twoFactorDisableMode === "totp"
+                                ? "6-digit authenticator code"
+                                : "32-character recovery code"
+                            }
+                            placeholderTextColor="#9CA3AF"
+                            keyboardType={
+                              twoFactorDisableMode === "totp"
+                                ? "number-pad"
+                                : "default"
+                            }
+                            autoCapitalize="characters"
+                            maxLength={twoFactorDisableMode === "totp" ? 6 : 32}
+                            value={twoFactorDisableCode}
+                            onChangeText={(value) =>
+                              setTwoFactorDisableCode(
+                                twoFactorDisableMode === "totp"
+                                  ? value.replace(/\D/g, "").slice(0, 6)
+                                  : value
+                                      .replace(/[^a-fA-F0-9]/g, "")
+                                      .toUpperCase()
+                                      .slice(0, 32),
+                              )
+                            }
+                          />
+
+                          <TouchableOpacity
+                            style={styles.verifyButton}
+                            onPress={handleDisable2FA}
+                            disabled={disabling2FA}
+                          >
+                            {disabling2FA ? (
+                              <ActivityIndicator
+                                color={colors.buttonPrimaryText}
+                              />
+                            ) : (
+                              <Text style={styles.saveButtonText}>
+                                Disable 2FA
+                              </Text>
+                            )}
+                          </TouchableOpacity>
+                        </View>
+                      )}
+
+                      <Text style={[styles.sectionSubtitle, { marginTop: 15 }]}>
+                        Device Biometrics ({biometric.type.toUpperCase()})
+                      </Text>
+                      <View style={styles.rowBetween}>
+                        <Text style={styles.label}>
+                          Use {biometric.type} for Login
+                        </Text>
+                        <Switch
+                          disabled={!biometric.available || !biometric.enrolled}
+                          value={biometric.enabled}
+                          onValueChange={handleToggleBiometric}
+                        />
+                      </View>
+
+                      <Text style={[styles.sectionSubtitle, { marginTop: 15 }]}>
+                        App Protection
+                      </Text>
+                      <View style={styles.rowBetween}>
+                        <Text style={styles.label}>
+                          Require App Lock on Startup
+                        </Text>
+                        <Switch
+                          value={appLockEnabled}
+                          onValueChange={handleToggleAppLock}
+                        />
+                      </View>
+
+                      {!biometric.enrolled && (
+                        <Text style={styles.warningText}>
+                          Biometrics not enrolled on device settings.
+                        </Text>
+                      )}
+
+                      <TouchableOpacity
+                        style={[styles.saveButton, { marginTop: 20 }]}
+                        onPress={handleSaveSecurity}
+                        disabled={savingSecurity}
+                      >
+                        {savingSecurity ? (
+                          <ActivityIndicator color={colors.buttonPrimaryText} />
+                        ) : (
+                          <Text style={styles.saveButtonText}>
+                            Save Security Changes
+                          </Text>
+                        )}
+                      </TouchableOpacity>
+
+                      <Text style={[styles.sectionSubtitle, { marginTop: 20 }]}>
+                        Active Login Sessions
+                      </Text>
+                      {loadingSessions ? (
+                        <ActivityIndicator color={colors.primary} />
+                      ) : loginSessions.length === 0 ? (
+                        <Text style={styles.emptySessionText}>
+                          No active sessions found.
+                        </Text>
+                      ) : (
+                        loginSessions.map((session) => (
+                          <View key={session.id} style={styles.sessionRow}>
+                            <View>
+                              <Text style={styles.sessionDevice}>
+                                {session.device || "Unknown Device"} (
+                                {session.browser || "Browser"})
+                              </Text>
+                              <Text style={styles.sessionMeta}>
+                                {session.location || "Unknown Location"} Â·{" "}
+                                {session.lastActive || "Recently"}
+                              </Text>
+                            </View>
+                            {!session.current && (
+                              <TouchableOpacity
+                                onPress={() => revokeSession(session.id)}
+                              >
+                                <Text style={styles.revokeText}>Revoke</Text>
+                              </TouchableOpacity>
+                            )}
+                          </View>
+                        ))
+                      )}
+                    </View>
+                  )}
+
+                  {/* Notifications */}
+                  <SettingRow
+                    colors={colors}
+                    styles={styles}
+                    icon="notifications-outline"
+                    title="Notifications"
+                    subtitle="Manage push alerts, email digests, and lead times"
+                    isActive={activeTab === "notifications"}
+                    onPress={() =>
+                      setActiveTab(
+                        activeTab === "notifications"
+                          ? "none"
+                          : "notifications",
+                      )
+                    }
+                  />
+                  {activeTab === "notifications" && (
+                    <View style={styles.expandedSection}>
+                      <View style={styles.rowBetween}>
+                        <Text style={styles.label}>Email Alerts</Text>
+                        <Switch
+                          value={notifyEmail}
+                          onValueChange={(value) =>
+                            handleNotificationPreferenceChange(
+                              "notifyEmail",
+                              value,
+                            )
+                          }
+                        />
+                      </View>
+                      <View style={styles.rowBetween}>
+                        <Text style={styles.label}>Push Notifications</Text>
+                        <Switch
+                          value={notifyPush}
+                          onValueChange={(value) =>
+                            handleNotificationPreferenceChange(
+                              "notifyPush",
+                              value,
+                            )
+                          }
+                        />
+                      </View>
+                      <View style={styles.rowBetween}>
+                        <Text style={styles.label}>
+                          Document Expiry Reminders
+                        </Text>
+                        <Switch
+                          value={notifyExpiry}
+                          onValueChange={(value) =>
+                            handleNotificationPreferenceChange(
+                              "notifyExpiry",
+                              value,
+                            )
+                          }
+                        />
+                      </View>
+                      <Text style={styles.inputLabel}>
+                        Alert Lead Time (Days Before Expiry)
+                      </Text>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="30"
+                        placeholderTextColor="#9CA3AF"
+                        keyboardType="numeric"
+                        value={expiryLeadDays}
+                        onChangeText={setExpiryLeadDays}
+                        onEndEditing={() => {
+                          void handleExpiryLeadDaysSave();
+                        }}
+                      />
+                    </View>
+                  )}
+
+                  {/* Document Preferences */}
+                  <SettingRow
+                    colors={colors}
+                    styles={styles}
+                    icon="document-text-outline"
+                    title="Document Preferences"
+                    subtitle="Auto-scan settings, sorting preferences, defaults"
+                    isActive={activeTab === "documents"}
+                    onPress={() =>
+                      setActiveTab(
+                        activeTab === "documents" ? "none" : "documents",
+                      )
+                    }
+                  />
+                  {activeTab === "documents" && (
+                    <View style={styles.expandedSection}>
+                      <View style={styles.rowBetween}>
+                        <Text style={styles.label}>
+                          Auto-Scan Document Edges
+                        </Text>
+                        <Switch
+                          value={docPreferences.autoScan}
+                          onValueChange={(val) =>
+                            setDocPreferences({
+                              ...docPreferences,
+                              autoScan: val,
+                            })
+                          }
+                        />
+                      </View>
+                      <View style={styles.rowBetween}>
+                        <Text style={styles.label}>
+                          AI Auto-Categorize Documents
+                        </Text>
+                        <Switch
+                          value={docPreferences.autoCategorize}
+                          onValueChange={(val) =>
+                            setDocPreferences({
+                              ...docPreferences,
+                              autoCategorize: val,
+                            })
+                          }
+                        />
+                      </View>
+                      <Text style={styles.inputLabel}>
+                        Default Expiry Buffer (Days)
+                      </Text>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="30"
+                        placeholderTextColor="#9CA3AF"
+                        keyboardType="number-pad"
+                        value={String(docPreferences.expiryReminderDays)}
+                        onChangeText={(val) =>
+                          setDocPreferences({
+                            ...docPreferences,
+                            expiryReminderDays: val === "" ? 30 : Number(val),
+                          })
+                        }
+                      />
+                    </View>
+                  )}
+
+                  {/* Appearance */}
+                  <SettingRow
+                    colors={colors}
+                    styles={styles}
+                    icon="color-palette-outline"
+                    title="Appearance"
+                    subtitle={`Theme selection (${themeMode === "system" ? "System" : themeMode === "light" ? "Light" : "Dark"})`}
+                    isActive={activeTab === "appearance"}
+                    onPress={() =>
+                      setActiveTab(
+                        activeTab === "appearance" ? "none" : "appearance",
+                      )
+                    }
+                  />
+
+                  {activeTab === "appearance" && (
+                    <View style={styles.expandedSection}>
+                      <Text style={styles.inputLabel}>Theme Selector</Text>
+
+                      <View style={styles.selectorRow}>
+                        {(["system", "light", "dark"] as ThemeMode[]).map(
+                          (themeOption) => {
+                            const selected = themeMode === themeOption;
+
+                            return (
+                              <TouchableOpacity
+                                key={themeOption}
+                                accessibilityRole="button"
+                                accessibilityState={{ selected }}
+                                style={[
+                                  styles.selectorChip,
+                                  selected && styles.selectorChipActive,
+                                ]}
+                                onPress={async () => {
+                                  try {
+                                    await setThemeMode(themeOption);
+
+                                    feedbackService.success(
+                                      `Theme updated to ${themeOption.toUpperCase()}`,
+                                    );
+                                  } catch {
+                                    feedbackService.error(
+                                      "Unable to update theme. Please try again.",
+                                    );
+                                  }
+                                }}
+                              >
+                                <Text
+                                  style={[
+                                    styles.selectorChipText,
+                                    selected && styles.selectorChipTextActive,
+                                  ]}
+                                >
+                                  {themeOption.toUpperCase()}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          },
+                        )}
+                      </View>
+                    </View>
+                  )}
+
+                  {/* Backup & Restore */}
+                  <SettingRow
+                    colors={colors}
+                    styles={styles}
+                    icon="shield-checkmark-outline"
+                    title="Backup & Restore"
+                    subtitle="Export or restore your document and reminder records"
+                    isActive={activeTab === "backup"}
+                    onPress={() =>
+                      setActiveTab(activeTab === "backup" ? "none" : "backup")
+                    }
+                  />
+                  {activeTab === "backup" && (
+                    <View style={styles.expandedSection}>
+                      <Text style={styles.sectionSubtitle}>
+                        Create a portable backup of your document and reminder
+                        metadata, or restore records from a previously exported
+                        DocuGuard backup.
+                      </Text>
+                      <Text
+                        style={{
+                          fontSize: 11,
+                          color: colors.textSecondary,
+                          marginTop: 4,
+                        }}
+                      >
+                        Document files and attachments are not included.
+                        Restored records remain local and are not automatically
+                        uploaded to the cloud.
+                      </Text>
+                      <TouchableOpacity
+                        style={[styles.saveButton, { marginTop: 16 }]}
+                        onPress={exportLocalBackup}
+                        accessibilityRole="button"
+                        accessibilityLabel="Export local backup"
+                      >
+                        <Ionicons
+                          name="download-outline"
+                          size={18}
+                          color={colors.buttonPrimaryText}
+                        />
+                        <Text style={styles.saveButtonText}>Export Backup</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.saveButton, { marginTop: 10 }]}
+                        onPress={importLocalBackup}
+                        accessibilityRole="button"
+                        accessibilityLabel="Import local backup"
+                      >
+                        <Ionicons
+                          name="cloud-download-outline"
+                          size={18}
+                          color={colors.buttonPrimaryText}
+                        />
+                        <Text style={styles.saveButtonText}>Import Backup</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+
+                  {/* Subscription & Plan */}
+                  <SettingRow
+                    colors={colors}
+                    styles={styles}
+                    icon="card-outline"
+                    title="Subscription & Plan"
+                    subtitle="Manage billing status and storage upgrades"
+                    isActive={activeTab === "subscription"}
+                    onPress={() =>
+                      setActiveTab(
+                        activeTab === "subscription" ? "none" : "subscription",
+                      )
+                    }
+                  />
+                  {activeTab === "subscription" && (
+                    <View style={styles.expandedSection}>
+                      <SubscriptionView
+                        planName={user?.subscription.planName || "Free"}
+                        renewalDate={user?.subscription.renewalDate || "N/A"}
+                        storageUsed={user?.subscription.storageUsed || 0}
+                        storageTotal={user?.subscription.storageTotal || 50}
+                      />
+                    </View>
+                  )}
+
+                  {/* Sign Out Row */}
+                  <SettingRow
+                    colors={colors}
+                    styles={styles}
+                    icon="log-out-outline"
+                    title="Sign Out"
+                    subtitle="Log out safely from your account session"
+                    isActive={false}
+                    onPress={handleSignOut}
+                    isDestructive={false}
+                  />
+
+                  {/* Delete Account Row */}
+                  <SettingRow
+                    colors={colors}
+                    styles={styles}
+                    icon="trash-outline"
+                    title="Delete Account"
+                    subtitle="Permanently erase your vault and data records"
+                    isActive={false}
+                    onPress={() => {
+                      setCountdown(10);
+                      setDeleteStep(1);
+                      setDeletePassword("");
+                      setDeleteModalVisible(true);
+                    }}
+                    isDestructive={true}
                   />
                 </View>
-              )}
-
-              {/* Sign Out Row */}
-              <SettingRow
-                icon="log-out-outline"
-                title="Sign Out"
-                subtitle="Log out safely from your account session"
-                isActive={false}
-                onPress={handleSignOut}
-                isDestructive={false}
-              />
-
-              {/* Delete Account Row */}
-              <SettingRow
-                icon="trash-outline"
-                title="Delete Account"
-                subtitle="Permanently erase your vault and data records"
-                isActive={false}
-                onPress={() => {
-                  setCountdown(10);
-                  setDeleteStep(1);
-                  setDeletePassword("");
-                  setDeleteModalVisible(true);
-                }}
-                isDestructive={true}
-              />
-            </View>
+              </>
+            )}
           </ScrollView>
         </RefreshableContainer>
       </KeyboardAvoidingView>
+
+      {/* --- Searchable Dropdown Modal for Occupation --- */}
+      <Modal
+        visible={dropdownVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setDropdownVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContainer, { height: "70%" }]}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>Select What You Do</Text>
+              <TouchableOpacity onPress={() => setDropdownVisible(false)}>
+                <Ionicons name="close" size={24} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Search Bar inside Modal */}
+            <View style={styles.modalSearchContainer}>
+              <Ionicons
+                name="search"
+                size={18}
+                color={colors.textSecondary}
+                style={{ marginRight: 8 }}
+              />
+              <TextInput
+                style={styles.modalSearchInput}
+                placeholder="Search occupation..."
+                placeholderTextColor="#9CA3AF"
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                clearButtonMode="while-editing"
+              />
+            </View>
+
+            {/* List of Occupations */}
+            <FlatList
+              data={filteredOccupations}
+              keyExtractor={(item) => item}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={styles.dropdownItemRow}
+                  onPress={() => {
+                    if (item === "Others") {
+                      setIsCustomOccupation(true);
+                      setPersonalInfo({ ...personalInfo, occupation: "" });
+                    } else {
+                      setIsCustomOccupation(false);
+                      setPersonalInfo({ ...personalInfo, occupation: item });
+                    }
+                    setSearchQuery("");
+                    setDropdownVisible(false);
+                  }}
+                >
+                  <Text
+                    style={[
+                      styles.dropdownItemText,
+                      personalInfo.occupation === item && {
+                        color: colors.primary,
+                        fontWeight: "700",
+                      },
+                    ]}
+                  >
+                    {item}
+                  </Text>
+                  {personalInfo.occupation === item && (
+                    <Ionicons
+                      name="checkmark"
+                      size={18}
+                      color={colors.primary}
+                    />
+                  )}
+                </TouchableOpacity>
+              )}
+              ListEmptyComponent={
+                <Text style={styles.emptySessionText}>
+                  No occupations found. Choose "Others" to input manually.
+                </Text>
+              }
+            />
+          </View>
+        </View>
+      </Modal>
 
       {/* Account Deletion Modal (2 Layers) */}
       <Modal
@@ -1456,8 +2087,8 @@ export default function ProfileScreen() {
           <View style={styles.modalContainer}>
             <Text style={styles.modalTitle}>
               {deleteStep === 1
-                ? "⚠️ Permanent Account Deletion"
-                : "🔒 Verify Your Password"}
+                ? "âš ï¸ Permanent Account Deletion"
+                : "ðŸ”’ Verify Your Password"}
             </Text>
 
             {deleteStep === 1 ? (
@@ -1519,7 +2150,7 @@ export default function ProfileScreen() {
                     disabled={deletingAccount}
                   >
                     {deletingAccount ? (
-                      <ActivityIndicator color="#fff" />
+                      <ActivityIndicator color={colors.buttonPrimaryText} />
                     ) : (
                       <Text style={styles.dangerBtnText}>
                         Delete Permanently
@@ -1536,229 +2167,316 @@ export default function ProfileScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.background },
-  scrollContent: { padding: 16 },
-  headerContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 20,
-  },
-  uniqueAvatarContainer: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: COLORS.primary,
-    justifyContent: "center",
-    alignItems: "center",
-    overflow: "hidden",
-  },
-  abstractShape: { position: "absolute" },
-  shape1: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: "rgba(255,255,255,0.2)",
-    top: -5,
-    left: -5,
-  },
-  shape2: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "rgba(255,255,255,0.1)",
-    bottom: -10,
-    right: -10,
-  },
-  shape3: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: "rgba(255,255,255,0.15)",
-    top: 15,
-    right: 10,
-  },
-  avatarInitials: { color: "#fff", fontSize: 20, fontWeight: "bold" },
-  headerTextContainer: { marginLeft: 15, flex: 1 },
-  userName: { fontSize: 18, fontWeight: "bold", color: COLORS.text },
-  userEmail: { fontSize: 14, color: COLORS.textSecondary, marginBottom: 4 },
-  badgeContainer: { flexDirection: "row", gap: 10 },
-  badgeText: { fontSize: 12, color: COLORS.primary, fontWeight: "600" },
-  serialText: { fontSize: 12, color: COLORS.textSecondary },
-  storageCard: { marginBottom: 20, padding: 16 },
-  storageHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 8,
-  },
-  storageTitle: {
-    fontSize: 16,
-    fontWeight: "600",
-    marginLeft: 8,
-    color: COLORS.text,
-  },
-  storageDetails: {
-    fontSize: 14,
-    color: COLORS.textSecondary,
-    marginBottom: 8,
-  },
-  progressBarBackground: {
-    height: 8,
-    backgroundColor: COLORS.border,
-    borderRadius: 4,
-    overflow: "hidden",
-  },
-  progressBarFill: { height: "100%", backgroundColor: COLORS.primary },
-  sectionsContainer: { gap: 10 },
-  settingRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: 16,
-    backgroundColor: COLORS.surface,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  activeSettingRow: { borderColor: COLORS.primary },
-  settingInfo: { flex: 1, marginLeft: 12, marginRight: 12 },
-  settingTitle: { fontSize: 16, fontWeight: "500", color: COLORS.text },
-  settingSubtitle: { fontSize: 13, color: COLORS.textSecondary, marginTop: 2 },
-  expandedSection: {
-    padding: 16,
-    backgroundColor: COLORS.surface,
-    borderRadius: 12,
-    marginTop: -6,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  inputLabel: {
-    fontSize: 14,
-    fontWeight: "500",
-    color: COLORS.text,
-    marginBottom: 6,
-    marginTop: 10,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 14,
-    color: COLORS.text,
-    backgroundColor: COLORS.background,
-    marginBottom: 12,
-  },
-  saveButton: {
-    backgroundColor: COLORS.primary,
-    padding: 12,
-    borderRadius: 8,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  saveButtonText: { color: "#fff", fontSize: 14, fontWeight: "600" },
-  sectionSubtitle: {
-    fontSize: 15,
-    fontWeight: "600",
-    color: COLORS.text,
-    marginBottom: 8,
-  },
-  rowBetween: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginVertical: 8,
-  },
-  label: { fontSize: 14, color: COLORS.text },
-  totpSetupContainer: {
-    marginTop: 10,
-    padding: 12,
-    backgroundColor: COLORS.background,
-    borderRadius: 8,
-  },
-  totpInstructions: {
-    fontSize: 13,
-    color: COLORS.textSecondary,
-    marginBottom: 6,
-  },
-  totpUriText: { fontSize: 12, color: COLORS.primary, marginBottom: 10 },
-  verifyButton: {
-    backgroundColor: COLORS.secondary || COLORS.primary,
-    padding: 10,
-    borderRadius: 6,
-    alignItems: "center",
-  },
-  warningText: { fontSize: 12, color: COLORS.danger, marginTop: 4 },
-  sessionRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-  },
-  sessionDevice: { fontSize: 14, fontWeight: "500", color: COLORS.text },
-  sessionMeta: { fontSize: 12, color: COLORS.textSecondary },
-  emptySessionText: {
-    fontSize: 13,
-    color: COLORS.textSecondary,
-    fontStyle: "italic",
-    marginVertical: 6,
-  },
-  revokeText: { fontSize: 13, color: COLORS.danger, fontWeight: "600" },
-  selectorRow: { flexDirection: "row", gap: 10, marginTop: 6 },
-  selectorChip: {
-    flex: 1,
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 8,
-    alignItems: "center",
-  },
-  selectorChipActive: {
-    backgroundColor: COLORS.primary,
-    borderColor: COLORS.primary,
-  },
-  selectorChipText: { fontSize: 12, fontWeight: "600", color: COLORS.text },
-  selectorChipTextActive: { color: "#fff" },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.6)",
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 20,
-  },
-  modalContainer: {
-    width: "100%",
-    maxWidth: 380,
-    backgroundColor: COLORS.surface,
-    borderRadius: 16,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: COLORS.text,
-    marginBottom: 10,
-  },
-  modalBody: {
-    fontSize: 14,
-    color: COLORS.textSecondary,
-    lineHeight: 20,
-    marginBottom: 15,
-  },
-  countdownText: {
-    fontSize: 13,
-    color: COLORS.danger,
-    fontWeight: "600",
-    marginBottom: 15,
-  },
-  modalButtonRow: { flexDirection: "row", gap: 10, justifyContent: "flex-end" },
-  modalBtn: { paddingVertical: 10, paddingHorizontal: 16, borderRadius: 8 },
-  cancelBtn: { backgroundColor: COLORS.border },
-  cancelBtnText: { color: COLORS.text, fontWeight: "600" },
-  dangerBtn: { backgroundColor: COLORS.danger },
-  dangerBtnText: { color: "#fff", fontWeight: "600" },
-});
+const createStyles = (COLORS: ColorScheme) =>
+  StyleSheet.create({
+    container: { flex: 1, backgroundColor: COLORS.background },
+    scrollContent: { padding: 16 },
+    headerContainer: {
+      flexDirection: "row",
+      alignItems: "center",
+      marginBottom: 20,
+    },
+    uniqueAvatarContainer: {
+      width: 60,
+      height: 60,
+      borderRadius: 30,
+      backgroundColor: COLORS.primary,
+      justifyContent: "center",
+      alignItems: "center",
+      overflow: "hidden",
+    },
+    abstractShape: { position: "absolute" },
+    shape1: {
+      width: 30,
+      height: 30,
+      borderRadius: 15,
+      backgroundColor: "rgba(255,255,255,0.2)",
+      top: -5,
+      left: -5,
+    },
+    shape2: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      backgroundColor: "rgba(255,255,255,0.1)",
+      bottom: -10,
+      right: -10,
+    },
+    shape3: {
+      width: 20,
+      height: 20,
+      borderRadius: 10,
+      backgroundColor: "rgba(255,255,255,0.15)",
+      top: 15,
+      right: 10,
+    },
+    avatarInitials: {
+      color: COLORS.buttonPrimaryText,
+      fontSize: 20,
+      fontWeight: "bold",
+    },
+    headerTextContainer: { marginLeft: 15, flex: 1 },
+    userName: { fontSize: 18, fontWeight: "bold", color: COLORS.text },
+    userEmail: { fontSize: 14, color: COLORS.textSecondary, marginBottom: 4 },
+    badgeContainer: { flexDirection: "row", gap: 10 },
+    badgeText: { fontSize: 12, color: COLORS.primary, fontWeight: "600" },
+    serialText: { fontSize: 12, color: COLORS.textSecondary },
+    storageCard: { marginBottom: 20, padding: 16 },
+    storageHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      marginBottom: 8,
+    },
+    occupationBadge: {
+      flexDirection: "row",
+      alignItems: "center",
+      alignSelf: "flex-start",
+      backgroundColor: COLORS.surface,
+      borderWidth: 1,
+      borderColor: COLORS.primary,
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      borderRadius: 6,
+      marginBottom: 6,
+      marginTop: 2,
+    },
+    occupationText: {
+      fontSize: 12,
+      fontWeight: "600",
+      color: COLORS.primary,
+    },
+    storageTitle: {
+      fontSize: 16,
+      fontWeight: "600",
+      marginLeft: 8,
+      color: COLORS.text,
+    },
+    storageDetails: {
+      fontSize: 14,
+      color: COLORS.textSecondary,
+      marginBottom: 8,
+    },
+    progressBarBackground: {
+      height: 8,
+      backgroundColor: COLORS.border,
+      borderRadius: 4,
+      overflow: "hidden",
+    },
+    progressBarFill: { height: "100%", backgroundColor: COLORS.primary },
+    sectionsContainer: { gap: 10 },
+    settingRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      padding: 16,
+      backgroundColor: COLORS.surface,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: COLORS.border,
+    },
+    activeSettingRow: { borderColor: COLORS.primary },
+    settingInfo: { flex: 1, marginLeft: 12, marginRight: 12 },
+    settingTitle: { fontSize: 16, fontWeight: "500", color: COLORS.text },
+    settingSubtitle: {
+      fontSize: 13,
+      color: COLORS.textSecondary,
+      marginTop: 2,
+    },
+    expandedSection: {
+      padding: 16,
+      backgroundColor: COLORS.surface,
+      borderRadius: 12,
+      marginTop: -6,
+      marginBottom: 10,
+      borderWidth: 1,
+      borderColor: COLORS.border,
+    },
+    inputLabel: {
+      fontSize: 14,
+      fontWeight: "500",
+      color: COLORS.text,
+      marginBottom: 6,
+      marginTop: 10,
+    },
+    input: {
+      borderWidth: 1,
+      borderColor: COLORS.border,
+      borderRadius: 8,
+      padding: 12,
+      fontSize: 14,
+      color: COLORS.text,
+      backgroundColor: COLORS.background,
+      marginBottom: 12,
+    },
+    dropdownSelectorButton: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      borderWidth: 1,
+      borderColor: COLORS.border,
+      borderRadius: 8,
+      padding: 12,
+      backgroundColor: COLORS.background,
+      marginBottom: 12,
+    },
+    dropdownSelectorText: {
+      fontSize: 14,
+      color: COLORS.text,
+    },
+    modalHeaderRow: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      marginBottom: 12,
+    },
+    modalSearchContainer: {
+      flexDirection: "row",
+      alignItems: "center",
+      borderWidth: 1,
+      borderColor: COLORS.border,
+      borderRadius: 8,
+      paddingHorizontal: 10,
+      backgroundColor: COLORS.background,
+      marginBottom: 12,
+    },
+    modalSearchInput: {
+      flex: 1,
+      paddingVertical: 10,
+      fontSize: 14,
+      color: COLORS.text,
+    },
+    dropdownItemRow: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      paddingVertical: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: COLORS.border,
+    },
+    dropdownItemText: {
+      fontSize: 14,
+      color: COLORS.text,
+    },
+    saveButton: {
+      backgroundColor: COLORS.primary,
+      padding: 12,
+      borderRadius: 8,
+      alignItems: "center",
+      justifyContent: "center",
+      marginTop: 10,
+    },
+    saveButtonText: {
+      color: COLORS.buttonPrimaryText,
+      fontSize: 14,
+      fontWeight: "600",
+    },
+    sectionSubtitle: {
+      fontSize: 15,
+      fontWeight: "600",
+      color: COLORS.text,
+      marginBottom: 8,
+    },
+    rowBetween: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      marginVertical: 8,
+    },
+    label: { fontSize: 14, color: COLORS.text },
+    totpSetupContainer: {
+      marginTop: 10,
+      padding: 12,
+      backgroundColor: COLORS.background,
+      borderRadius: 8,
+    },
+    totpInstructions: {
+      fontSize: 13,
+      color: COLORS.textSecondary,
+      marginBottom: 6,
+    },
+    totpUriText: { fontSize: 12, color: COLORS.primary, marginBottom: 10 },
+    verifyButton: {
+      backgroundColor: COLORS.primary,
+      padding: 10,
+      borderRadius: 6,
+      alignItems: "center",
+    },
+    warningText: { fontSize: 12, color: COLORS.error, marginTop: 4 },
+    sessionRow: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      paddingVertical: 8,
+      borderBottomWidth: 1,
+      borderBottomColor: COLORS.border,
+    },
+    sessionDevice: { fontSize: 14, fontWeight: "500", color: COLORS.text },
+    sessionMeta: { fontSize: 12, color: COLORS.textSecondary },
+    emptySessionText: {
+      fontSize: 13,
+      color: COLORS.textSecondary,
+      fontStyle: "italic",
+      marginVertical: 6,
+      textAlign: "center",
+      marginTop: 20,
+    },
+    revokeText: { fontSize: 13, color: COLORS.error, fontWeight: "600" },
+    selectorRow: { flexDirection: "row", gap: 10, marginTop: 6 },
+    selectorChip: {
+      flex: 1,
+      paddingVertical: 10,
+      borderWidth: 1,
+      borderColor: COLORS.border,
+      borderRadius: 8,
+      alignItems: "center",
+    },
+    selectorChipActive: {
+      backgroundColor: COLORS.primary,
+      borderColor: COLORS.primary,
+    },
+    selectorChipText: { fontSize: 12, fontWeight: "600", color: COLORS.text },
+    selectorChipTextActive: { color: COLORS.buttonPrimaryText },
+    modalOverlay: {
+      flex: 1,
+      backgroundColor: COLORS.modalOverlay,
+      justifyContent: "center",
+      alignItems: "center",
+      padding: 20,
+    },
+    modalContainer: {
+      width: "100%",
+      maxWidth: 380,
+      backgroundColor: COLORS.surface,
+      borderRadius: 16,
+      padding: 20,
+      borderWidth: 1,
+      borderColor: COLORS.border,
+    },
+    modalTitle: {
+      fontSize: 18,
+      fontWeight: "700",
+      color: COLORS.text,
+      marginBottom: 10,
+    },
+    modalBody: {
+      fontSize: 14,
+      color: COLORS.textSecondary,
+      lineHeight: 20,
+      marginBottom: 15,
+    },
+    countdownText: {
+      fontSize: 13,
+      color: COLORS.error,
+      fontWeight: "600",
+      marginBottom: 15,
+    },
+    modalButtonRow: {
+      flexDirection: "row",
+      gap: 10,
+      justifyContent: "flex-end",
+    },
+    modalBtn: { paddingVertical: 10, paddingHorizontal: 16, borderRadius: 8 },
+    cancelBtn: { backgroundColor: COLORS.border },
+    cancelBtnText: { color: COLORS.text, fontWeight: "600" },
+    dangerBtn: { backgroundColor: COLORS.error },
+    dangerBtnText: { color: COLORS.buttonPrimaryText, fontWeight: "600" },
+  });

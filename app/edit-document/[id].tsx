@@ -741,7 +741,11 @@ export default function EditDocumentScreen() {
         schemaPayload.issueDate = values.issueDate;
       }
 
-      if (changed("expiryDate") && values.expiryDate && values.expiryDate.trim()) {
+      if (
+        changed("expiryDate") &&
+        values.expiryDate &&
+        values.expiryDate.trim()
+      ) {
         schemaPayload.expiryDate = values.expiryDate;
       }
 
@@ -887,7 +891,11 @@ export default function EditDocumentScreen() {
       await updateDocument(numericId, payload);
       localSaveSuccessful = true;
 
-      if (!useLocalData) {
+      // A local row can still represent a cloud-backed document. Decide
+      // whether to sync from its cloud ID, not from which copy was used to
+      // populate the form. Otherwise, editing a locally cached cloud document
+      // silently skips the server update.
+      if (cloudId !== null) {
         const token = await SecureStore.getItemAsync("userToken");
 
         if (!token) {
@@ -896,32 +904,25 @@ export default function EditDocumentScreen() {
           );
         }
 
-        if (cloudId) {
-          const cloudResponse = await api.documents.update(cloudId, payload);
+        const cloudResponse = await api.documents.update(cloudId, payload);
 
-          /*
-           * The server answers with the revision it just wrote. Storing it
-           * keeps the next push conflict aware: without it the client kept the
-           * revision from before the edit, so the next sync was always
-           * answered with a 409 and the document never left the pending queue.
-           *
-           * The revision is normalised first, because a value the server
-           * cannot compare would turn every later push into a false conflict.
-           */
-          const writtenRevision = canonicalizeServerRevision(
-            cloudResponse?.document?.updatedAt,
-          );
+        /*
+         * The server answers with the revision it just wrote. Storing it
+         * keeps the next push conflict aware: without it the client kept the
+         * revision from before the edit, so the next sync was always
+         * answered with a 409 and the document never left the pending queue.
+         *
+         * The revision is normalised first, because a value the server
+         * cannot compare would turn every later push into a false conflict.
+         */
+        const writtenRevision = canonicalizeServerRevision(
+          cloudResponse?.document?.updatedAt,
+        );
 
-          await markDocumentSyncedWithCloud(
-            numericId,
-            cloudId,
-            writtenRevision,
-          );
+        await markDocumentSyncedWithCloud(numericId, cloudId, writtenRevision);
 
-          setServerRevision(writtenRevision);
-
-          cloudSaveSuccessful = true;
-        }
+        setServerRevision(writtenRevision);
+        cloudSaveSuccessful = true;
       }
 
       const savedValues: EditDocumentValues = {
@@ -935,12 +936,11 @@ export default function EditDocumentScreen() {
       setErrors({});
       setTouched({});
 
-      if (cloudSaveSuccessful || useLocalData) {
+      if (cloudSaveSuccessful) {
         await feedbackService.confirm({
           title: "Changes Saved",
-          message: useLocalData
-            ? "Your document was updated on this device."
-            : "Your document was updated successfully.",
+          message:
+            "Your document was updated on this device and synchronized to your cloud vault.",
           confirmText: "OK",
           onConfirm: () => router.back(),
           onCancel: () => {},
@@ -966,7 +966,10 @@ export default function EditDocumentScreen() {
       const remindersAffected =
         payload.expiryDate !== undefined || payload.enableAlerts !== undefined;
 
-      if (remindersAffected && (cloudSaveSuccessful || useLocalData || localSaveSuccessful)) {
+      if (
+        remindersAffected &&
+        (cloudSaveSuccessful || useLocalData || localSaveSuccessful)
+      ) {
         try {
           /*
            * The lead time belongs to the document and is not part of the

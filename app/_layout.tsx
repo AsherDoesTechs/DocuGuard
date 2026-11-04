@@ -4,8 +4,8 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import * as SecureStore from "expo-secure-store";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as SplashScreenModule from "expo-splash-screen";
 
-import { usePushNotifications } from "../hooks/usePushNotifications";
 import { useAppLock, AppLockScreen } from "../hooks/useAppLock";
 import { initDatabase } from "../services/localDatabase";
 import { checkAndScheduleAlerts } from "../services/notificationScheduler";
@@ -14,21 +14,25 @@ import { syncWorker } from "@/services/syncWorker";
 import { AlertProvider } from "@/components/ui/AlertService";
 import { ThemeProvider } from "@/context/ThemeContext";
 import { ToastProvider } from "@/components/ui/ToastProvider";
+import PushNotificationToastBridge from "@/components/PushNotificationToastBridge";
 import SplashScreen from "@/components/ui/SplashScreen";
 import OnboardingScreen, {
   ONBOARDING_STORAGE_KEY,
 } from "@/components/ui/OnboardingScreen";
+import PrivacyConsentScreen, {
+  PRIVACY_CONSENT_STORAGE_KEY,
+  PRIVACY_NOTICE_VERSION,
+} from "@/components/ui/PrivacyConsentScreen";
 import { ENABLE_ONBOARDING } from "@/constants/featureFlags";
 
-type OnboardingStatus = "checking" | "needed" | "complete";
+SplashScreenModule.preventAutoHideAsync().catch(() => {});
+
+type StartupStep = "checking" | "privacy" | "onboarding" | "ready";
 
 export default function RootLayout() {
-  usePushNotifications();
-
   const router = useRouter();
 
-  const [onboardingStatus, setOnboardingStatus] =
-    useState<OnboardingStatus>("checking");
+  const [startupStep, setStartupStep] = useState<StartupStep>("checking");
   const [authChecked, setAuthChecked] = useState(false);
   const [databaseReady, setDatabaseReady] = useState(false);
   const [showSplash, setShowSplash] = useState(true);
@@ -44,42 +48,68 @@ export default function RootLayout() {
     setIsLocked,
   } = useAppLock();
 
-  // Check whether first-time onboarding should be displayed.
+  // Single strict waterfall check for Privacy -> Onboarding -> Ready
   useEffect(() => {
     let cancelled = false;
 
-    const checkOnboarding = async () => {
+    const checkStartupSequence = async () => {
       try {
-        if (!ENABLE_ONBOARDING) {
-          if (!cancelled) {
-            setOnboardingStatus("complete");
+        // --- Step 1: Check Privacy Consent ---
+        const storedPrivacy = await AsyncStorage.getItem(
+          PRIVACY_CONSENT_STORAGE_KEY,
+        );
+        let privacyAccepted = false;
+
+        if (storedPrivacy) {
+          try {
+            const record = JSON.parse(storedPrivacy);
+            privacyAccepted =
+              record?.noticeVersion === PRIVACY_NOTICE_VERSION &&
+              record?.noticeAcknowledged === true &&
+              record?.processingAgreed === true &&
+              typeof record?.acceptedAt === "string" &&
+              !Number.isNaN(Date.parse(record.acceptedAt));
+          } catch {
+            privacyAccepted = false;
           }
+        }
+
+        if (!privacyAccepted) {
+          if (!cancelled) setStartupStep("privacy");
           return;
         }
 
-        const completed = await AsyncStorage.getItem(ONBOARDING_STORAGE_KEY);
+        // --- Step 2: Check Onboarding (only if Privacy complete) ---
+        if (ENABLE_ONBOARDING) {
+          const completedOnboarding = await AsyncStorage.getItem(
+            ONBOARDING_STORAGE_KEY,
+          );
+          if (completedOnboarding !== "true") {
+            if (!cancelled) setStartupStep("onboarding");
+            return;
+          }
+        }
 
+        // --- Step 3: All prerequisites complete ---
         if (!cancelled) {
-          setOnboardingStatus(completed === "true" ? "complete" : "needed");
+          setStartupStep("ready");
         }
       } catch (error) {
-        console.warn("Failed to check onboarding status:", error);
-
+        console.warn("Failed to check startup sequence:", error);
         if (!cancelled) {
-          // Onboarding storage failure must not bypass authentication.
-          setOnboardingStatus("complete");
+          setStartupStep("privacy");
         }
       }
     };
 
-    void checkOnboarding();
+    void checkStartupSequence();
 
     return () => {
       cancelled = true;
     };
   }, []);
 
-  // Initialize the local database and schedule relevant alerts.
+  // Initialize the local database and background services
   useEffect(() => {
     let cancelled = false;
 
@@ -97,21 +127,11 @@ export default function RootLayout() {
           console.warn("Failed to schedule alerts:", error);
         }
 
-        /*
-         * Start the retry worker.
-         *
-         * Without it a document saved while offline stayed unsynchronised
-         * until the user happened to open the Cloud Sync screen and press
-         * "Sync now". The worker only pushes records that are already queued
-         * and never removes local data.
-         */
         syncWorker.start();
       } catch (error) {
         console.error("Failed to initialize local database:", error);
 
         if (!cancelled) {
-          // Prevent an initialization error from blocking startup forever.
-          // Database-dependent screens should still handle database errors.
           setDatabaseReady(true);
         }
       }
@@ -124,14 +144,16 @@ export default function RootLayout() {
     };
   }, []);
 
-  // Check authentication only after onboarding and the persisted-session
-  // startup check have completed.
+  // Hide system splash screen once checks settle
   useEffect(() => {
-    if (
-      onboardingStatus !== "complete" ||
-      !sessionCheckComplete ||
-      sessionExpired
-    ) {
+    if (databaseReady && startupStep !== "checking") {
+      SplashScreenModule.hideAsync().catch(() => {});
+    }
+  }, [databaseReady, startupStep]);
+
+  // Execute Auth routing only after startup checks reach "ready"
+  useEffect(() => {
+    if (startupStep !== "ready" || !sessionCheckComplete || sessionExpired) {
       return;
     }
 
@@ -164,12 +186,11 @@ export default function RootLayout() {
     return () => {
       cancelled = true;
     };
-  }, [onboardingStatus, sessionCheckComplete, sessionExpired, router]);
+  }, [startupStep, sessionCheckComplete, sessionExpired, router]);
 
-  // Handle session expiration in one place.
-  // Expired sessions must return to login, not the app-lock screen.
+  // Handle session expiration routing
   useEffect(() => {
-    if (!sessionExpired || onboardingStatus !== "complete") {
+    if (!sessionExpired || startupStep !== "ready") {
       return;
     }
 
@@ -179,39 +200,37 @@ export default function RootLayout() {
 
     router.replace("/(auth)/login" as any);
 
-    // The hook remains responsible for expiring and clearing the session.
-    // This resets the notification flag after requesting navigation.
     resetSessionExpired();
-  }, [
-    sessionExpired,
-    onboardingStatus,
-    router,
-    setIsLocked,
-    resetSessionExpired,
-  ]);
+  }, [sessionExpired, startupStep, router, setIsLocked, resetSessionExpired]);
 
   const isStartupLoading =
-    onboardingStatus === "checking" ||
+    startupStep === "checking" ||
     !databaseReady ||
-    (onboardingStatus === "complete" &&
-      (!sessionCheckComplete || !authChecked));
+    (startupStep === "ready" && (!sessionCheckComplete || !authChecked));
 
-  // Called when onboarding has finished.
+  const handlePrivacyComplete = useCallback(() => {
+    setAuthChecked(false);
+    setShowSplash(true);
+
+    // Verify if Onboarding is required immediately after Privacy Consent
+    AsyncStorage.getItem(ONBOARDING_STORAGE_KEY).then((completed) => {
+      if (ENABLE_ONBOARDING && completed !== "true") {
+        setStartupStep("onboarding");
+      } else {
+        setStartupStep("ready");
+      }
+    });
+  }, []);
+
   const handleOnboardingComplete = useCallback(() => {
     setAuthChecked(false);
     setShowSplash(true);
-    setOnboardingStatus("complete");
+    setStartupStep("ready");
   }, []);
 
-  // SplashScreen owns its animation and calls this when its exit
-  // animation finishes. It can safely dismiss the splash at that point.
   const handleSplashComplete = useCallback(() => {
     setShowSplash(false);
   }, []);
-
-  // If startup finishes after the splash animation callback has already
-  // fired, hide the splash once startup is ready. This avoids leaving a
-  // completed splash visible indefinitely.
 
   return (
     <ThemeProvider>
@@ -219,7 +238,18 @@ export default function RootLayout() {
         <SafeAreaProvider>
           <AlertProvider>
             <ToastProvider>
-              {onboardingStatus === "needed" ? (
+              {/* 
+                Enforced Waterfall Sequence: 
+                1. Checking / Loading -> SplashScreen
+                2. Privacy Consent incomplete -> PrivacyConsentScreen
+                3. Privacy complete, Onboarding incomplete -> OnboardingScreen
+                4. Prerequisites complete -> Stack & App Lock
+              */}
+              {startupStep === "checking" || !databaseReady ? (
+                <SplashScreen isLoading={true} onComplete={() => {}} />
+              ) : startupStep === "privacy" ? (
+                <PrivacyConsentScreen onComplete={handlePrivacyComplete} />
+              ) : startupStep === "onboarding" ? (
                 <OnboardingScreen onComplete={handleOnboardingComplete} />
               ) : (
                 <>
@@ -255,6 +285,14 @@ export default function RootLayout() {
                   )}
                 </>
               )}
+              <PushNotificationToastBridge
+                enabled={
+                  startupStep === "ready" &&
+                  !showSplash &&
+                  !isLocked &&
+                  !sessionExpired
+                }
+              />
             </ToastProvider>
           </AlertProvider>
         </SafeAreaProvider>

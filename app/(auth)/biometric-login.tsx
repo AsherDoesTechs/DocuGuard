@@ -17,7 +17,7 @@ import { useForm } from "../../hooks/useForm";
 import { COLORS } from "../../constants";
 import { useColors } from "@/context/ThemeContext";
 import { api } from "../../services/api";
-import { switchLocalUser } from "../../services/localDatabase";
+import { establishAuthenticatedSession } from "../../services/authSession";
 import {
   loginSchema,
   type LoginInput,
@@ -183,24 +183,44 @@ export default function BiometricLoginScreen() {
 
         const response = await api.auth.login(normalizedValues);
 
-        // Store the authentication token securely.
-        if (response?.token) {
-          await SecureStore.setItemAsync("userToken", response.token);
+        // Never establish a session before completing the required 2FA challenge.
+        if (response?.requiresTwoFactor) {
+          feedbackService.alert({
+            title: "Two-factor authentication required",
+            message:
+              "Complete verification with your authenticator or recovery code to sign in.",
+            type: "warning",
+          });
+
+          router.replace("/(auth)/login" as any);
+          return;
         }
 
-        // Establish local-vault ownership for the signed-in account.
-        if (response?.user?.id != null) {
-          await switchLocalUser(response.user.id);
+        const userId = response?.user?.id;
+
+        if (
+          !response?.token ||
+          typeof userId !== "number" ||
+          !Number.isSafeInteger(userId) ||
+          userId <= 0
+        ) {
+          throw new Error("The server did not return a complete authenticated session.");
         }
+
+        await establishAuthenticatedSession(response.token, userId);
 
         // Remember only the email, never the password.
-        if (values.rememberMe) {
-          await SecureStore.setItemAsync(
-            "rememberedEmail",
-            normalizedValues.email,
-          );
-        } else {
-          await SecureStore.deleteItemAsync("rememberedEmail");
+        try {
+          if (values.rememberMe) {
+            await SecureStore.setItemAsync(
+              "rememberedEmail",
+              normalizedValues.email,
+            );
+          } else {
+            await SecureStore.deleteItemAsync("rememberedEmail");
+          }
+        } catch (error) {
+          console.warn("[BiometricLogin] Remembered-email update failed.", error);
         }
 
         router.replace("/(tabs)/documents" as any);
@@ -261,6 +281,19 @@ export default function BiometricLoginScreen() {
           title: "Session Expired",
           message:
             "Please sign in with your password first to re-establish your secure session.",
+          type: "warning",
+        });
+        return;
+      }
+
+      // Biometrics unlock an existing session; they cannot renew an expired one.
+      const sessionValid = await api.validateStoredSession(token);
+
+      if (!sessionValid) {
+        feedbackService.alert({
+          title: "Session Expired",
+          message:
+            "Your secure session is no longer valid. Please sign in with your password.",
           type: "warning",
         });
         return;

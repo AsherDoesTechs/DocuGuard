@@ -10,8 +10,8 @@ import { AuthScreen } from "../../components/ui/AuthScreen";
 import { useForm } from "../../hooks/useForm";
 import { useColors } from "@/context/ThemeContext";
 import { Spacing } from "@/constants";
-import { api, setAuthToken } from "../../services/api";
-import { switchLocalUser } from "../../services/localDatabase";
+import { api } from "../../services/api";
+import { establishAuthenticatedSession } from "../../services/authSession";
 import { registerPushTokenWithBackend } from "../../hooks/usePushNotifications";
 import {
   loginSchema,
@@ -37,6 +37,9 @@ export default function LoginScreen() {
   } | null>(null);
 
   const [twoFactorCode, setTwoFactorCode] = useState("");
+  const [twoFactorMode, setTwoFactorMode] = useState<"totp" | "recovery">(
+    "totp",
+  );
   const [twoFactorError, setTwoFactorError] = useState<string | null>(null);
   const [twoFactorSubmitting, setTwoFactorSubmitting] = useState(false);
 
@@ -55,40 +58,50 @@ export default function LoginScreen() {
       response: { token?: string; user?: { id: number } },
       rememberMe: boolean,
       email: string,
+      password?: string, // Add optional password parameter here
     ) => {
       if (!response?.token) {
         throw new Error("The server did not return a valid session.");
       }
 
-      /*
-       * The session is written through the api client.
-       *
-       * The client keeps the token in memory as well, and the request
-       * interceptor prefers the in-memory value. Writing the token to the
-       * secure store alone left the old token in memory, so the first
-       * request of the new session was sent with the token of the account
-       * that had signed out before.
-       */
-      await setAuthToken(response.token);
+      const userId = response.user?.id;
 
-      if (response.user?.id != null) {
-        await switchLocalUser(response.user.id);
+      if (
+        typeof userId !== "number" ||
+        !Number.isSafeInteger(userId) ||
+        userId <= 0
+      ) {
+        throw new Error(
+          "The server did not return a valid account identity. Please sign in again.",
+        );
       }
 
-      /*
-       * The push token belongs to the account that just signed in.
-       *
-       * The token is stored on the account, so a device that was registered
-       * for the previous account would keep receiving that account's
-       * notifications. Registering it here covers the case where the app was
-       * not restarted between the two sign-ins.
-       */
-      void registerPushTokenWithBackend();
+      await establishAuthenticatedSession(response.token, userId);
 
-      if (rememberMe) {
-        await SecureStore.setItemAsync("rememberedEmail", email);
-      } else {
-        await SecureStore.deleteItemAsync("rememberedEmail");
+      // Securely cache credentials for biometrics if password is provided
+      if (password) {
+        try {
+          await SecureStore.setItemAsync(
+            "secure_user_credentials",
+            JSON.stringify({ email, password }),
+          );
+        } catch (e) {
+          console.warn("[Login] Failed to save biometric credentials:", e);
+        }
+      }
+
+      void Promise.resolve(registerPushTokenWithBackend()).catch((error) => {
+        console.warn("[Login] Push-token registration failed.", error);
+      });
+
+      try {
+        if (rememberMe) {
+          await SecureStore.setItemAsync("rememberedEmail", email);
+        } else {
+          await SecureStore.deleteItemAsync("rememberedEmail");
+        }
+      } catch (error) {
+        console.warn("[Login] Remembered-email update failed.", error);
       }
 
       router.replace("/(tabs)/documents" as any);
@@ -142,14 +155,19 @@ export default function LoginScreen() {
     }
 
     const code = twoFactorCode.trim();
+    const validCode =
+      twoFactorMode === "totp"
+        ? /^\d{6}$/.test(code)
+        : /^[A-F0-9]{32}$/.test(code);
 
-    if (!/^\d{6}$/.test(code)) {
-      setTwoFactorError(
-        "Enter the complete 6-digit code from your authenticator app.",
-      );
-      feedbackService.warning(
-        "Enter the complete 6-digit code from your authenticator app.",
-      );
+    if (!validCode) {
+      const message =
+        twoFactorMode === "totp"
+          ? "Enter the complete 6-digit authenticator code."
+          : "Enter a valid 32-character recovery code.";
+
+      setTwoFactorError(message);
+      feedbackService.warning(message);
       return;
     }
 
@@ -161,44 +179,50 @@ export default function LoginScreen() {
       const response = await api.auth.login({
         email: pendingTwoFactor.email,
         password: pendingTwoFactor.password,
-        totpCode: code,
+        [twoFactorMode === "totp" ? "totpCode" : "recoveryCode"]: code,
       });
 
       if (response?.requiresTwoFactor) {
-        const message = "That code was not accepted. Try the next one.";
-
-        setTwoFactorError(message);
-        setTwoFactorCode("");
-        feedbackService.error(message);
+        router.push({
+          pathname: "/(auth)/verify-2fa" as any,
+          params: {
+            email: pendingTwoFactor.email,
+            tempToken:
+              (response as any).tempToken || (response as any).token || "",
+          },
+        });
         return;
+      }
+
+      if (!response?.token) {
+        throw new Error("The server did not return a valid session.");
       }
 
       await completeLogin(
         response,
         pendingTwoFactor.rememberMe,
         pendingTwoFactor.email,
+        pendingTwoFactor.password,
       );
 
       setPendingTwoFactor(null);
       setTwoFactorCode("");
+      setTwoFactorMode("totp");
     } catch (err: any) {
       const status = err?.response?.status;
 
       if (status === 401) {
-        const message = "That code was not accepted. Try the next one.";
-
+        const message = "That code was not accepted. Try again.";
         setTwoFactorError(message);
         setTwoFactorCode("");
         feedbackService.error(message);
       } else if (status === 429) {
         const message = "Too many attempts. Please wait before trying again.";
-
         setTwoFactorError(message);
         feedbackService.warning(message);
       } else if (!err?.response) {
         const message =
           "Network error. Check your internet connection and try again.";
-
         setTwoFactorError(message);
         feedbackService.error(message);
       } else {
@@ -264,6 +288,7 @@ export default function LoginScreen() {
           response,
           values.rememberMe ?? false,
           normalizedValues.email,
+          values.password,
         );
 
         setPendingTwoFactor(null);
@@ -346,29 +371,54 @@ export default function LoginScreen() {
         disableDeviceFallback: false,
       });
 
-      // Cancellation is intentional and should not produce an error.
       if (!result.success) {
         return;
       }
 
-      const token = await SecureStore.getItemAsync("userToken");
+      const storedCredentials = await SecureStore.getItemAsync(
+        "secure_user_credentials",
+      );
 
-      if (!token) {
+      if (!storedCredentials) {
         feedbackService.alert({
-          title: "Session expired",
+          title: "Session Reset",
           message:
-            "Please sign in with your password first to re-establish your secure session.",
+            "Please sign in with your password once to re-enable biometric login.",
           type: "warning",
         });
         return;
       }
 
+      const { email, password } = JSON.parse(storedCredentials);
+
+      // Request a session token from the backend using stored credentials
+      const response = await api.auth.login({ email, password });
+
+      // FIX: Check if 2FA is triggered during biometric login
+      if (response?.requiresTwoFactor) {
+        router.push({
+          pathname: "/(auth)/verify-2fa" as any,
+          params: {
+            email: email.trim().toLowerCase(),
+            tempToken:
+              (response as any).tempToken || (response as any).token || "",
+          },
+        });
+        return;
+      }
+
+      if (!response?.token) {
+        throw new Error("Could not refresh session via biometrics.");
+      }
+
+      const userId = response.user?.id || 1;
+      await establishAuthenticatedSession(response.token, userId);
+
       router.replace("/(tabs)/documents" as any);
     } catch (error) {
       console.warn("Biometric sign-in failed:", error);
-
       feedbackService.error(
-        "Biometric sign-in is unavailable right now. Please use your password.",
+        "Biometric sign-in failed. Please use your password.",
       );
     } finally {
       biometricRequestRef.current = false;
@@ -502,19 +552,89 @@ export default function LoginScreen() {
     >
       {pendingTwoFactor ? (
         <Card>
+          <View
+            style={{
+              flexDirection: "row",
+              gap: Spacing.sm,
+              marginBottom: Spacing.sm,
+            }}
+          >
+            <TouchableOpacity
+              disabled={twoFactorSubmitting}
+              onPress={() => {
+                setTwoFactorMode("totp");
+                setTwoFactorCode("");
+                setTwoFactorError(null);
+              }}
+              style={{
+                flex: 1,
+                paddingVertical: 10,
+                borderRadius: 10,
+                alignItems: "center",
+                backgroundColor:
+                  twoFactorMode === "totp" ? colors.primary : colors.background,
+              }}
+            >
+              <Text
+                style={{
+                  color: twoFactorMode === "totp" ? "#fff" : colors.text,
+                }}
+              >
+                Authenticator
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              disabled={twoFactorSubmitting}
+              onPress={() => {
+                setTwoFactorMode("recovery");
+                setTwoFactorCode("");
+                setTwoFactorError(null);
+              }}
+              style={{
+                flex: 1,
+                paddingVertical: 10,
+                borderRadius: 10,
+                alignItems: "center",
+                backgroundColor:
+                  twoFactorMode === "recovery"
+                    ? colors.primary
+                    : colors.background,
+              }}
+            >
+              <Text
+                style={{
+                  color: twoFactorMode === "recovery" ? "#fff" : colors.text,
+                }}
+              >
+                Recovery code
+              </Text>
+            </TouchableOpacity>
+          </View>
+
           <Input
-            label="Verification Code"
-            placeholder="000000"
+            label={
+              twoFactorMode === "totp" ? "Authenticator Code" : "Recovery Code"
+            }
+            placeholder={
+              twoFactorMode === "totp" ? "000000" : "32-character code"
+            }
             value={twoFactorCode}
             onChangeText={(text) => {
-              setTwoFactorCode(text.replace(/\D/g, "").slice(0, 6));
+              setTwoFactorCode(
+                twoFactorMode === "totp"
+                  ? text.replace(/\D/g, "").slice(0, 6)
+                  : text
+                      .replace(/[^a-fA-F0-9]/g, "")
+                      .slice(0, 32)
+                      .toUpperCase(),
+              );
               setTwoFactorError(null);
             }}
             error={twoFactorError ?? undefined}
-            keyboardType="number-pad"
-            autoComplete="one-time-code"
-            textContentType="oneTimeCode"
-            maxLength={6}
+            keyboardType={twoFactorMode === "totp" ? "number-pad" : "default"}
+            autoComplete={twoFactorMode === "totp" ? "one-time-code" : "off"}
+            maxLength={twoFactorMode === "totp" ? 6 : 32}
             autoFocus
           />
 
@@ -523,7 +643,10 @@ export default function LoginScreen() {
               title="Verify"
               onPress={handleTwoFactorSubmit}
               loading={twoFactorSubmitting}
-              disabled={twoFactorSubmitting || twoFactorCode.length !== 6}
+              disabled={
+                twoFactorSubmitting ||
+                twoFactorCode.length !== (twoFactorMode === "totp" ? 6 : 32)
+              }
             />
           </View>
 
@@ -533,6 +656,7 @@ export default function LoginScreen() {
             onPress={() => {
               setPendingTwoFactor(null);
               setTwoFactorCode("");
+              setTwoFactorMode("totp");
               setTwoFactorError(null);
             }}
             accessibilityRole="button"

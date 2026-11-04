@@ -17,11 +17,13 @@ import {
   AppStateStatus,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { Card } from "../../components/ui";
 import { COLORS as BASE_COLORS } from "@/constants";
 import { formatShortDate, parseLocalDate } from "../../utils";
 import { RefreshableContainer } from "@/components/ui/RefreshableContainer";
+import { RemindersSkeleton } from "@/components/ui/Skeleton";
 import { useTheme } from "@/context/ThemeContext";
 import * as Notifications from "expo-notifications";
 
@@ -47,6 +49,7 @@ type ReminderSeverity = "Expired" | "Expiring Soon" | "Valid";
 
 interface Reminder {
   id: number;
+  documentId?: number | string;
   title: string;
   description: string;
   dueDate: string;
@@ -63,10 +66,10 @@ const FILTERS: { key: FilterType; label: string }[] = [
 
 export default function RemindersScreen() {
   useFeedbackService();
+  const router = useRouter();
 
   const { colors, isDark } = useTheme();
 
-  // Use the existing global theme instead of hardcoded light-mode colors.
   const themeColors = useMemo(
     () =>
       ({
@@ -101,10 +104,12 @@ export default function RemindersScreen() {
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [loading, setLoading] = useState(true);
   const [markingAllRead, setMarkingAllRead] = useState(false);
+  const [updatingNotifications, setUpdatingNotifications] = useState(false);
   const [lastFetch, setLastFetch] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
 
   const mountedRef = useRef(true);
+  const fetchInProgressRef = useRef(false);
 
   const loadNotificationPreference = useCallback(async () => {
     try {
@@ -179,31 +184,28 @@ export default function RemindersScreen() {
   };
 
   const fetchReminders = useCallback(async () => {
-    if (!mountedRef.current) {
+    if (!mountedRef.current || fetchInProgressRef.current) {
       return false;
     }
+
+    fetchInProgressRef.current = true;
 
     try {
       setError(null);
 
       const localReminders: LocalReminder[] = await getAllReminders();
 
-      const mappedReminders = localReminders
-        .map((reminder) => {
-          if (reminder.id == null || !reminder.dueDate) {
-            return null;
-          }
-
-          return {
-            id: reminder.id,
-            title: reminder.title,
-            description: reminder.description || "",
-            dueDate: reminder.dueDate,
-            severity: calculateSeverity(reminder.dueDate),
-            read: !!reminder.read,
-          };
-        })
-        .filter((reminder): reminder is Reminder => reminder !== null);
+      const mappedReminders: Reminder[] = localReminders
+        .filter((reminder) => reminder.id != null && reminder.dueDate)
+        .map((reminder) => ({
+          id: reminder.id!,
+          documentId: (reminder as any).documentId,
+          title: reminder.title,
+          description: reminder.description || "",
+          dueDate: reminder.dueDate,
+          severity: calculateSeverity(reminder.dueDate),
+          read: !!reminder.read,
+        }));
 
       if (mountedRef.current) {
         setReminders(mappedReminders);
@@ -220,6 +222,8 @@ export default function RemindersScreen() {
 
       return false;
     } finally {
+      fetchInProgressRef.current = false;
+
       if (mountedRef.current) {
         setLoading(false);
       }
@@ -263,6 +267,12 @@ export default function RemindersScreen() {
   ]);
 
   const handleToggleNotifications = async (value: boolean) => {
+    if (updatingNotifications || value === notificationsEnabled) {
+      return;
+    }
+
+    setUpdatingNotifications(true);
+
     try {
       if (value) {
         const permission = await Notifications.requestPermissionsAsync();
@@ -313,6 +323,10 @@ export default function RemindersScreen() {
         message: "Could not update notification settings.",
         type: "error",
       });
+    } finally {
+      if (mountedRef.current) {
+        setUpdatingNotifications(false);
+      }
     }
   };
 
@@ -377,19 +391,37 @@ export default function RemindersScreen() {
     }
   };
 
-  const filtered = reminders.filter((reminder) => {
-    if (filter === "unread") return !reminder.read;
-    if (filter === "expired") {
-      return reminder.severity === "Expired";
-    }
-    if (filter === "expiring") {
-      return reminder.severity === "Expiring Soon";
-    }
+  const unreadCount = useMemo(
+    () => reminders.filter((reminder) => !reminder.read).length,
+    [reminders],
+  );
 
-    return true;
-  });
+  const expiredCount = useMemo(
+    () =>
+      reminders.filter((reminder) => reminder.severity === "Expired").length,
+    [reminders],
+  );
 
-  const unreadCount = reminders.filter((reminder) => !reminder.read).length;
+  const expiringCount = useMemo(
+    () =>
+      reminders.filter((reminder) => reminder.severity === "Expiring Soon")
+        .length,
+    [reminders],
+  );
+
+  const filtered = useMemo(
+    () =>
+      reminders.filter((reminder) => {
+        if (filter === "unread") return !reminder.read;
+        if (filter === "expired") return reminder.severity === "Expired";
+        if (filter === "expiring") {
+          return reminder.severity === "Expiring Soon";
+        }
+
+        return true;
+      }),
+    [filter, reminders],
+  );
 
   const getSeverityIcon = (severity: ReminderSeverity) => {
     switch (severity) {
@@ -472,17 +504,12 @@ export default function RemindersScreen() {
               <Switch
                 value={notificationsEnabled}
                 onValueChange={handleToggleNotifications}
+                disabled={updatingNotifications}
                 trackColor={{
                   false: themeColors.border,
                   true: themeColors.primary,
                 }}
-                thumbColor={
-                  notificationsEnabled
-                    ? "#FFFFFF"
-                    : isDark
-                      ? themeColors.textSecondary
-                      : "#F4F3F4"
-                }
+                thumbColor={colors.switchThumb}
                 accessibilityRole="switch"
                 accessibilityLabel="Reminder notifications"
                 accessibilityHint="Turns reminder notifications on or off"
@@ -526,6 +553,29 @@ export default function RemindersScreen() {
               Last updated: {formatLastUpdated(lastFetch)}
             </Text>
           </View>
+
+          <View style={styles.summaryRow} accessibilityLabel="Reminder summary">
+            <View style={styles.summaryCard}>
+              <Text style={styles.summaryValue}>{reminders.length}</Text>
+              <Text style={styles.summaryLabel}>Total</Text>
+            </View>
+            <View style={styles.summaryCard}>
+              <Text
+                style={[styles.summaryValue, { color: themeColors.warning }]}
+              >
+                {expiringCount}
+              </Text>
+              <Text style={styles.summaryLabel}>Expiring</Text>
+            </View>
+            <View style={styles.summaryCard}>
+              <Text
+                style={[styles.summaryValue, { color: themeColors.danger }]}
+              >
+                {expiredCount}
+              </Text>
+              <Text style={styles.summaryLabel}>Expired</Text>
+            </View>
+          </View>
         </View>
 
         {/* Error */}
@@ -549,7 +599,11 @@ export default function RemindersScreen() {
               accessibilityLabel="Try loading reminders again"
               activeOpacity={0.8}
             >
-              <Ionicons name="refresh" size={18} color="#FFFFFF" />
+              <Ionicons
+                name="refresh"
+                size={18}
+                color={themeColors.buttonPrimaryText}
+              />
               <Text style={styles.retryButtonText}>Try Again</Text>
             </TouchableOpacity>
           </View>
@@ -613,9 +667,13 @@ export default function RemindersScreen() {
                           isActive && styles.filterTabTextActive,
                         ]}
                       >
-                        {tab.key === "unread" && unreadCount > 0
+                        {tab.key === "unread"
                           ? `Unread (${unreadCount})`
-                          : tab.label}
+                          : tab.key === "expired"
+                            ? `Expired (${expiredCount})`
+                            : tab.key === "expiring"
+                              ? `Expiring Soon (${expiringCount})`
+                              : tab.label}
                       </Text>
                     </TouchableOpacity>
                   );
@@ -625,10 +683,7 @@ export default function RemindersScreen() {
 
             {/* Loading / Empty / List */}
             {loading ? (
-              <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color={themeColors.primary} />
-                <Text style={styles.loadingText}>Loading reminders...</Text>
-              </View>
+              <RemindersSkeleton />
             ) : filtered.length === 0 ? (
               <View style={styles.emptyContainer}>
                 <View style={styles.emptyIconContainer}>
@@ -662,118 +717,168 @@ export default function RemindersScreen() {
                   const severityIcon = getSeverityIcon(reminder.severity);
 
                   return (
-                    <Card
+                    <TouchableOpacity
                       key={reminder.id}
-                      style={[
-                        styles.reminderCard,
-                        !reminder.read && styles.unreadReminderCard,
-                      ]}
+                      activeOpacity={0.8}
+                      onPress={() => {
+                        if (reminder.documentId) {
+                          router.push(
+                            `/document-details/${String(reminder.documentId)}` as any,
+                          );
+                        } else {
+                          feedbackService.info(
+                            "No document attached to this reminder.",
+                          );
+                        }
+                      }}
+                      accessibilityRole="button"
+                      accessibilityLabel={`View details for ${reminder.title}`}
                     >
-                      <View
+                      <Card
                         style={[
-                          styles.reminderBorder,
-                          { borderLeftColor: severityColor },
+                          styles.reminderCard,
+                          !reminder.read && styles.unreadReminderCard,
                         ]}
                       >
-                        {!reminder.read && <View style={styles.unreadDot} />}
+                        <View
+                          style={[
+                            styles.reminderBorder,
+                            { borderLeftColor: severityColor },
+                          ]}
+                        >
+                          {!reminder.read && <View style={styles.unreadDot} />}
 
-                        <View style={styles.reminderContent}>
-                          <View
-                            style={[
-                              styles.reminderIconContainer,
-                              {
-                                backgroundColor: themeColors.surfaceSecondary,
-                              },
-                            ]}
-                          >
-                            <Ionicons
-                              name={severityIcon as any}
-                              size={22}
-                              color={severityColor}
-                            />
-                          </View>
+                          <View style={styles.reminderContent}>
+                            <View
+                              style={[
+                                styles.reminderIconContainer,
+                                {
+                                  backgroundColor: themeColors.surfaceSecondary,
+                                },
+                              ]}
+                            >
+                              <Ionicons
+                                name={severityIcon as any}
+                                size={22}
+                                color={severityColor}
+                              />
+                            </View>
 
-                          <View style={styles.reminderInfo}>
-                            <Text style={styles.reminderTitle}>
-                              {reminder.title}
-                            </Text>
-
-                            {reminder.description ? (
-                              <Text style={styles.reminderDesc}>
-                                {reminder.description}
+                            <View style={styles.reminderInfo}>
+                              <Text style={styles.reminderTitle}>
+                                {reminder.title}
                               </Text>
-                            ) : null}
 
-                            <View style={styles.reminderMeta}>
-                              <View style={styles.dateRow}>
-                                <Ionicons
-                                  name="calendar-outline"
-                                  size={13}
-                                  color={themeColors.textSecondary}
-                                />
-                                <Text style={styles.reminderDate}>
-                                  Due: {formatShortDate(reminder.dueDate)}
+                              {reminder.description ? (
+                                <Text style={styles.reminderDesc}>
+                                  {reminder.description}
                                 </Text>
-                              </View>
+                              ) : null}
 
-                              <Text
-                                style={[
-                                  styles.daysText,
-                                  { color: severityColor },
-                                ]}
-                              >
-                                {getDueStatus(reminder.dueDate)}
-                              </Text>
+                              <View style={styles.reminderMeta}>
+                                <View style={styles.dateRow}>
+                                  <Ionicons
+                                    name="calendar-outline"
+                                    size={13}
+                                    color={themeColors.textSecondary}
+                                  />
+                                  <Text style={styles.reminderDate}>
+                                    Due: {formatShortDate(reminder.dueDate)}
+                                  </Text>
+                                </View>
 
-                              <View
-                                style={[
-                                  styles.severityBadge,
-                                  {
-                                    backgroundColor:
-                                      themeColors.surfaceSecondary,
-                                  },
-                                ]}
-                              >
-                                <Ionicons
-                                  name={severityIcon as any}
-                                  size={12}
-                                  color={severityColor}
-                                />
                                 <Text
                                   style={[
-                                    styles.severityText,
+                                    styles.daysText,
                                     { color: severityColor },
                                   ]}
                                 >
-                                  {getSeverityLabel(reminder.severity)}
+                                  {getDueStatus(reminder.dueDate)}
                                 </Text>
+
+                                <View
+                                  style={[
+                                    styles.severityBadge,
+                                    {
+                                      backgroundColor:
+                                        themeColors.surfaceSecondary,
+                                    },
+                                  ]}
+                                >
+                                  <Ionicons
+                                    name={severityIcon as any}
+                                    size={12}
+                                    color={severityColor}
+                                  />
+                                  <Text
+                                    style={[
+                                      styles.severityText,
+                                      { color: severityColor },
+                                    ]}
+                                  >
+                                    {getSeverityLabel(reminder.severity)}
+                                  </Text>
+                                </View>
+                              </View>
+
+                              {/* Google-style Action Buttons Bar */}
+                              <View style={styles.cardActionsRow}>
+                                {!reminder.read && (
+                                  <TouchableOpacity
+                                    style={styles.actionButton}
+                                    onPress={(e) => {
+                                      e.stopPropagation?.();
+                                      void handleMarkAsRead(reminder.id);
+                                    }}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={`Mark ${reminder.title} as read`}
+                                    activeOpacity={0.7}
+                                  >
+                                    <Ionicons
+                                      name="checkmark-circle-outline"
+                                      size={15}
+                                      color={themeColors.primary}
+                                    />
+                                    <Text style={styles.actionButtonText}>
+                                      Mark Read
+                                    </Text>
+                                  </TouchableOpacity>
+                                )}
+
+                                {reminder.documentId && (
+                                  <TouchableOpacity
+                                    style={styles.actionButton}
+                                    onPress={(e) => {
+                                      e.stopPropagation?.();
+                                      router.push(
+                                        `/document-details/${String(reminder.documentId)}` as any,
+                                      );
+                                    }}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={`View document for ${reminder.title}`}
+                                    activeOpacity={0.7}
+                                  >
+                                    <Ionicons
+                                      name="document-text-outline"
+                                      size={15}
+                                      color={themeColors.textSecondary}
+                                    />
+                                    <Text
+                                      style={[
+                                        styles.actionButtonText,
+                                        { color: themeColors.textSecondary },
+                                      ]}
+                                    >
+                                      View Doc
+                                    </Text>
+                                  </TouchableOpacity>
+                                )}
                               </View>
                             </View>
-
-                            {!reminder.read && (
-                              <TouchableOpacity
-                                style={styles.markReadButton}
-                                onPress={() =>
-                                  void handleMarkAsRead(reminder.id)
-                                }
-                                accessibilityRole="button"
-                                accessibilityLabel={`Mark ${reminder.title} as read`}
-                                activeOpacity={0.7}
-                              >
-                                <Ionicons
-                                  name="checkmark-circle-outline"
-                                  size={16}
-                                  color={themeColors.primary}
-                                />
-                                <Text style={styles.markReadText}>
-                                  Mark as read
-                                </Text>
-                              </TouchableOpacity>
-                            )}
                           </View>
                         </View>
-                      </View>
-                    </Card>
+                      </Card>
+                    </TouchableOpacity>
                   );
                 })}
               </View>
@@ -849,6 +954,34 @@ const createStyles = (COLORS: typeof BASE_COLORS) =>
       fontSize: 12,
       color: COLORS.textSecondary,
     },
+    summaryRow: {
+      flexDirection: "row",
+      gap: 10,
+      marginTop: 16,
+    },
+    summaryCard: {
+      flex: 1,
+      minHeight: 68,
+      justifyContent: "center",
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: COLORS.border,
+      backgroundColor: COLORS.surface,
+    },
+    summaryValue: {
+      fontSize: 21,
+      lineHeight: 27,
+      fontWeight: "700",
+      color: COLORS.text,
+    },
+    summaryLabel: {
+      marginTop: 2,
+      fontSize: 11,
+      fontWeight: "600",
+      color: COLORS.textSecondary,
+    },
     markAllButton: {
       flexDirection: "row",
       alignItems: "center",
@@ -893,7 +1026,7 @@ const createStyles = (COLORS: typeof BASE_COLORS) =>
       color: COLORS.textSecondary,
     },
     filterTabTextActive: {
-      color: "#FFFFFF",
+      color: COLORS.buttonPrimaryText,
     },
     remindersList: {
       gap: 12,
@@ -985,33 +1118,27 @@ const createStyles = (COLORS: typeof BASE_COLORS) =>
       fontSize: 11,
       fontWeight: "700",
     },
-    markReadButton: {
+    cardActionsRow: {
       flexDirection: "row",
       alignItems: "center",
-      alignSelf: "flex-start",
-      gap: 6,
+      gap: 10,
       marginTop: 14,
+    },
+    actionButton: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
       paddingHorizontal: 10,
-      paddingVertical: 8,
-      borderRadius: 9,
+      paddingVertical: 7,
+      borderRadius: 8,
       borderWidth: 1,
       borderColor: COLORS.border,
       backgroundColor: COLORS.surfaceSecondary,
     },
-    markReadText: {
+    actionButtonText: {
       color: COLORS.primary,
       fontSize: 12,
       fontWeight: "600",
-    },
-    loadingContainer: {
-      alignItems: "center",
-      justifyContent: "center",
-      paddingVertical: 48,
-      gap: 12,
-    },
-    loadingText: {
-      fontSize: 14,
-      color: COLORS.textSecondary,
     },
     emptyContainer: {
       alignItems: "center",
@@ -1080,7 +1207,7 @@ const createStyles = (COLORS: typeof BASE_COLORS) =>
       backgroundColor: COLORS.primary,
     },
     retryButtonText: {
-      color: "#FFFFFF",
+      color: COLORS.buttonPrimaryText,
       fontSize: 14,
       fontWeight: "600",
     },

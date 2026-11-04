@@ -12,7 +12,12 @@ import { useRouter, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { Card, StatusBadge } from "@/components/ui";
 import { COLORS } from "@/constants";
-import { formatShortDate, getDaysUntilExpiry, classifyExpiration, getSyncStatusDisplay } from "@/utils";
+import {
+  formatShortDate,
+  getDaysUntilExpiry,
+  classifyExpiration,
+  getSyncStatusDisplay,
+} from "@/utils";
 import {
   getDocumentById,
   deleteDocument,
@@ -29,7 +34,10 @@ import * as Clipboard from "expo-clipboard";
 import * as Sharing from "expo-sharing";
 import * as FileSystem from "expo-file-system/legacy";
 import Loading from "@/components/ui/Loading";
-import { feedbackService, useFeedbackService } from "@/services/feedbackService";
+import {
+  feedbackService,
+  useFeedbackService,
+} from "@/services/feedbackService";
 
 export default function DocumentDetailsScreen() {
   const router = useRouter();
@@ -45,7 +53,7 @@ export default function DocumentDetailsScreen() {
   // Initialize feedback service
   useFeedbackService();
 
-const fetchDocumentDetails = useCallback(async () => {
+  const fetchDocumentDetails = useCallback(async () => {
     if (!id || !mountedRef.current) return;
     try {
       const docId = parseInt(id as string, 10);
@@ -57,7 +65,9 @@ const fetchDocumentDetails = useCallback(async () => {
       }
     } catch (error: any) {
       if (mountedRef.current) {
-        feedbackService.error(error.message || "Could not retrieve document details.");
+        feedbackService.error(
+          error.message || "Could not retrieve document details.",
+        );
       }
     } finally {
       if (mountedRef.current) setIsLoading(false);
@@ -83,7 +93,9 @@ const fetchDocumentDetails = useCallback(async () => {
   useEffect(() => {
     fetchDocumentDetails();
     fetchHistory();
-    return () => { mountedRef.current = false; };
+    return () => {
+      mountedRef.current = false;
+    };
   }, [fetchDocumentDetails, fetchHistory]);
 
   const handleDelete = async () => {
@@ -97,21 +109,27 @@ const fetchDocumentDetails = useCallback(async () => {
       onConfirm: async () => {
         const localId = document.id as number;
         try {
-          // Cancel pending reminders so a deleted document cannot keep alerting.
+          // Cancel pending reminders first
           await cancelDocumentNotifications(localId);
           await logDocumentAction(localId, "deleted", document);
 
           if (document.cloudId) {
-            // Queued for deletion on the next sync; the row must survive locally
-            // until the backend confirms, otherwise the delete never propagates.
-            await softDeleteDocument(localId);
+            // 1. Hit your backend API directly to delete it from the cloud
+            await api.client.delete(`/api/documents/${document.cloudId}`);
+
+            // 2. Once the server confirms, permanently delete it locally
+            await deleteDocument(localId);
           } else {
-            // Never uploaded, so there is nothing to reconcile with the cloud.
+            // Never uploaded to cloud, just delete locally
             await deleteDocument(localId);
           }
+
           router.back();
         } catch (err) {
-          feedbackService.error("Could not delete document.");
+          console.error("Failed to delete document on server:", err);
+          feedbackService.error(
+            "Could not delete document from server. Please check your connection.",
+          );
         }
       },
       onCancel: () => {},
@@ -126,7 +144,9 @@ const fetchDocumentDetails = useCallback(async () => {
     }
     setIsDownloading(true);
     try {
-      const cleanTitle = document.title.replace(/[^a-z0-9]/gi, "_").toLowerCase();
+      const cleanTitle = document.title
+        .replace(/[^a-z0-9]/gi, "_")
+        .toLowerCase();
       const filename = `${cleanTitle}_${document.id}.pdf`;
       feedbackService.info(`Downloading ${filename}...`);
     } catch (error: any) {
@@ -150,7 +170,9 @@ const fetchDocumentDetails = useCallback(async () => {
         try {
           await api.documents.verifyDocument(document.cloudId);
           await logDocumentAction(localId, "verified", { status: "verified" });
-        } catch (syncErr) { console.warn("Could not sync verification:", syncErr); }
+        } catch (syncErr) {
+          console.warn("Could not sync verification:", syncErr);
+        }
       }
       feedbackService.success("Document has been marked as verified.");
     } catch (err: any) {
@@ -171,7 +193,9 @@ const fetchDocumentDetails = useCallback(async () => {
         `Expiry Date: ${formatShortDate(document.expiryDate || "")}`,
         `Status: ${document.status}`,
         document.notes ? `\nNotes: ${document.notes}` : "",
-      ].filter(Boolean).join("\n");
+      ]
+        .filter(Boolean)
+        .join("\n");
 
       const fileName = `${document.title.replace(/[^a-z0-9]/gi, "_").toLowerCase()}_${document.id}.txt`;
       const fileUri = `${FileSystem.documentDirectory}${fileName}`;
@@ -209,7 +233,9 @@ const fetchDocumentDetails = useCallback(async () => {
     try {
       await Clipboard.setStringAsync(text);
       feedbackService.success(`${label} copied!`);
-    } catch (err) { console.error("Clipboard error:", err); }
+    } catch (err) {
+      console.error("Clipboard error:", err);
+    }
   };
 
   function getHistoryIcon(action: string): keyof typeof Ionicons.glyphMap {
@@ -250,9 +276,16 @@ const fetchDocumentDetails = useCallback(async () => {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.errorContainer}>
-          <Ionicons name="document-text" size={48} color={COLORS.textSecondary} />
+          <Ionicons
+            name="document-text"
+            size={48}
+            color={COLORS.textSecondary}
+          />
           <Text style={styles.errorText}>Document not found</Text>
-          <TouchableOpacity style={styles.retryButton} onPress={fetchDocumentDetails}>
+          <TouchableOpacity
+            style={styles.retryButton}
+            onPress={fetchDocumentDetails}
+          >
             <Text style={styles.retryButtonText}>Try Again</Text>
           </TouchableOpacity>
         </View>
@@ -270,7 +303,12 @@ const fetchDocumentDetails = useCallback(async () => {
             <Ionicons name="chevron-back" size={28} color={COLORS.primary} />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Document Details</Text>
-          <TouchableOpacity onPress={() => copyToClipboard(document.documentNumber, "Document Number")} hitSlop={10}>
+          <TouchableOpacity
+            onPress={() =>
+              copyToClipboard(document.documentNumber, "Document Number")
+            }
+            hitSlop={10}
+          >
             <Ionicons name="copy" size={24} color={COLORS.primary} />
           </TouchableOpacity>
         </View>
@@ -285,7 +323,12 @@ const fetchDocumentDetails = useCallback(async () => {
           </View>
           <View style={styles.metaGrid}>
             <Card style={styles.metaItem}>
-              <TouchableOpacity onPress={() => copyToClipboard(document.documentNumber, "Document Number")} activeOpacity={0.7}>
+              <TouchableOpacity
+                onPress={() =>
+                  copyToClipboard(document.documentNumber, "Document Number")
+                }
+                activeOpacity={0.7}
+              >
                 <Ionicons name="file-tray" size={24} color={COLORS.primary} />
                 <Text style={styles.metaLabel}>Document Number</Text>
                 <Text style={styles.metaValue}>{document.documentNumber}</Text>
@@ -294,41 +337,76 @@ const fetchDocumentDetails = useCallback(async () => {
             <Card style={styles.metaItem}>
               <Ionicons name="calendar" size={24} color={COLORS.primary} />
               <Text style={styles.metaLabel}>Issue Date</Text>
-              <Text style={styles.metaValue}>{formatShortDate(document.issueDate)}</Text>
+              <Text style={styles.metaValue}>
+                {formatShortDate(document.issueDate)}
+              </Text>
             </Card>
             <Card style={styles.metaItem}>
               <Ionicons name="time" size={24} color={COLORS.primary} />
               <Text style={styles.metaLabel}>Expiry Date</Text>
-              <Text style={styles.metaValue}>{formatShortDate(document.expiryDate)}</Text>
-            </Card>
-            <Card style={styles.metaItem}>
-              <Ionicons name={daysUntilExpiry < 0 ? "alert-circle" : "checkmark-circle"} size={24} color={daysUntilExpiry < 0 ? COLORS.danger : COLORS.success} />
-              <Text style={styles.metaLabel}>Days Until Expiry</Text>
-              <Text style={[styles.metaValue, { color: daysUntilExpiry < 0 ? COLORS.danger : COLORS.success }]}>
-                {daysUntilExpiry < 0 ? `Expired ${Math.abs(daysUntilExpiry)} days ago` : `${daysUntilExpiry} days`}
+              <Text style={styles.metaValue}>
+                {formatShortDate(document.expiryDate)}
               </Text>
             </Card>
-           </View>
+            <Card style={styles.metaItem}>
+              <Ionicons
+                name={daysUntilExpiry < 0 ? "alert-circle" : "checkmark-circle"}
+                size={24}
+                color={daysUntilExpiry < 0 ? COLORS.danger : COLORS.success}
+              />
+              <Text style={styles.metaLabel}>Days Until Expiry</Text>
+              <Text
+                style={[
+                  styles.metaValue,
+                  {
+                    color: daysUntilExpiry < 0 ? COLORS.danger : COLORS.success,
+                  },
+                ]}
+              >
+                {daysUntilExpiry < 0
+                  ? `Expired ${Math.abs(daysUntilExpiry)} days ago`
+                  : `${daysUntilExpiry} days`}
+              </Text>
+            </Card>
+          </View>
 
-           <View style={styles.syncStatusRow}>
-             <View style={styles.syncStatusItem}>
-               <Ionicons
-                 name={document.needsSync ? "cloud-upload-outline" : document.syncStatus === "failed" ? "alert-circle-outline" : "cloud-done-outline"}
-                 size={16}
-                 color={document.needsSync ? COLORS.warning : document.syncStatus === "failed" ? COLORS.danger : COLORS.success}
-               />
-               <Text style={styles.syncStatusText}>
-                 {getSyncStatusDisplay(document.syncStatus || "local", document.needsSync)}
-               </Text>
-             </View>
-           </View>
-         </Card>
+          <View style={styles.syncStatusRow}>
+            <View style={styles.syncStatusItem}>
+              <Ionicons
+                name={
+                  document.needsSync
+                    ? "cloud-upload-outline"
+                    : document.syncStatus === "failed"
+                      ? "alert-circle-outline"
+                      : "cloud-done-outline"
+                }
+                size={16}
+                color={
+                  document.needsSync
+                    ? COLORS.warning
+                    : document.syncStatus === "failed"
+                      ? COLORS.danger
+                      : COLORS.success
+                }
+              />
+              <Text style={styles.syncStatusText}>
+                {getSyncStatusDisplay(
+                  document.syncStatus || "local",
+                  document.needsSync,
+                )}
+              </Text>
+            </View>
+          </View>
+        </Card>
 
         {document.notes ? (
           <Card style={styles.notesCard}>
             <View style={styles.notesHeader}>
               <Text style={styles.notesTitle}>Notes</Text>
-              <TouchableOpacity onPress={() => copyToClipboard(document.notes!, "Notes")} hitSlop={10}>
+              <TouchableOpacity
+                onPress={() => copyToClipboard(document.notes!, "Notes")}
+                hitSlop={10}
+              >
                 <Ionicons name="copy" size={20} color={COLORS.primary} />
               </TouchableOpacity>
             </View>
@@ -339,106 +417,176 @@ const fetchDocumentDetails = useCallback(async () => {
         {document.processingStatus === "processing" && (
           <Card style={styles.processingCard}>
             <ActivityIndicator size="small" color={COLORS.primary} />
-            <Text style={styles.processingText}>Processing document with AI...</Text>
+            <Text style={styles.processingText}>
+              Processing document with AI...
+            </Text>
           </Card>
         )}
 
+        {document.processingStatus === "manual_review" && (
+          <Card style={styles.processingCard}>
+            <Ionicons
+              name="alert-circle-outline"
+              size={20}
+              color={COLORS.warning}
+            />
+            <Text style={styles.processingText}>
+              Manual review needed. AI could not confidently verify the
+              extracted details. Please review the original document and enter
+              its information manually.
+            </Text>
+          </Card>
+        )}
         {document.processingStatus === "failed" && (
           <Card style={styles.errorCard}>
             <Ionicons name="alert-circle" size={20} color={COLORS.danger} />
-            <Text style={styles.errorText}>Processing failed. You can still view the document.</Text>
+            <Text style={styles.errorText}>
+              Processing failed. You can still view the document.
+            </Text>
           </Card>
         )}
 
-{document.riskLevel != null && document.riskScore != null && (
-            <Card style={styles.riskCard}>
-              <Text style={styles.riskLabel}>AI Risk Assessment</Text>
-              <View style={styles.riskRow}>
-                <Text style={styles.riskScore}>Score: {document.riskScore}/100</Text>
-                <StatusBadge
-                  status={
-                    document.riskLevel === "Low"
-                      ? "success"
-                      : document.riskLevel === "Medium"
-                        ? "warning"
-                        : "danger"
-                  }
-                  text={document.riskLevel}
-                />
-              </View>
-            </Card>
-          )}
+        {document.riskLevel != null && document.riskScore != null && (
+          <Card style={styles.riskCard}>
+            <Text style={styles.riskLabel}>AI Risk Assessment</Text>
+            <View style={styles.riskRow}>
+              <Text style={styles.riskScore}>
+                Score: {document.riskScore}/100
+              </Text>
+              <StatusBadge
+                status={
+                  document.riskLevel === "Low"
+                    ? "success"
+                    : document.riskLevel === "Medium"
+                      ? "warning"
+                      : "danger"
+                }
+                text={document.riskLevel}
+              />
+            </View>
+          </Card>
+        )}
 
-         <Card style={styles.historyCard}>
-           <View style={styles.historyHeader}>
-             <Text style={styles.historyTitle}>Document Activity</Text>
-             <Ionicons name="time-outline" size={20} color={COLORS.textSecondary} />
-           </View>
-           {loadingHistory ? (
-             <ActivityIndicator size="small" color={COLORS.primary} />
-           ) : history.length === 0 ? (
-             <Text style={styles.historyEmpty}>No activity recorded yet</Text>
-           ) : (
-             <View style={styles.historyList}>
-               {history.map((item) => (
-                 <View key={item.id} style={styles.historyItem}>
-                   <View style={styles.historyDot}>
-                     <Ionicons
-                       name={getHistoryIcon(item.action)}
-                       size={14}
-                       color={COLORS.primary}
-                     />
-                   </View>
-                   <View style={styles.historyContent}>
-                     <Text style={styles.historyAction}>
-                       {formatHistoryAction(item.action)}
-                     </Text>
-                     <Text style={styles.historyTime}>
-                       {formatShortDate(item.createdAt || item.created_at)}
-                     </Text>
-                   </View>
-                 </View>
-               ))}
-             </View>
-           )}
-         </Card>
+        <Card style={styles.historyCard}>
+          <View style={styles.historyHeader}>
+            <Text style={styles.historyTitle}>Document Activity</Text>
+            <Ionicons
+              name="time-outline"
+              size={20}
+              color={COLORS.textSecondary}
+            />
+          </View>
+          {loadingHistory ? (
+            <ActivityIndicator size="small" color={COLORS.primary} />
+          ) : history.length === 0 ? (
+            <Text style={styles.historyEmpty}>No activity recorded yet</Text>
+          ) : (
+            <View style={styles.historyList}>
+              {history.map((item) => (
+                <View key={item.id} style={styles.historyItem}>
+                  <View style={styles.historyDot}>
+                    <Ionicons
+                      name={getHistoryIcon(item.action)}
+                      size={14}
+                      color={COLORS.primary}
+                    />
+                  </View>
+                  <View style={styles.historyContent}>
+                    <Text style={styles.historyAction}>
+                      {formatHistoryAction(item.action)}
+                    </Text>
+                    <Text style={styles.historyTime}>
+                      {formatShortDate(item.createdAt || item.created_at)}
+                    </Text>
+                  </View>
+                </View>
+              ))}
+            </View>
+          )}
+        </Card>
 
         <View style={styles.actions}>
           {document.status !== "verified" && (
-            <TouchableOpacity style={[styles.actionButton, styles.actionVerify]} onPress={handleVerify} disabled={isVerifying}>
-              {isVerifying ? <ActivityIndicator size="small" color="#fff" /> : (
+            <TouchableOpacity
+              style={[styles.actionButton, styles.actionVerify]}
+              onPress={handleVerify}
+              disabled={isVerifying}
+            >
+              {isVerifying ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
                 <>
                   <Ionicons name="checkmark-circle" size={20} color="#fff" />
-                  <Text style={[styles.actionButtonText, { color: "#fff" }]}>Verify Document</Text>
+                  <Text style={[styles.actionButtonText, { color: "#fff" }]}>
+                    Verify Document
+                  </Text>
                 </>
               )}
             </TouchableOpacity>
           )}
-          <TouchableOpacity style={[styles.actionButton, styles.actionPrimary]} onPress={() => router.push(`/edit-document/${document.id}` as any)} disabled={isDownloading}>
+          <TouchableOpacity
+            style={[styles.actionButton, styles.actionPrimary]}
+            onPress={() => router.push(`/edit-document/${document.id}` as any)}
+            disabled={isDownloading}
+          >
             <Ionicons name="create" size={20} color="#fff" />
-            <Text style={[styles.actionButtonText, { color: "#fff" }]}>Edit Document</Text>
+            <Text style={[styles.actionButtonText, { color: "#fff" }]}>
+              Edit Document
+            </Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.actionButton, styles.actionSecondary]} onPress={handleDownload} disabled={isDownloading}>
-            {isDownloading ? <ActivityIndicator size="small" color={COLORS.primary} /> : (
+          <TouchableOpacity
+            style={[styles.actionButton, styles.actionSecondary]}
+            onPress={handleDownload}
+            disabled={isDownloading}
+          >
+            {isDownloading ? (
+              <ActivityIndicator size="small" color={COLORS.primary} />
+            ) : (
               <>
                 <Ionicons name="download" size={20} color={COLORS.primary} />
-                <Text style={[styles.actionButtonText, { color: COLORS.primary }]}>Download</Text>
+                <Text
+                  style={[styles.actionButtonText, { color: COLORS.primary }]}
+                >
+                  Download
+                </Text>
               </>
             )}
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.actionButton, styles.actionSecondary]} onPress={handleExport}>
-            <Ionicons name="document-text-outline" size={20} color={COLORS.primary} />
-            <Text style={[styles.actionButtonText, { color: COLORS.primary }]}>Export</Text>
+          <TouchableOpacity
+            style={[styles.actionButton, styles.actionSecondary]}
+            onPress={handleExport}
+          >
+            <Ionicons
+              name="document-text-outline"
+              size={20}
+              color={COLORS.primary}
+            />
+            <Text style={[styles.actionButtonText, { color: COLORS.primary }]}>
+              Export
+            </Text>
           </TouchableOpacity>
           {document.fileUrl && (
-            <TouchableOpacity style={[styles.actionButton, styles.actionSecondary]} onPress={handleShare}>
+            <TouchableOpacity
+              style={[styles.actionButton, styles.actionSecondary]}
+              onPress={handleShare}
+            >
               <Ionicons name="share-outline" size={20} color={COLORS.primary} />
-              <Text style={[styles.actionButtonText, { color: COLORS.primary }]}>Share</Text>
+              <Text
+                style={[styles.actionButtonText, { color: COLORS.primary }]}
+              >
+                Share
+              </Text>
             </TouchableOpacity>
           )}
-          <TouchableOpacity style={[styles.actionButton, styles.actionDanger]} onPress={handleDelete} disabled={isDownloading}>
+          <TouchableOpacity
+            style={[styles.actionButton, styles.actionDanger]}
+            onPress={handleDelete}
+            disabled={isDownloading}
+          >
             <Ionicons name="trash" size={20} color={COLORS.danger} />
-            <Text style={[styles.actionButtonText, { color: COLORS.danger }]}>Delete</Text>
+            <Text style={[styles.actionButtonText, { color: COLORS.danger }]}>
+              Delete
+            </Text>
           </TouchableOpacity>
         </View>
       </ScrollView>
@@ -449,45 +597,118 @@ const fetchDocumentDetails = useCallback(async () => {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
   content: { padding: 16, paddingBottom: 40 },
-  loadingContainer: { flex: 1, justifyContent: "center", alignItems: "center", gap: 12 },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 12,
+  },
   loadingText: { fontSize: 14, color: COLORS.textSecondary },
-  header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 20 },
+  header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 20,
+  },
   headerTitle: { fontSize: 18, fontWeight: "700", color: COLORS.text },
   docCard: { marginBottom: 20 },
-  docHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 },
+  docHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 20,
+  },
   docTitle: { fontSize: 22, fontWeight: "700", color: COLORS.text },
   docIssuer: { fontSize: 14, color: COLORS.textSecondary, marginTop: 4 },
   metaGrid: { gap: 12 },
   metaItem: { alignItems: "center", paddingVertical: 12 },
   metaLabel: { fontSize: 12, color: COLORS.textSecondary, marginTop: 8 },
-  metaValue: { fontSize: 16, fontWeight: "600", color: COLORS.text, marginTop: 4 },
-  syncStatusRow: { borderTopWidth: 1, borderTopColor: COLORS.border, paddingTop: 12, marginTop: 12 },
+  metaValue: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: COLORS.text,
+    marginTop: 4,
+  },
+  syncStatusRow: {
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+    paddingTop: 12,
+    marginTop: 12,
+  },
   syncStatusItem: { flexDirection: "row", alignItems: "center", gap: 6 },
   syncStatusText: { fontSize: 12, color: COLORS.textSecondary },
   notesCard: { marginBottom: 20 },
-  notesHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
+  notesHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 8,
+  },
   notesTitle: { fontSize: 16, fontWeight: "700", color: COLORS.text },
   notesText: { fontSize: 14, color: COLORS.text, lineHeight: 20 },
   actions: { gap: 12 },
-  actionButton: { flexDirection: "row", alignItems: "center", justifyContent: "center", paddingVertical: 12, borderRadius: 12, gap: 8, minHeight: 48 },
+  actionButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 12,
+    borderRadius: 12,
+    gap: 8,
+    minHeight: 48,
+  },
   actionPrimary: { backgroundColor: COLORS.primary },
   actionSecondary: { backgroundColor: `${COLORS.primary}15` },
   actionDanger: { backgroundColor: `${COLORS.danger}15` },
   actionVerify: { backgroundColor: COLORS.success },
   actionButtonText: { fontWeight: "600", fontSize: 16 },
-  processingCard: { flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 20 },
+  processingCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 20,
+  },
   processingText: { fontSize: 14, color: COLORS.primary, fontWeight: "600" },
-  errorCard: { flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 20 },
+  errorCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 20,
+  },
   riskCard: { marginBottom: 20 },
-  riskLabel: { fontSize: 14, fontWeight: "600", color: COLORS.textSecondary, marginBottom: 8 },
-  riskRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  riskLabel: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: COLORS.textSecondary,
+    marginBottom: 8,
+  },
+  riskRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
   riskScore: { fontSize: 16, fontWeight: "700", color: COLORS.text },
-  errorContainer: { flex: 1, justifyContent: "center", alignItems: "center", gap: 16, padding: 24 },
+  errorContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 16,
+    padding: 24,
+  },
   errorText: { fontSize: 16, color: COLORS.textSecondary, textAlign: "center" },
-  retryButton: { backgroundColor: COLORS.primary, paddingHorizontal: 24, paddingVertical: 12, borderRadius: 8 },
+  retryButton: {
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
   retryButtonText: { color: "#fff", fontWeight: "600", fontSize: 16 },
   historyCard: { marginBottom: 20 },
-  historyHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
+  historyHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 12,
+  },
   historyTitle: { fontSize: 16, fontWeight: "700", color: COLORS.text },
   historyList: { gap: 10 },
   historyItem: { flexDirection: "row", gap: 10, alignItems: "flex-start" },
@@ -503,5 +724,9 @@ const styles = StyleSheet.create({
   historyContent: { flex: 1 },
   historyAction: { fontSize: 14, fontWeight: "500", color: COLORS.text },
   historyTime: { fontSize: 12, color: COLORS.textSecondary, marginTop: 2 },
-  historyEmpty: { fontSize: 13, color: COLORS.textSecondary, fontStyle: "italic" },
+  historyEmpty: {
+    fontSize: 13,
+    color: COLORS.textSecondary,
+    fontStyle: "italic",
+  },
 });

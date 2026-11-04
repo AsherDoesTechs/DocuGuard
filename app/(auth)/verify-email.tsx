@@ -6,7 +6,8 @@ import { Button, Card } from "../../components/ui";
 import { AuthScreen } from "../../components/ui/AuthScreen";
 import { Spacing } from "../../constants";
 import { useColors } from "@/context/ThemeContext";
-import { api, setAuthToken } from "../../services/api";
+import { api } from "../../services/api";
+import { establishAuthenticatedSession } from "../../services/authSession";
 import {
   feedbackService,
   useFeedbackService,
@@ -105,19 +106,35 @@ export default function VerifyEmailScreen() {
       const response = await api.auth.verifyEmail({ token });
       const authToken = response?.token;
 
-      // Only enter protected screens if the backend issued a JWT
-      // and the app successfully saved the authentication session.
+      // Only enter protected screens after establishing the authenticated session.
       if (authToken) {
         try {
-          await setAuthToken(authToken);
-        } catch (storageError) {
+          const userId = response?.user?.id;
+
+          if (
+            typeof userId !== "number" ||
+            !Number.isSafeInteger(userId) ||
+            userId <= 0
+          ) {
+            throw new Error(
+              "The server did not return a valid account identity.",
+            );
+          }
+
+          await establishAuthenticatedSession(authToken, userId);
+        } catch (sessionError) {
+          console.warn(
+            "[EmailVerification] Automatic sign-in could not be completed.",
+            sessionError,
+          );
+
           setStatus("success");
           setErrorMessage(
-            "Your email was verified, but DocuGuard couldn't save your login session. Please sign in manually.",
+            "Your email was verified, but automatic sign-in couldn't be completed. Please sign in manually.",
           );
 
           feedbackService.error(
-            "Your email was verified, but your login session could not be saved. Please sign in manually.",
+            "Your email was verified, but automatic sign-in couldn't be completed. Please sign in manually.",
           );
 
           return;
