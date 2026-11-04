@@ -1,9 +1,13 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
-import { AppState, AppStateStatus } from "react-native";
+import { AppState, AppStateStatus, DeviceEventEmitter } from "react-native";
 import * as LocalAuthentication from "expo-local-authentication";
 import * as SecureStore from "expo-secure-store";
-import { api, setAuthToken } from "../services/api";
-import { getUserProfile, switchLocalUser } from "../services/localDatabase";
+import { api } from "../services/api";
+import {
+  getLocalDataOwnerIdForSessionExpiration,
+  getUserProfile,
+  switchLocalUser,
+} from "../services/localDatabase";
 import {
   View,
   Text,
@@ -54,10 +58,42 @@ export function useAppLock() {
   const sessionVerificationFailedRef = useRef(false);
 
   const lastActiveTimeRef = useRef(Date.now());
+  const appStateRef = useRef<AppStateStatus>(AppState.currentState ?? "active");
+  const backgroundTransitionIdRef = useRef(0);
+  const foregroundCheckInProgressRef = useRef(false);
+  const pendingForegroundCheckRef = useRef(false);
+  const foregroundCheckHandlerRef = useRef<
+    ((nextAppState: AppStateStatus) => Promise<void>) | null
+  >(null);
+  const backgroundTimestampWriteRef = useRef<Promise<void> | null>(null);
   const appLockEnabledRef = useRef(false);
   const biometricEnabledRef = useRef(false);
   const lockTimeoutRef = useRef(DEFAULT_APP_LOCK_DELAY);
   const mountedRef = useRef(true);
+
+  // Serialize all access to the persisted background timestamp.
+  const backgroundTimestampQueueRef = useRef<Promise<void>>(Promise.resolve());
+
+  const runBackgroundTimestampOperation = async <T,>(
+    operation: () => Promise<T>,
+  ): Promise<T> => {
+    const previousOperation = backgroundTimestampQueueRef.current;
+
+    let releaseOperation: (() => void) | undefined;
+    const currentOperation = new Promise<void>((resolve) => {
+      releaseOperation = resolve;
+    });
+
+    backgroundTimestampQueueRef.current = currentOperation;
+
+    await previousOperation;
+
+    try {
+      return await operation();
+    } finally {
+      releaseOperation?.();
+    }
+  };
 
   const resetSessionExpired = useCallback(() => {
     sessionExpiredRef.current = false;
@@ -105,13 +141,16 @@ export function useAppLock() {
           appLockEnabledRef.current = enabled;
         }
 
-        if (storedTimeout !== null) {
-          const parsedTimeout = Number.parseInt(storedTimeout, 10);
+        // App Lock uses the confirmed fixed 30-second background delay.
+        // Migrate any older saved timeout so it cannot override this policy.
+        setLockTimeout(DEFAULT_APP_LOCK_DELAY);
+        lockTimeoutRef.current = DEFAULT_APP_LOCK_DELAY;
 
-          if (Number.isFinite(parsedTimeout) && parsedTimeout >= 0) {
-            setLockTimeout(parsedTimeout);
-            lockTimeoutRef.current = parsedTimeout;
-          }
+        if (storedTimeout !== String(DEFAULT_APP_LOCK_DELAY)) {
+          await SecureStore.setItemAsync(
+            APP_LOCK_TIMEOUT_KEY,
+            String(DEFAULT_APP_LOCK_DELAY),
+          );
         }
       } catch (error) {
         console.error("Failed to load app-lock preferences:", error);
@@ -141,17 +180,29 @@ export function useAppLock() {
 
   const checkBiometricSupport = useCallback(async () => {
     try {
-      const [hasHardware, isEnrolled, token] = await Promise.all([
+      const [
+        hasHardware,
+        isEnrolled,
+        token,
+        biometricPreference,
+        appLockPreference,
+      ] = await Promise.all([
         LocalAuthentication.hasHardwareAsync(),
         LocalAuthentication.isEnrolledAsync(),
         SecureStore.getItemAsync("userToken"),
+        SecureStore.getItemAsync("biometricEnabled"),
+        SecureStore.getItemAsync(APP_LOCK_ENABLED_KEY),
       ]);
 
-      const enabled = hasHardware && isEnrolled && !!token;
+      const enabled =
+        biometricPreference === "true" && hasHardware && isEnrolled && !!token;
 
       if (mountedRef.current) {
         setBiometricEnabled(enabled);
         biometricEnabledRef.current = enabled;
+        const appLockEnabled = appLockPreference === "true";
+        setAppLockEnabled(appLockEnabled);
+        appLockEnabledRef.current = appLockEnabled;
       }
 
       return enabled;
@@ -169,6 +220,15 @@ export function useAppLock() {
 
   useEffect(() => {
     void checkBiometricSupport();
+
+    const subscription = DeviceEventEmitter.addListener(
+      "docuguard.securityPreferencesChanged",
+      () => {
+        void checkBiometricSupport();
+      },
+    );
+
+    return () => subscription.remove();
   }, [checkBiometricSupport]);
 
   /**
@@ -190,30 +250,36 @@ export function useAppLock() {
     expirationInProgressRef.current = true;
 
     try {
-      const token = await SecureStore.getItemAsync("userToken");
+      // Capture a consistent token and account-owner snapshot before logout.
+      const [token, ownerId] = await Promise.all([
+        api.getStoredToken(),
+        getLocalDataOwnerIdForSessionExpiration(),
+      ]);
 
-      if (token) {
-        /*
-         * The session is closed through the api client.
-         *
-         * The client keeps a copy of the token in memory, and the request
-         * interceptor prefers that copy. Deleting the token from the secure
-         * store alone left the session usable for the requests that follow.
-         */
-        await setAuthToken(null);
+      const logoutConfirmed = await api.auth.logout(token, ownerId);
 
-        // Confirm that the token is actually gone.
-        const remainingToken = await SecureStore.getItemAsync("userToken");
-
-        if (remainingToken) {
-          throw new Error("The authentication token still exists.");
+      // A false result means the token or owner changed while expiration
+      // was pending. Preserve the current session and its timestamp.
+      if (!logoutConfirmed) {
+        if (mountedRef.current) {
+          setIsLocked(true);
         }
+
+        return false;
       }
 
-      // Clear the timestamp separately. Timestamp cleanup failure
-      // must not reverse a confirmed token deletion.
+      // Confirm that the persisted token is actually gone.
+      const remainingToken = await SecureStore.getItemAsync("userToken");
+
+      if (remainingToken !== null) {
+        throw new Error("The authentication token still exists.");
+      }
+
+      // Timestamp cleanup failure must not reverse confirmed token deletion.
       try {
-        await SecureStore.deleteItemAsync(SESSION_BACKGROUND_AT_KEY);
+        await runBackgroundTimestampOperation(() =>
+          SecureStore.deleteItemAsync(SESSION_BACKGROUND_AT_KEY),
+        );
       } catch (error) {
         console.warn("Failed to clear the background timestamp:", error);
       }
@@ -243,26 +309,43 @@ export function useAppLock() {
       expirationInProgressRef.current = false;
     }
   }, []);
-
   // Verify the previous session before RootLayout finishes its
   // initial authentication check.
   useEffect(() => {
     if (!preferencesLoaded) return;
 
     let cancelled = false;
+    const startupTransitionId = backgroundTransitionIdRef.current;
+
+    const isStartupCurrent = () =>
+      !cancelled &&
+      mountedRef.current &&
+      appStateRef.current === "active" &&
+      backgroundTransitionIdRef.current === startupTransitionId;
+
+    const clearStartupTimestamp = () =>
+      runBackgroundTimestampOperation(async () => {
+        if (!isStartupCurrent()) return;
+
+        await SecureStore.deleteItemAsync(SESSION_BACKGROUND_AT_KEY);
+      });
 
     const checkPreviousSession = async () => {
       try {
         const [token, storedBackgroundAt] = await Promise.all([
           SecureStore.getItemAsync("userToken"),
-          SecureStore.getItemAsync(SESSION_BACKGROUND_AT_KEY),
+          runBackgroundTimestampOperation(() =>
+            SecureStore.getItemAsync(SESSION_BACKGROUND_AT_KEY),
+          ),
         ]);
 
-        if (cancelled || !mountedRef.current) return;
+        if (!isStartupCurrent()) return;
 
         if (!token) {
           if (storedBackgroundAt) {
-            await SecureStore.deleteItemAsync(SESSION_BACKGROUND_AT_KEY);
+            await clearStartupTimestamp();
+
+            if (!isStartupCurrent()) return;
           }
 
           setIsLocked(false);
@@ -289,8 +372,6 @@ export function useAppLock() {
         const backgroundAt = Number(storedBackgroundAt);
 
         if (!Number.isFinite(backgroundAt) || backgroundAt <= 0) {
-          // We cannot establish the session's previous background time.
-          // Fail closed rather than silently trusting this session.
           sessionVerificationFailedRef.current = true;
           setIsLocked(true);
           return;
@@ -303,7 +384,10 @@ export function useAppLock() {
 
           if (!expired) {
             sessionVerificationFailedRef.current = true;
-            setIsLocked(true);
+
+            if (mountedRef.current) {
+              setIsLocked(true);
+            }
           }
 
           return;
@@ -313,21 +397,32 @@ export function useAppLock() {
           setIsLocked(true);
         }
 
-        lastActiveTimeRef.current = Date.now();
+        await clearStartupTimestamp();
 
-        await SecureStore.deleteItemAsync(SESSION_BACKGROUND_AT_KEY);
+        if (!isStartupCurrent()) return;
+
+        lastActiveTimeRef.current = Date.now();
       } catch (error) {
         console.error("Failed to verify the previous session:", error);
 
-        sessionVerificationFailedRef.current = true;
-
-        if (!cancelled && mountedRef.current) {
+        if (isStartupCurrent()) {
+          sessionVerificationFailedRef.current = true;
           setIsLocked(true);
         }
       } finally {
         if (!cancelled && mountedRef.current) {
           sessionCheckCompleteRef.current = true;
           setSessionCheckComplete(true);
+
+          if (
+            pendingForegroundCheckRef.current &&
+            appStateRef.current === "active"
+          ) {
+            pendingForegroundCheckRef.current = false;
+            void Promise.resolve().then(() =>
+              foregroundCheckHandlerRef.current?.("active"),
+            );
+          }
         }
       }
     };
@@ -343,61 +438,133 @@ export function useAppLock() {
     async (nextAppState: AppStateStatus) => {
       if (!mountedRef.current) return;
 
-      // APP ENTERS BACKGROUND
+      const previousAppState = appStateRef.current;
+      appStateRef.current = nextAppState;
+
+      // Record only the first transition away from active.
+      // Preserve the timestamp through inactive -> background.
       if (nextAppState === "background" || nextAppState === "inactive") {
-        const backgroundAt = Date.now();
-        lastActiveTimeRef.current = backgroundAt;
+        if (previousAppState === "active") {
+          const backgroundAt = Date.now();
+          const transitionId = ++backgroundTransitionIdRef.current;
 
-        try {
-          const token = await SecureStore.getItemAsync("userToken");
+          lastActiveTimeRef.current = backgroundAt;
 
-          if (!mountedRef.current) return;
+          const writePromise = (async () => {
+            try {
+              await runBackgroundTimestampOperation(async () => {
+                if (
+                  !mountedRef.current ||
+                  backgroundTransitionIdRef.current !== transitionId
+                )
+                  return;
 
-          if (token) {
-            await SecureStore.setItemAsync(
-              SESSION_BACKGROUND_AT_KEY,
-              String(backgroundAt),
-            );
-          } else {
-            await SecureStore.deleteItemAsync(SESSION_BACKGROUND_AT_KEY);
-          }
-        } catch (error) {
-          console.error("Failed to record the background timestamp:", error);
+                const token = await SecureStore.getItemAsync("userToken");
 
-          // We cannot safely trust the session without knowing
-          // when the app entered the background.
-          sessionVerificationFailedRef.current = true;
-          setIsLocked(true);
+                if (
+                  !mountedRef.current ||
+                  backgroundTransitionIdRef.current !== transitionId
+                )
+                  return;
 
-          const expired = await expireSession();
+                if (token) {
+                  await SecureStore.setItemAsync(
+                    SESSION_BACKGROUND_AT_KEY,
+                    String(backgroundAt),
+                  );
+                } else {
+                  await SecureStore.deleteItemAsync(SESSION_BACKGROUND_AT_KEY);
+                }
+              });
+            } catch (error) {
+              console.error(
+                "Failed to record the background timestamp:",
+                error,
+              );
 
-          if (!expired && mountedRef.current) {
-            setIsLocked(true);
+              sessionVerificationFailedRef.current = true;
+
+              if (mountedRef.current) {
+                setIsLocked(true);
+              }
+
+              const expired = await expireSession();
+
+              if (!expired && mountedRef.current) {
+                setIsLocked(true);
+              }
+            }
+          })();
+
+          backgroundTimestampWriteRef.current = writePromise;
+          await writePromise;
+
+          // Do not clear a newer transition's pending write.
+          if (
+            backgroundTransitionIdRef.current === transitionId &&
+            backgroundTimestampWriteRef.current === writePromise
+          ) {
+            backgroundTimestampWriteRef.current = null;
           }
         }
 
         return;
       }
 
-      // Ignore transitions that are not a return to the foreground.
       if (nextAppState !== "active") return;
 
-      // Startup must finish its first security check first.
-      if (!sessionCheckCompleteRef.current) return;
+      if (!sessionCheckCompleteRef.current) {
+        pendingForegroundCheckRef.current = true;
+        return;
+      }
+
+      if (foregroundCheckInProgressRef.current) {
+        pendingForegroundCheckRef.current = true;
+        return;
+      }
+
+      pendingForegroundCheckRef.current = false;
+      foregroundCheckInProgressRef.current = true;
+
+      const resumeTransitionId = backgroundTransitionIdRef.current;
+
+      const isForegroundCurrent = () =>
+        mountedRef.current &&
+        appStateRef.current === "active" &&
+        backgroundTransitionIdRef.current === resumeTransitionId;
 
       try {
+        // Finish any pending background timestamp write first.
+        const pendingWrite = backgroundTimestampWriteRef.current;
+
+        if (pendingWrite) {
+          await pendingWrite;
+
+          if (backgroundTimestampWriteRef.current === pendingWrite) {
+            backgroundTimestampWriteRef.current = null;
+          }
+        }
+
+        if (!isForegroundCurrent()) return;
+
         const [token, storedBackgroundAt] = await Promise.all([
           SecureStore.getItemAsync("userToken"),
-          SecureStore.getItemAsync(SESSION_BACKGROUND_AT_KEY),
+          runBackgroundTimestampOperation(() =>
+            SecureStore.getItemAsync(SESSION_BACKGROUND_AT_KEY),
+          ),
         ]);
 
-        if (!mountedRef.current) return;
+        if (!isForegroundCurrent()) return;
 
-        // No authentication token means there is no session to unlock.
         if (!token) {
           if (storedBackgroundAt) {
-            await SecureStore.deleteItemAsync(SESSION_BACKGROUND_AT_KEY);
+            await runBackgroundTimestampOperation(async () => {
+              if (!isForegroundCurrent()) return;
+              await SecureStore.deleteItemAsync(SESSION_BACKGROUND_AT_KEY);
+            });
           }
+
+          if (!isForegroundCurrent()) return;
 
           setIsLocked(false);
           setBiometricEnabled(false);
@@ -422,7 +589,7 @@ export function useAppLock() {
 
           const timeAway = Math.max(0, Date.now() - backgroundAt);
 
-          // Session expiration always takes precedence over app lock.
+          // The 30-minute session expiration takes precedence.
           if (timeAway >= SESSION_TIMEOUT_MS) {
             const expired = await expireSession();
 
@@ -436,37 +603,64 @@ export function useAppLock() {
           if (appLockEnabledRef.current && timeAway >= lockTimeoutRef.current) {
             setIsLocked(true);
           }
-
-          await SecureStore.deleteItemAsync(SESSION_BACKGROUND_AT_KEY);
+        } else if (appLockEnabledRef.current) {
+          // A missing timestamp cannot establish how long the app
+          // was away. Require authentication without inventing a timeout.
+          setIsLocked(true);
         }
 
-        if (!mountedRef.current) return;
+        if (!isForegroundCurrent()) return;
 
         await checkBiometricSupport();
 
-        if (!mountedRef.current) return;
+        if (!isForegroundCurrent()) return;
 
-        // Keep the existing in-process app-lock behavior as a fallback.
-        const now = Date.now();
-        const timeAway = Math.max(0, now - lastActiveTimeRef.current);
-
-        if (appLockEnabledRef.current && timeAway >= lockTimeoutRef.current) {
-          setIsLocked(true);
+        // Never delete a timestamp if another background transition
+        // occurred while this foreground check was running.
+        if (
+          appStateRef.current !== "active" ||
+          backgroundTransitionIdRef.current !== resumeTransitionId
+        ) {
+          return;
         }
 
-        lastActiveTimeRef.current = now;
+        if (storedBackgroundAt) {
+          await runBackgroundTimestampOperation(async () => {
+            if (!isForegroundCurrent()) return;
+            await SecureStore.deleteItemAsync(SESSION_BACKGROUND_AT_KEY);
+          });
+        }
+
+        if (!isForegroundCurrent()) return;
+
+        lastActiveTimeRef.current = Date.now();
       } catch (error) {
         console.error("Failed to check the session on app resume:", error);
 
-        sessionVerificationFailedRef.current = true;
-
-        if (mountedRef.current) {
+        if (isForegroundCurrent()) {
+          sessionVerificationFailedRef.current = true;
           setIsLocked(true);
+        }
+      } finally {
+        foregroundCheckInProgressRef.current = false;
+
+        if (
+          pendingForegroundCheckRef.current &&
+          mountedRef.current &&
+          appStateRef.current === "active" &&
+          sessionCheckCompleteRef.current
+        ) {
+          pendingForegroundCheckRef.current = false;
+          void Promise.resolve().then(() =>
+            foregroundCheckHandlerRef.current?.("active"),
+          );
         }
       }
     },
     [checkBiometricSupport, expireSession],
   );
+
+  foregroundCheckHandlerRef.current = handleAppStateChange;
 
   useEffect(() => {
     const subscription = AppState.addEventListener(
@@ -478,7 +672,6 @@ export function useAppLock() {
       subscription.remove();
     };
   }, [handleAppStateChange]);
-
   // BIOMETRIC UNLOCK
   const unlockWithBiometric = useCallback(async (): Promise<boolean> => {
     try {
@@ -490,13 +683,21 @@ export function useAppLock() {
         return false;
       }
 
-      const [token, storedBackgroundAt, hasHardware, isEnrolled] =
-        await Promise.all([
-          SecureStore.getItemAsync("userToken"),
+      const [
+        token,
+        storedBackgroundAt,
+        hasHardware,
+        isEnrolled,
+        biometricPreference,
+      ] = await Promise.all([
+        SecureStore.getItemAsync("userToken"),
+        runBackgroundTimestampOperation(() =>
           SecureStore.getItemAsync(SESSION_BACKGROUND_AT_KEY),
-          LocalAuthentication.hasHardwareAsync(),
-          LocalAuthentication.isEnrolledAsync(),
-        ]);
+        ),
+        LocalAuthentication.hasHardwareAsync(),
+        LocalAuthentication.isEnrolledAsync(),
+        SecureStore.getItemAsync("biometricEnabled"),
+      ]);
 
       if (
         !token ||
@@ -526,7 +727,8 @@ export function useAppLock() {
         }
       }
 
-      if (!hasHardware || !isEnrolled) return false;
+      if (biometricPreference !== "true" || !hasHardware || !isEnrolled)
+        return false;
 
       const authResult = await LocalAuthentication.authenticateAsync({
         promptMessage: "Unlock DocuGuard to access your vault",
@@ -538,13 +740,26 @@ export function useAppLock() {
 
       // Recheck token and timestamp after the biometric prompt.
       // The session may have expired while authentication was open.
-      const [currentToken, currentBackgroundAt] = await Promise.all([
-        SecureStore.getItemAsync("userToken"),
-        SecureStore.getItemAsync(SESSION_BACKGROUND_AT_KEY),
-      ]);
+      const [currentToken, currentBackgroundAt, currentBiometricPreference] =
+        await Promise.all([
+          SecureStore.getItemAsync("userToken"),
+          runBackgroundTimestampOperation(() =>
+            SecureStore.getItemAsync(SESSION_BACKGROUND_AT_KEY),
+          ),
+          SecureStore.getItemAsync("biometricEnabled"),
+        ]);
+
+      if (currentBiometricPreference !== "true") {
+        if (mountedRef.current) {
+          setBiometricEnabled(false);
+          biometricEnabledRef.current = false;
+        }
+        return false;
+      }
 
       if (
         !currentToken ||
+        currentToken !== token ||
         sessionExpiredRef.current ||
         expirationInProgressRef.current ||
         sessionVerificationFailedRef.current
@@ -568,6 +783,45 @@ export function useAppLock() {
             setIsLocked(true);
           }
 
+          return false;
+        }
+      }
+
+      const sessionValid = await api.validateStoredSession(token);
+      if (!sessionValid) return false;
+
+      const [verifiedToken, verifiedBackgroundAt, verifiedBiometricPreference] =
+        await Promise.all([
+          SecureStore.getItemAsync("userToken"),
+          runBackgroundTimestampOperation(() =>
+            SecureStore.getItemAsync(SESSION_BACKGROUND_AT_KEY),
+          ),
+          SecureStore.getItemAsync("biometricEnabled"),
+        ]);
+
+      if (
+        verifiedToken !== token ||
+        verifiedBiometricPreference !== "true" ||
+        sessionExpiredRef.current ||
+        expirationInProgressRef.current ||
+        sessionVerificationFailedRef.current
+      ) {
+        return false;
+      }
+
+      if (verifiedBackgroundAt) {
+        const backgroundAt = Number(verifiedBackgroundAt);
+
+        if (!Number.isFinite(backgroundAt) || backgroundAt <= 0) {
+          sessionVerificationFailedRef.current = true;
+          setIsLocked(true);
+          return false;
+        }
+
+        if (Date.now() - backgroundAt >= SESSION_TIMEOUT_MS) {
+          const expired = await expireSession();
+
+          if (!expired) setIsLocked(true);
           return false;
         }
       }
@@ -598,7 +852,9 @@ export function useAppLock() {
 
         const [storedToken, storedBackgroundAt] = await Promise.all([
           SecureStore.getItemAsync("userToken"),
-          SecureStore.getItemAsync(SESSION_BACKGROUND_AT_KEY),
+          runBackgroundTimestampOperation(() =>
+            SecureStore.getItemAsync(SESSION_BACKGROUND_AT_KEY),
+          ),
         ]);
 
         if (
@@ -639,11 +895,17 @@ export function useAppLock() {
           password,
         });
 
-        // Never let an in-progress expiration or 2FA requirement
-        // be bypassed by the password-unlock flow.
+        // Type-safe check using casting for potential server extension properties like tempToken
+        const loginResponse = response as any;
+
+        // Never let an in-progress expiration or strict 2FA challenge
+        // be bypassed by the password-unlock flow if 2FA is active.
         if (
           !response.token ||
-          response.requiresTwoFactor ||
+          loginResponse.requiresTwoFactor ||
+          typeof response.user?.id !== "number" ||
+          !Number.isSafeInteger(response.user.id) ||
+          response.user.id <= 0 ||
           sessionExpiredRef.current ||
           expirationInProgressRef.current ||
           sessionVerificationFailedRef.current
@@ -654,11 +916,14 @@ export function useAppLock() {
         // Recheck the original session before replacing its token.
         const [currentToken, currentBackgroundAt] = await Promise.all([
           SecureStore.getItemAsync("userToken"),
-          SecureStore.getItemAsync(SESSION_BACKGROUND_AT_KEY),
+          runBackgroundTimestampOperation(() =>
+            SecureStore.getItemAsync(SESSION_BACKGROUND_AT_KEY),
+          ),
         ]);
 
         if (
           !currentToken ||
+          currentToken !== storedToken ||
           sessionExpiredRef.current ||
           expirationInProgressRef.current ||
           sessionVerificationFailedRef.current
@@ -686,16 +951,46 @@ export function useAppLock() {
           }
         }
 
-        await SecureStore.setItemAsync("userToken", response.token);
+        // Safely assert response.token is present for replacement
+        const newToken = response.token;
+        if (!newToken) return false;
 
-        if (response.user?.id != null) {
-          await switchLocalUser(response.user.id);
+        const tokenReplaced = await api.replaceAuthTokenIfCurrent(
+          storedToken,
+          newToken,
+        );
+
+        if (!tokenReplaced) return false;
+
+        try {
+          await switchLocalUser(response.user!.id);
+        } catch (error) {
+          try {
+            await api.clearAuthTokenIfMatches(newToken);
+          } catch (cleanupError) {
+            console.error(
+              "Password unlock token cleanup failed:",
+              cleanupError,
+            );
+          }
+          throw error;
         }
 
         const verifiedToken = await SecureStore.getItemAsync("userToken");
 
+        if (verifiedToken !== newToken) {
+          try {
+            await api.clearAuthTokenIfMatches(newToken);
+          } catch (cleanupError) {
+            console.error(
+              "Password unlock token cleanup failed:",
+              cleanupError,
+            );
+          }
+          return false;
+        }
+
         if (
-          !verifiedToken ||
           sessionExpiredRef.current ||
           expirationInProgressRef.current ||
           sessionVerificationFailedRef.current

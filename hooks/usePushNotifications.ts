@@ -89,12 +89,18 @@ export async function registerForPushNotificationsAsync() {
   let deviceToken;
 
   if (Platform.OS === "android") {
-    await Notifications.setNotificationChannelAsync("default", {
-      name: "default",
+    const alertChannel = {
+      name: "DocuGuard Alerts",
       importance: Notifications.AndroidImportance.MAX,
       vibrationPattern: [0, 250, 250, 250],
       lightColor: "#FF231F7C",
-    });
+      sound: "info.mp3",
+    };
+
+    await Notifications.setNotificationChannelAsync(
+      "docuguard-alerts-v2",
+      alertChannel,
+    );
   }
 
   if (Device.isDevice) {
@@ -136,7 +142,10 @@ export async function registerForPushNotificationsAsync() {
 }
 
 // Helper: Send token to your backend API server
-async function syncTokenToBackend(tokens: { expoToken?: string; deviceToken?: string }) {
+async function syncTokenToBackend(tokens: {
+  expoToken?: string;
+  deviceToken?: string;
+}) {
   try {
     await api.client.post("/api/notifications/push-token", {
       expoPushToken: tokens.expoToken,
@@ -196,9 +205,21 @@ export async function registerPushTokenWithBackend(): Promise<void> {
  * leaves the device registered for the account, and the user has to be told
  * that the notifications of the account they left can still reach it.
  */
-export async function removePushTokenFromBackend(): Promise<boolean> {
+export async function removePushTokenFromBackend(
+  token: string,
+): Promise<boolean> {
+  if (!token || !token.trim()) {
+    console.warn("Push token removal skipped: no session token was supplied.");
+    return false;
+  }
+
   try {
-    await api.client.delete("/api/notifications/push-token");
+    await api.client.delete(
+      "/api/notifications/push-token",
+      {
+        headers: { Authorization: `Bearer ${token}` },
+      },
+    );
     return true;
   } catch (error: any) {
     console.error("Push token removal failed:", {

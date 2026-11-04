@@ -17,29 +17,154 @@ const apiClient: AxiosInstance = axios.create({
 });
 
 let authToken: string | null = null;
+let authTokenLoaded = false;
 
-export async function setAuthToken(token: string | null) {
-  authToken = token;
-  if (token) {
-    await SecureStore.setItemAsync("userToken", token);
-  } else {
-    await SecureStore.deleteItemAsync("userToken");
+let authTokenQueue: Promise<void> = Promise.resolve();
+
+async function runAuthTokenOperation<T>(
+  operation: () => Promise<T>,
+): Promise<T> {
+  const previousOperation = authTokenQueue;
+  let releaseOperation!: () => void;
+
+  authTokenQueue = new Promise<void>((resolve) => {
+    releaseOperation = resolve;
+  });
+
+  await previousOperation;
+
+  try {
+    return await operation();
+  } finally {
+    releaseOperation();
   }
 }
 
-export async function getStoredToken(): Promise<string | null> {
-  if (authToken) return authToken;
-  authToken = await SecureStore.getItemAsync("userToken");
-  return authToken;
+export async function setAuthToken(token: string | null): Promise<void> {
+  return runAuthTokenOperation(async () => {
+    if (token) {
+      // Persist first so failed storage cannot create a false in-memory session.
+      await SecureStore.setItemAsync("userToken", token);
+      authToken = token;
+      authTokenLoaded = true;
+      return;
+    }
+
+    // Invalidate memory immediately, even if storage deletion fails.
+    authToken = null;
+    authTokenLoaded = true;
+    await SecureStore.deleteItemAsync("userToken");
+  });
 }
+
+/**
+ * Establishes the token and local account ownership as one serialized
+ * authentication operation. Keep the token queue held until the local
+ * ownership transition has completed.
+ */
+async function setAuthTokenAndSwitchLocalUser(
+  token: string,
+  userId: number,
+): Promise<void> {
+  if (typeof token !== "string" || token.trim().length === 0) {
+    throw new Error("The server did not return a valid session token.");
+  }
+
+  if (!Number.isSafeInteger(userId) || userId <= 0) {
+    throw new Error("The server did not return a valid account identity.");
+  }
+
+  return runAuthTokenOperation(async () => {
+    await SecureStore.setItemAsync("userToken", token);
+    authToken = token;
+    authTokenLoaded = true;
+
+    // Keep the lock order consistent with logout: auth queue, then local queue.
+    const { switchLocalUser } = await import("./localDatabase");
+    await switchLocalUser(userId);
+  });
+}
+export async function replaceAuthTokenIfCurrent(
+  expectedToken: string,
+  newToken: string,
+): Promise<boolean> {
+  if (!expectedToken || !newToken) return false;
+
+  return runAuthTokenOperation(async () => {
+    const storedToken = await SecureStore.getItemAsync("userToken");
+
+    if (storedToken !== expectedToken) return false;
+    if (authTokenLoaded && authToken !== expectedToken) return false;
+
+    await SecureStore.setItemAsync("userToken", newToken);
+    authToken = newToken;
+    authTokenLoaded = true;
+    return true;
+  });
+}
+export async function getStoredToken(): Promise<string | null> {
+  return runAuthTokenOperation(async () => {
+    if (authTokenLoaded) return authToken;
+
+    const storedToken = await SecureStore.getItemAsync("userToken");
+    authToken = storedToken;
+    authTokenLoaded = true;
+    return storedToken;
+  });
+}
+
+async function clearAuthTokenIfMatches(
+  expectedToken: string | null,
+): Promise<boolean> {
+  return runAuthTokenOperation(async () => {
+    const storedToken = await SecureStore.getItemAsync("userToken");
+
+    if (storedToken !== expectedToken) return false;
+    if (authTokenLoaded && authToken !== expectedToken) return false;
+
+    authToken = null;
+    authTokenLoaded = true;
+
+    if (storedToken !== null) {
+      await SecureStore.deleteItemAsync("userToken");
+    }
+
+    return true;
+  });
+}
+
+const PUBLIC_AUTH_PATHS = [
+  "/auth/login",
+  "/auth/admin-login",
+  "/auth/register",
+  "/auth/verify-email",
+  "/auth/resend-verification",
+  "/auth/forgot-password",
+  "/auth/reset-password",
+  "/auth/check-email",
+];
 
 apiClient.interceptors.request.use(
   async (config: InternalAxiosRequestConfig) => {
-    const token = await getStoredToken();
-    if (token) {
-      config.headers = config.headers || {};
-      config.headers.Authorization = `Bearer ${token}`;
+    const requestPath = (config.url || "").split("?")[0].replace(/\/+$/, "");
+
+    const isPublicAuthRequest = PUBLIC_AUTH_PATHS.some(
+      (path) => requestPath === path || requestPath.endsWith(path),
+    );
+
+    if (isPublicAuthRequest) {
+      config.headers.delete("Authorization");
+      return config;
     }
+
+    if (!config.headers.Authorization) {
+      const token = await getStoredToken();
+
+      if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
+      }
+    }
+
     return config;
   },
   (error) => Promise.reject(error),
@@ -117,6 +242,7 @@ export const auth = {
     rememberMe?: boolean;
     /** Second factor, required only when the account has TOTP enrolled. */
     totpCode?: string;
+    recoveryCode?: string;
   }): Promise<LoginResponse> => {
     const response = await apiClient.post("/auth/login", data);
     return response.data;
@@ -134,7 +260,11 @@ export const auth = {
 
   verifyEmail: async (data: {
     token: string;
-  }): Promise<{ message: string; token?: string }> => {
+  }): Promise<{
+    message: string;
+    token?: string;
+    user?: { id: number; email: string; role?: string };
+  }> => {
     const response = await apiClient.post("/auth/verify-email", {
       token: data.token,
     });
@@ -182,19 +312,71 @@ export const auth = {
     return response.data;
   },
 
-  logout: async (): Promise<void> => {
-    // Purges the local vault and the local user id, not just the token.
-    // Deleting only "userToken" left every document on disk, readable by the
-    // next account to sign in on this device.
-    try {
-      const { clearLocalSession } = await import("./localDatabase");
-      await clearLocalSession();
-    } catch (error) {
-      // A purge failure must not strand the user in a signed-in state.
-      console.warn("Failed to clear local session data:", error);
+  logout: async (
+    tokenOverride?: string | null,
+    expectedOwnerId?: number | null,
+  ): Promise<boolean> => {
+    // An explicit null means no token; only undefined requests a lookup.
+    const token =
+      tokenOverride === undefined ? await getStoredToken() : tokenOverride;
+
+    const {
+      clearLocalSessionIfOwner,
+      getLocalDataOwnerIdForSessionExpiration,
+    } = await import("./localDatabase");
+
+    // Capture ownership before local cleanup.
+    const ownerId =
+      expectedOwnerId === undefined
+        ? await getLocalDataOwnerIdForSessionExpiration()
+        : expectedOwnerId;
+
+    // Serialize token verification, owner cleanup, and token deletion.
+    const localLogoutSucceeded = await runAuthTokenOperation(async () => {
+      const storedToken = await SecureStore.getItemAsync("userToken");
+
+      if (storedToken !== token) return false;
+      if (authTokenLoaded && authToken !== token) return false;
+
+      const ownershipCleared = await clearLocalSessionIfOwner(ownerId);
+
+      if (!ownershipCleared) return false;
+
+      // Recheck before deletion so an unexpected token write is not erased.
+      const latestStoredToken = await SecureStore.getItemAsync("userToken");
+
+      if (latestStoredToken !== token) return false;
+      if (authTokenLoaded && authToken !== token) return false;
+
+      authToken = null;
+      authTokenLoaded = true;
+
+      if (latestStoredToken !== null) {
+        await SecureStore.deleteItemAsync("userToken");
+      }
+
+      return true;
+    });
+
+    if (!localLogoutSucceeded) return false;
+
+    // Best-effort remote revocation; never delay local logout/navigation.
+    if (token) {
+      void apiClient
+        .post(
+          "/auth/logout",
+          {},
+          { headers: { Authorization: `Bearer ${token}` } },
+        )
+        .catch((error) => {
+          console.warn(
+            "Server-side session revocation could not be confirmed:",
+            error,
+          );
+        });
     }
-    await SecureStore.deleteItemAsync("userToken");
-    authToken = null;
+
+    return true;
   },
 };
 
@@ -224,7 +406,8 @@ export const documents = {
     uploadUrl: string,
     imageUri: string,
     fileType: string,
-  ): Promise<void> => {    if (typeof fetch === "undefined") {
+  ): Promise<void> => {
+    if (typeof fetch === "undefined") {
       throw new Error(
         "Upload requires fetch, which is not available in this environment.",
       );
@@ -251,8 +434,15 @@ export const documents = {
     }
   },
 
-  create: async (payload: any): Promise<DocumentRecordResponse> => {
-    const response = await apiClient.post("/documents", payload);
+  create: async (
+    payload: any,
+    headers?: any,
+  ): Promise<DocumentRecordResponse> => {
+    const response = await apiClient.post(
+      "/documents",
+      payload,
+      headers ? { headers } : undefined,
+    );
     return response.data;
   },
 
@@ -394,6 +584,56 @@ export const profile = {
   },
 };
 
+export async function validateStoredSession(token: string): Promise<boolean> {
+  if (!token) return false;
+
+  try {
+    await apiClient.get("/profile", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    return true;
+  } catch (error: any) {
+    const status = error?.response?.status;
+
+    if (status === 401) {
+      const { getLocalDataOwnerIdForSessionExpiration } =
+        await import("./localDatabase");
+
+      const ownerId = await getLocalDataOwnerIdForSessionExpiration();
+      await auth.logout(token, ownerId);
+      return false;
+    }
+
+    throw error;
+  }
+}
+
+export async function runWithValidatedStoredSession<T>(
+  token: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  if (!token) {
+    throw new Error("An active authenticated session is required.");
+  }
+
+  const isValid = await validateStoredSession(token);
+
+  if (!isValid) {
+    throw new Error("Your session is no longer valid. Please sign in again.");
+  }
+
+  return runAuthTokenOperation(async () => {
+    const storedToken = await SecureStore.getItemAsync("userToken");
+
+    if (storedToken !== token || (authTokenLoaded && authToken !== token)) {
+      throw new Error("Your account session changed. Please try again.");
+    }
+
+    return operation();
+  });
+}
+
 export const api = {
   client: apiClient,
   auth,
@@ -402,7 +642,11 @@ export const api = {
   notifications,
   dashboard,
   profile,
+  validateStoredSession,
   setAuthToken,
+  setAuthTokenAndSwitchLocalUser,
+  replaceAuthTokenIfCurrent,
+  clearAuthTokenIfMatches,
   getStoredToken,
 };
 

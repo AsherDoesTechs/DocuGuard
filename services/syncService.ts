@@ -8,6 +8,7 @@ import {
   getAllDocuments,
   getUnsyncedReminders,
   getLocalUserId,
+  reconcileRealtimeDocument,
   markReminderSynced,
   updateDocumentSyncStatus,
   markDocumentSyncedWithCloud,
@@ -117,13 +118,19 @@ const documentSyncDeps = {
   deleteCloudDocument: async (cloudId: number) => {
     await api.documents.delete(cloudId);
   },
-  markSynced: (docId: number, cloudId: number | null, serverUpdatedAt: string | null) =>
-    markDocumentSyncedWithCloud(docId, cloudId, serverUpdatedAt),
+  markSynced: (
+    docId: number,
+    cloudId: number | null,
+    serverUpdatedAt: string | null,
+  ) => markDocumentSyncedWithCloud(docId, cloudId, serverUpdatedAt),
   markFailed: (docId: number) => updateDocumentSyncStatus(docId, "failed"),
   markDeleted: (docId: number) => deleteDocument(docId),
   formatCategory: (value: string | undefined) =>
     formatCategoryForBackend(value ?? "other"),
-  onInternalError: (error: unknown, context: { stage: string; docId?: number }) => {
+  onInternalError: (
+    error: unknown,
+    context: { stage: string; docId?: number },
+  ) => {
     console.warn(
       `Sync: internal error during ${context.stage} for document ${context.docId ?? "?"}`,
       error,
@@ -222,7 +229,10 @@ async function performSync(options: SyncToCloudOptions): Promise<SyncResult> {
       }
     }
 
-    if (Number.isSafeInteger(onlyDocumentId) && (onlyDocumentId as number) > 0) {
+    if (
+      Number.isSafeInteger(onlyDocumentId) &&
+      (onlyDocumentId as number) > 0
+    ) {
       scopeIds.add(onlyDocumentId as number);
     }
 
@@ -534,4 +544,53 @@ export async function loadDocumentsFromLocal(): Promise<LocalDocument[]> {
 
 export async function loadRemindersFromLocal(): Promise<LocalReminder[]> {
   return await getAllReminders();
+}
+
+/**
+ * Downloads the signed-in user's cloud documents into local SQLite.
+ * Existing reconciliation safeguards protect pending local edits.
+ */
+
+export async function pullDocumentsFromCloud(): Promise<number> {
+  return syncMutex.run(async () => {
+    const token = await SecureStore.getItemAsync("userToken");
+
+    if (!token) return 0;
+
+    const localUserId = await getLocalUserId();
+
+    if (localUserId === null) return 0;
+
+    const remoteDocuments = await api.documents.getAll();
+    let processed = 0;
+
+    for (const remote of remoteDocuments) {
+      const ownerValue = remote.userId ?? remote.user_id;
+
+      // Reject records explicitly associated with another account.
+      if (
+        ownerValue !== null &&
+        ownerValue !== undefined &&
+        Number(ownerValue) !== localUserId
+      ) {
+        continue;
+      }
+
+      // GET /documents is authenticated and already filters records
+      // by the signed-in account. Older API responses omit userId,
+      // so supply the verified local account ID when it is absent.
+      const ownedRemote = {
+        ...remote,
+        userId:
+          ownerValue === null || ownerValue === undefined
+            ? localUserId
+            : Number(ownerValue),
+      };
+
+      await reconcileRealtimeDocument("INSERT", ownedRemote);
+      processed++;
+    }
+
+    return processed;
+  });
 }

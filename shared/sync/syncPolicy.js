@@ -20,7 +20,8 @@ const {
   canonicalizeServerRevision,
 } = require("./serverRevision");
 
-const SYNC_FAILURE_KIND = Object.freeze({  /** No usable connection. The document stays pending and is retried later. */
+const SYNC_FAILURE_KIND = Object.freeze({
+  /** No usable connection. The document stays pending and is retried later. */
   OFFLINE: "offline",
   /** The server row moved on. A human has to decide which side wins. */
   CONFLICT: "conflict",
@@ -46,9 +47,22 @@ const DEFAULT_BACKOFF_BASE_MS = 30 * 1000;
 const DEFAULT_BACKOFF_MAX_MS = 30 * 60 * 1000;
 const DEFAULT_BACKOFF_FACTOR = 2;
 
-const SERVER_CATEGORIES = ["identification", "financial", "medical", "legal", "academic", "other"];
+const SERVER_CATEGORIES = [
+  "identification",
+  "financial",
+  "medical",
+  "legal",
+  "academic",
+  "other",
+];
 const SERVER_STATUSES = ["active", "verified", "expired"];
-const SERVER_PROCESSING_STATUSES = ["pending", "uploading", "processing", "completed", "failed"];
+const SERVER_PROCESSING_STATUSES = [
+  "pending",
+  "uploading",
+  "processing",
+  "completed",
+  "failed",
+];
 
 /**
  * Turns any thrown value into a decision the sync engine can act on.
@@ -119,7 +133,8 @@ function classifySyncFailure(error) {
       retryable: false,
       permanent: true,
       status,
-      message: "The server rejected the document details. Review and try again.",
+      message:
+        "The server rejected the document details. Review and try again.",
     };
   }
 
@@ -139,7 +154,8 @@ function classifySyncFailure(error) {
       retryable: false,
       permanent: true,
       status,
-      message: "The server rejected the document details. Review and try again.",
+      message:
+        "The server rejected the document details. Review and try again.",
     };
   }
 
@@ -173,7 +189,9 @@ function computeBackoffDelayMs(attempts, options) {
       ? options.factor
       : DEFAULT_BACKOFF_FACTOR;
 
-  const count = Number.isFinite(attempts) ? Math.max(0, Math.floor(attempts)) : 0;
+  const count = Number.isFinite(attempts)
+    ? Math.max(0, Math.floor(attempts))
+    : 0;
 
   if (count === 0) {
     return 0;
@@ -284,9 +302,7 @@ const SYNC_GATE = Object.freeze({
 function evaluateSyncGate(state, options) {
   const force = Boolean(options && options.force);
   const now =
-    options && typeof options.now === "number"
-      ? options.now
-      : Date.now();
+    options && typeof options.now === "number" ? options.now : Date.now();
 
   if (force) {
     return {
@@ -359,7 +375,9 @@ function buildDocumentSyncPayload(doc, options) {
       "other",
     ),
     issuer: String(source.issuer || "").trim(),
-    documentNumber: String(source.documentNumber || "").trim().toUpperCase(),
+    documentNumber: String(source.documentNumber || "")
+      .trim()
+      .toUpperCase(),
     issueDate: source.issueDate ? String(source.issueDate) : null,
     expiryDate: source.expiryDate ? String(source.expiryDate) : null,
     status: pickEnum(source.status, SERVER_STATUSES, "active"),
@@ -376,8 +394,11 @@ function buildDocumentSyncPayload(doc, options) {
      * A failed upload is reported as failed, because that is the truth.
      */
     processingStatus:
-      pickEnum(source.processingStatus, SERVER_PROCESSING_STATUSES, "completed") ===
-      "failed"
+      pickEnum(
+        source.processingStatus,
+        SERVER_PROCESSING_STATUSES,
+        "completed",
+      ) === "failed"
         ? "failed"
         : "completed",
   };
@@ -386,7 +407,10 @@ function buildDocumentSyncPayload(doc, options) {
     payload.notes = source.notes;
   }
 
-  if (typeof source.riskScore === "number" && Number.isFinite(source.riskScore)) {
+  if (
+    typeof source.riskScore === "number" &&
+    Number.isFinite(source.riskScore)
+  ) {
     payload.riskScore = source.riskScore;
   }
 

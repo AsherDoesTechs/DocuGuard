@@ -16,18 +16,6 @@ import {
   getReminderIntervals,
   resolveDocumentAlertAction,
 } from "@/shared/dates/localDate";
-import { isRunningInExpoGo } from "expo";
-
-if (!isRunningInExpoGo()) {
-  Notifications.setNotificationHandler({
-    handleNotification: async () => ({
-      shouldShowBanner: true,
-      shouldShowList: true,
-      shouldPlaySound: true,
-      shouldSetBadge: true,
-    }),
-  });
-}
 
 export async function checkAndScheduleAlerts() {
   if (!(await isNotificationsEnabled())) {
@@ -55,7 +43,10 @@ export async function checkAndScheduleAlerts() {
       continue;
     }
 
-    const action = resolveDocumentAlertAction(doc, getDaysUntilExpiry(doc.expiryDate || ""));
+    const action = resolveDocumentAlertAction(
+      doc,
+      getDaysUntilExpiry(doc.expiryDate || ""),
+    );
 
     if (action === ALERT_ACTION.WITHDRAW) {
       // The user turned the alerts of this document off. Anything that is
@@ -73,7 +64,10 @@ export async function checkAndScheduleAlerts() {
       continue;
     }
 
-    const action = resolveDocumentAlertAction(doc, getDaysUntilExpiry(doc.expiryDate || ""));
+    const action = resolveDocumentAlertAction(
+      doc,
+      getDaysUntilExpiry(doc.expiryDate || ""),
+    );
 
     if (action === ALERT_ACTION.WITHDRAW) {
       await cancelDocumentNotifications(doc.id);

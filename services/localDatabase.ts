@@ -12,6 +12,8 @@ import { toLocalDateString, localDateStringAfterDays } from "@/utils";
 import { syncRetryStore } from "./syncRetryStore";
 import { SYNC_FAILURE_KIND } from "@/shared/sync/syncPolicy";
 import { resolveAccountSwitch } from "@/shared/sync/accountSwitch";
+import type { BackupData } from "../shared/backup/schema";
+import { normalizeBackupTimestamp } from "../shared/backup/normalizers";
 
 export type {
   LocalDocument,
@@ -22,6 +24,27 @@ export type {
 
 let db: SQLite.SQLiteDatabase | null = null;
 let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
+let localOwnershipQueue: Promise<void> = Promise.resolve();
+
+async function runLocalOwnershipOperation<T>(
+  operation: () => Promise<T>,
+): Promise<T> {
+  const previousOperation = localOwnershipQueue;
+
+  let releaseOperation!: () => void;
+
+  localOwnershipQueue = new Promise<void>((resolve) => {
+    releaseOperation = resolve;
+  });
+
+  await previousOperation;
+
+  try {
+    return await operation();
+  } finally {
+    releaseOperation();
+  }
+}
 
 /**
  * Opens the database once, with the pragmas Expo v57 requires to be set
@@ -225,6 +248,64 @@ export async function getLocalDataOwnerId(): Promise<number | null> {
   }
 }
 
+/**
+ * Strict owner lookup for destructive ownership and session decisions.
+ * Unlike getLocalDataOwnerId(), storage errors and malformed IDs
+ * propagate so they cannot be mistaken for an unowned device.
+ */
+async function readLocalDataOwnerIdStrict(): Promise<number | null> {
+  const activeOwner = await SecureStore.getItemAsync(LOCAL_USER_ID_KEY);
+  const signedOutOwner =
+    activeOwner === null
+      ? await SecureStore.getItemAsync(LAST_SIGNED_OUT_USER_ID_KEY)
+      : null;
+
+  const raw = activeOwner ?? signedOutOwner;
+
+  if (raw === null) {
+    return null;
+  }
+
+  const parsed = Number(raw);
+
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error("The locally stored account owner ID is invalid.");
+  }
+
+  return parsed;
+}
+
+/**
+ * Reads account ownership in the same queue as account switches and cleanup.
+ */
+export async function getLocalDataOwnerIdForSessionExpiration(): Promise<
+  number | null
+> {
+  return runLocalOwnershipOperation(() => readLocalDataOwnerIdStrict());
+}
+
+/**
+ * Reads only the actively signed-in local account.
+ * Never falls back to the previous signed-out owner or recovers from a token.
+ */
+export async function getActiveLocalUserIdStrict(): Promise<number | null> {
+  return runLocalOwnershipOperation(async () => {
+    const raw = await SecureStore.getItemAsync(LOCAL_USER_ID_KEY);
+
+    if (raw === null) {
+      return null;
+    }
+
+    const parsed = Number(raw);
+
+    if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+      throw new Error("The active local account ID is invalid.");
+    }
+
+    return parsed;
+  });
+}
+
 export async function getLocalUserId(): Promise<number | null> {
   try {
     const raw = await SecureStore.getItemAsync(LOCAL_USER_ID_KEY);
@@ -400,7 +481,7 @@ async function recoverUserIdFromToken(): Promise<number | null> {
  * Purging on login rather than sign-out covers the crash, token-expiry and
  * force-quit paths that never reach a sign-out handler.
  */
-export async function switchLocalUser(
+async function switchLocalUserUnlocked(
   nextUserId: number | string,
 ): Promise<void> {
   const next = Number(nextUserId);
@@ -418,7 +499,7 @@ export async function switchLocalUser(
    * (the token is stored before this call), so it can never reveal that the
    * rows belong to somebody else.
    */
-  const owner = await getLocalDataOwnerId();
+  const owner = await readLocalDataOwnerIdStrict();
   const decision = resolveAccountSwitch({ ownerId: owner, nextUserId: next });
   const accountChanged = decision.accountChanged;
 
@@ -480,16 +561,24 @@ export async function switchLocalUser(
 }
 
 /**
+ * Serializes account ownership changes with sign-out and expiration cleanup.
+ */
+export async function switchLocalUser(
+  nextUserId: number | string,
+): Promise<void> {
+  return runLocalOwnershipOperation(() => switchLocalUserUnlocked(nextUserId));
+}
+/**
  * Clears all local state at sign-out. Safe to call when already signed out.
  */
-export async function clearLocalSession(): Promise<void> {
+async function clearLocalSessionUnlocked(): Promise<void> {
   /*
    * The documents stay on disk so the same account finds them again, but the
    * account that owns them is remembered. Without this marker a later sign-in
    * by a different account could not detect the change and the previous
    * account's vault would stay on the device forever.
    */
-  const owner = await getLocalDataOwnerId();
+  const owner = await readLocalDataOwnerIdStrict();
 
   if (owner !== null) {
     await SecureStore.setItemAsync(LAST_SIGNED_OUT_USER_ID_KEY, String(owner));
@@ -500,6 +589,42 @@ export async function clearLocalSession(): Promise<void> {
   await setLocalUserId(null);
 }
 
+/**
+ * Serializes ordinary sign-out with account switching and expiration cleanup.
+ */
+export async function clearLocalSession(): Promise<void> {
+  return runLocalOwnershipOperation(() => clearLocalSessionUnlocked());
+}
+
+/**
+ * Clears local session ownership only if it still belongs to the
+ * account whose session is being expired.
+ *
+ * Returns false without changing ownership if another account
+ * has taken over while expiration was in progress.
+ */
+export async function clearLocalSessionIfOwner(
+  expectedOwnerId: number | null,
+): Promise<boolean> {
+  return runLocalOwnershipOperation(async () => {
+    const currentOwner = await readLocalDataOwnerIdStrict();
+
+    if (currentOwner !== expectedOwnerId) {
+      return false;
+    }
+
+    if (currentOwner !== null) {
+      await SecureStore.setItemAsync(
+        LAST_SIGNED_OUT_USER_ID_KEY,
+        String(currentOwner),
+      );
+    }
+
+    await setLocalUserId(null);
+
+    return true;
+  });
+}
 /**
  * Reads that must never return rows belonging to another account.
  *
@@ -552,12 +677,21 @@ export async function purgeLocalDataForUser(userId: number): Promise<void> {
       `DELETE FROM document_history WHERE document_id IN (SELECT id FROM documents WHERE user_id = ?)`,
       [userId],
     );
+    await txn.runAsync(
+      `DELETE FROM sync_queue
+       WHERE table_name = 'documents'
+       AND record_id IN (
+         SELECT id FROM documents WHERE user_id = ?
+       )`,
+      [userId],
+    );
     await txn.runAsync(`DELETE FROM documents WHERE user_id = ?`, [userId]);
     await txn.runAsync(`DELETE FROM reminders WHERE user_id = ?`, [userId]);
-    await txn.runAsync(`DELETE FROM login_sessions WHERE user_id = ?`, [userId]);
+    await txn.runAsync(`DELETE FROM login_sessions WHERE user_id = ?`, [
+      userId,
+    ]);
     await txn.runAsync(`DELETE FROM user_settings WHERE user_id = ?`, [userId]);
     await txn.runAsync(`DELETE FROM user_profile WHERE id = ?`, [userId]);
-    await txn.runAsync(`DELETE FROM sync_queue`);
   });
 
   DebugLogger.info("LocalDatabase", "Local data purged for user", { userId });
@@ -909,6 +1043,13 @@ export async function initDatabase() {
       `);
       });
 
+    // Scrub uncommitted, pending, or failed OCR drafts that were left behind
+    await database.execAsync(`
+      DELETE FROM documents
+      WHERE processing_status IN ('pending', 'failed', 'manual_review')
+        AND (document_number IS NULL OR issuer IS NULL OR title = 'Scanned Document')
+    `);
+
     DebugLogger.info("LocalDatabase", "Database initialized successfully");
   } catch (err) {
     DebugLogger.error(
@@ -920,7 +1061,13 @@ export async function initDatabase() {
     throw err;
   }
 }
-
+export type BackupRestoreSummary = {
+  documentsInserted: number;
+  documentsSkippedExact: number;
+  documentsSkippedPossible: number;
+  remindersInserted: number;
+  remindersSkipped: number;
+};
 // Document operations
 export async function createDocument(
   doc: Partial<LocalDocument>,
@@ -1401,6 +1548,397 @@ function normalizeReminderIntervals(values: number[]): number[] {
   return Array.from(new Set(cleaned)).sort((a, b) => a - b);
 }
 
+type BackupDocumentMatchRecord = {
+  title: unknown;
+  category: unknown;
+  document_number: unknown;
+};
+
+function normalizeBackupMatchText(value: unknown): string {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function classifyBackupDocumentDuplicate(
+  incoming: BackupData["documents"][number],
+  existing: BackupDocumentMatchRecord[],
+): "exact" | "possible" | null {
+  const title = normalizeBackupMatchText(incoming.title);
+  const category = normalizeBackupMatchText(incoming.category);
+  const documentNumber = normalizeBackupMatchText(incoming.documentNumber);
+
+  const sameTitleAndCategory = existing.filter(
+    (row) =>
+      normalizeBackupMatchText(row.title) === title &&
+      normalizeBackupMatchText(row.category) === category,
+  );
+
+  if (sameTitleAndCategory.length === 0) return null;
+
+  if (
+    documentNumber &&
+    sameTitleAndCategory.some(
+      (row) => normalizeBackupMatchText(row.document_number) === documentNumber,
+    )
+  ) {
+    return "exact";
+  }
+
+  return "possible";
+}
+
+function createBackupReminderDuplicateKey(reminder: {
+  title: unknown;
+  dueDate: unknown;
+  severity: unknown;
+}): string {
+  const dueDate =
+    typeof reminder.dueDate === "string"
+      ? reminder.dueDate.trim().slice(0, 10)
+      : null;
+
+  return JSON.stringify([
+    normalizeBackupMatchText(reminder.title),
+    dueDate || null,
+    normalizeBackupMatchText(reminder.severity),
+  ]);
+}
+export async function previewLocalBackupRestore(
+  backup: BackupData,
+  expectedUserId: number,
+): Promise<BackupRestoreSummary> {
+  if (!Number.isSafeInteger(expectedUserId) || expectedUserId <= 0) {
+    throw new Error("A valid active account is required.");
+  }
+
+  return runLocalOwnershipOperation(async () => {
+    const rawUserId = await SecureStore.getItemAsync(LOCAL_USER_ID_KEY);
+    const activeUserId = rawUserId === null ? null : Number(rawUserId);
+
+    if (activeUserId !== expectedUserId) {
+      throw new Error("The active account changed. Please try again.");
+    }
+
+    const existingDocuments = await queryAll<BackupDocumentMatchRecord>(
+      `SELECT title, category, document_number
+       FROM documents
+       WHERE user_id = ? AND status IS NOT 'deleted'`,
+      [expectedUserId],
+    );
+
+    const existingReminders = await queryAll<{
+      title: string;
+      due_date: string | null;
+      severity: string;
+    }>(
+      `SELECT title, due_date, severity
+       FROM reminders
+       WHERE user_id = ?`,
+      [expectedUserId],
+    );
+
+    const documentRecords = [...existingDocuments];
+    const reminderKeys = new Set(
+      existingReminders.map((reminder) =>
+        createBackupReminderDuplicateKey({
+          title: reminder.title,
+          dueDate: reminder.due_date,
+          severity: reminder.severity,
+        }),
+      ),
+    );
+
+    const summary: BackupRestoreSummary = {
+      documentsInserted: 0,
+      documentsSkippedExact: 0,
+      documentsSkippedPossible: 0,
+      remindersInserted: 0,
+      remindersSkipped: 0,
+    };
+
+    for (const document of backup.documents) {
+      const duplicate = classifyBackupDocumentDuplicate(
+        document,
+        documentRecords,
+      );
+
+      if (duplicate === "exact") {
+        summary.documentsSkippedExact += 1;
+      } else if (duplicate === "possible") {
+        summary.documentsSkippedPossible += 1;
+      } else {
+        summary.documentsInserted += 1;
+        documentRecords.push({
+          title: document.title,
+          category: document.category,
+          document_number: document.documentNumber,
+        });
+      }
+    }
+
+    for (const reminder of backup.reminders) {
+      const key = createBackupReminderDuplicateKey(reminder);
+
+      if (reminderKeys.has(key)) {
+        summary.remindersSkipped += 1;
+      } else {
+        summary.remindersInserted += 1;
+        reminderKeys.add(key);
+      }
+    }
+
+    return summary;
+  });
+}
+export async function restoreLocalBackup(
+  backup: BackupData,
+  expectedUserId: number,
+): Promise<BackupRestoreSummary> {
+  if (!Number.isSafeInteger(expectedUserId) || expectedUserId <= 0) {
+    throw new Error("A valid active account is required.");
+  }
+
+  // Initialize tables before acquiring the account ownership lock.
+  await initDatabase();
+
+  return runLocalOwnershipOperation(async () => {
+    const rawUserId = await SecureStore.getItemAsync(LOCAL_USER_ID_KEY);
+    const activeUserId = rawUserId === null ? null : Number(rawUserId);
+
+    if (
+      !Number.isSafeInteger(activeUserId) ||
+      activeUserId !== expectedUserId
+    ) {
+      throw new Error("The active account changed. Please try again.");
+    }
+
+    const database = await getDb();
+    const now = new Date().toISOString();
+
+    const summary: BackupRestoreSummary = {
+      documentsInserted: 0,
+      documentsSkippedExact: 0,
+      documentsSkippedPossible: 0,
+      remindersInserted: 0,
+      remindersSkipped: 0,
+    };
+
+    await database.withExclusiveTransactionAsync(async (txn) => {
+      // Recheck duplicates inside the transaction to prevent races
+      // between preview and the user's restore confirmation.
+      const existingDocuments: BackupDocumentMatchRecord[] = [];
+      let documentOffset = 0;
+
+      while (true) {
+        const row = await txn.getFirstAsync<BackupDocumentMatchRecord>(
+          `SELECT title, category, document_number
+     FROM documents
+     WHERE user_id = ? AND status IS NOT 'deleted'
+     ORDER BY id
+     LIMIT 1 OFFSET ?`,
+          [expectedUserId, documentOffset],
+        );
+
+        if (!row) break;
+
+        existingDocuments.push(row);
+        documentOffset += 1;
+      }
+
+      const existingReminders: {
+        title: string;
+        due_date: string | null;
+        severity: string;
+      }[] = [];
+
+      let reminderOffset = 0;
+
+      while (true) {
+        const reminder = await txn.getFirstAsync<{
+          title: string;
+          due_date: string | null;
+          severity: string;
+        }>(
+          `SELECT title, due_date, severity
+     FROM reminders
+     WHERE user_id = ?
+     ORDER BY id
+     LIMIT 1 OFFSET ?`,
+          [expectedUserId, reminderOffset],
+        );
+
+        if (!reminder) break;
+
+        existingReminders.push(reminder);
+        reminderOffset += 1;
+      }
+
+      const documentRecords = [...existingDocuments];
+
+      const reminderKeys = new Set(
+        existingReminders.map((reminder) =>
+          createBackupReminderDuplicateKey({
+            title: reminder.title,
+            dueDate: reminder.due_date,
+            severity: reminder.severity,
+          }),
+        ),
+      );
+
+      for (const document of backup.documents) {
+        const duplicate = classifyBackupDocumentDuplicate(
+          document,
+          documentRecords,
+        );
+
+        if (duplicate === "exact") {
+          summary.documentsSkippedExact += 1;
+          continue;
+        }
+
+        if (duplicate === "possible") {
+          summary.documentsSkippedPossible += 1;
+          continue;
+        }
+
+        const intervalDays =
+          Number.isInteger(document.reminderIntervalDays) &&
+          (document.reminderIntervalDays ?? 0) >= 1 &&
+          (document.reminderIntervalDays ?? 0) <= 365
+            ? document.reminderIntervalDays
+            : 7;
+
+        const intervals =
+          document.reminderIntervals && document.reminderIntervals.length > 0
+            ? JSON.stringify(
+                normalizeReminderIntervals(document.reminderIntervals),
+              )
+            : null;
+
+        const createdAt = normalizeBackupTimestamp(document.createdAt) ?? now;
+        const updatedAt = normalizeBackupTimestamp(document.updatedAt) ?? now;
+
+        const result = await txn.runAsync(
+          `INSERT INTO documents (
+            user_id,
+            title,
+            category,
+            issuer,
+            document_number,
+            issue_date,
+            expiry_date,
+            notes,
+            status,
+            enable_alerts,
+            reminder_interval_days,
+            reminder_intervals,
+            file_url,
+            file_type,
+            s3_key,
+            processing_status,
+            risk_score,
+            risk_level,
+            needs_sync,
+            sync_status,
+            cloud_id,
+            server_updated_at,
+            created_at,
+            updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            expectedUserId,
+            document.title,
+            document.category,
+            document.issuer ?? "",
+            document.documentNumber ?? "",
+            document.issueDate ?? null,
+            document.expiryDate ?? null,
+            document.notes ?? "",
+            document.status,
+            document.enableAlerts ? 1 : 0,
+            intervalDays,
+            intervals,
+            null,
+            document.fileType ?? null,
+            null,
+            document.processingStatus,
+            document.riskScore ?? null,
+            document.riskLevel ?? null,
+            0,
+            "local",
+            null,
+            null,
+            createdAt,
+            updatedAt,
+          ],
+        );
+
+        const documentId = result.lastInsertRowId;
+
+        if (!Number.isSafeInteger(documentId) || documentId <= 0) {
+          throw new Error(
+            "A restored document could not be assigned a valid local ID.",
+          );
+        }
+
+        for (const tag of normalizeTagList(document.tags ?? [])) {
+          await txn.runAsync(
+            `INSERT OR IGNORE INTO document_tags
+             (document_id, tag)
+             VALUES (?, ?)`,
+            [documentId, tag],
+          );
+        }
+
+        documentRecords.push({
+          title: document.title,
+          category: document.category,
+          document_number: document.documentNumber,
+        });
+
+        summary.documentsInserted += 1;
+      }
+
+      for (const reminder of backup.reminders) {
+        const key = createBackupReminderDuplicateKey(reminder);
+
+        if (reminderKeys.has(key)) {
+          summary.remindersSkipped += 1;
+          continue;
+        }
+
+        await txn.runAsync(
+          `INSERT INTO reminders (
+            user_id,
+            title,
+            description,
+            due_date,
+            severity,
+            is_read,
+            needs_sync,
+            cloud_id,
+            created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            expectedUserId,
+            reminder.title,
+            reminder.description ?? "",
+            reminder.dueDate ?? null,
+            reminder.severity,
+            reminder.read ? 1 : 0,
+            0,
+            null,
+            normalizeBackupTimestamp(reminder.createdAt) ?? now,
+          ],
+        );
+
+        reminderKeys.add(key);
+        summary.remindersInserted += 1;
+      }
+    });
+
+    return summary;
+  });
+}
 export async function getAllDocuments(): Promise<LocalDocument[]> {
   try {
     const userId = await getLocalUserId();
@@ -1845,19 +2383,10 @@ export async function updateReminderStatus(id: number, isRead: boolean) {
 export async function saveUserProfile(profile: LocalUserProfile) {
   const userId = await getLocalUserId();
   if (userId === null) {
-    // Previously this wrote a fixed id=1 row, so two accounts on one device
-    // overwrote each other's cached profile.
     DebugLogger.warn("LocalDatabase", "saveUserProfile skipped: signed out");
     return;
   }
 
-  /*
-   * The row is replaced as a whole, so the flag has to be carried over.
-   *
-   * The write happens on paths that do not touch the notification
-   * preferences - the document counters, for instance - and dropping the flag
-   * there would make a pending offline change look like it had been pushed.
-   */
   const existing = await querySingle<{ preferencesDirty: number }>(
     `SELECT preferences_dirty AS "preferencesDirty" FROM user_profile WHERE id = ?`,
     [userId],
@@ -1873,15 +2402,16 @@ export async function saveUserProfile(profile: LocalUserProfile) {
   await run(
     `
     INSERT OR REPLACE INTO user_profile
-      (id, name, email, document_count, expiring_count, expired_count,
+      (id, name, email, occupation, document_count, expiring_count, expired_count,
        notifications_enabled, notify_email, notify_expiry, two_factor,
        preferences_dirty)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
     [
       userId,
       profile.name,
       profile.email,
+      profile.occupation || "", // <--- Pass occupation value here
       profile.documentCount,
       profile.expiringCount,
       profile.expiredCount,
@@ -1947,10 +2477,10 @@ export async function setLocalPreferencesDirty(dirty: boolean): Promise<void> {
     return;
   }
 
-  await run(
-    `UPDATE user_profile SET preferences_dirty = ? WHERE id = ?`,
-    [dirty ? 1 : 0, userId],
-  );
+  await run(`UPDATE user_profile SET preferences_dirty = ? WHERE id = ?`, [
+    dirty ? 1 : 0,
+    userId,
+  ]);
 }
 
 export async function getUserProfile(): Promise<LocalUserProfile | null> {
@@ -2612,7 +3142,9 @@ export async function getExpiredDocuments(): Promise<LocalDocument[]> {
  * so the scheduler needs every document that still has an expiry date ahead
  * of it.
  */
-export async function getDocumentsEligibleForAlerts(): Promise<LocalDocument[]> {
+export async function getDocumentsEligibleForAlerts(): Promise<
+  LocalDocument[]
+> {
   const userId = await getLocalUserId();
   const today = toLocalDateString();
 

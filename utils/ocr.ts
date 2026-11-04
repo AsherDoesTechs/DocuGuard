@@ -199,7 +199,31 @@ export async function extractDocumentData(
     }
 
     if (typeof serverMessage === "string" && serverMessage.trim()) {
-      throw new Error(serverMessage);
+      const normalizedError = new Error(serverMessage) as Error & {
+        code?: string;
+        errorCode?: string;
+        reason?: string;
+        status?: number;
+      };
+
+      normalizedError.code =
+        typeof error?.response?.data?.code === "string"
+          ? error.response.data.code
+          : typeof error?.code === "string"
+            ? error.code
+            : undefined;
+      normalizedError.errorCode =
+        typeof error?.response?.data?.errorCode === "string"
+          ? error.response.data.errorCode
+          : undefined;
+      normalizedError.reason =
+        typeof error?.response?.data?.reason === "string"
+          ? error.response.data.reason
+          : undefined;
+      normalizedError.status =
+        typeof status === "number" ? status : undefined;
+
+      throw normalizedError;
     }
 
     throw error;
