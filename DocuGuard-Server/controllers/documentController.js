@@ -493,10 +493,13 @@ exports.processDocument = async (req, res) => {
       selectedCategory: document.category || "other",
     });
 
+    // Treat mismatch, unrecognized, or low confidence wrong document types as a strict failure
     if (
       documentTypeValidation.status === "mismatch" ||
       documentTypeValidation.status === "unrecognized" ||
-      documentTypeValidation.status === "unsupported"
+      documentTypeValidation.status === "unsupported" ||
+      (documentTypeValidation.status === "manual_review" &&
+        documentTypeValidation.reason === "low_classification_confidence")
     ) {
       await db.query(
         `
@@ -513,7 +516,6 @@ exports.processDocument = async (req, res) => {
         // ignore
       }
 
-      // 🔔 ADD FAILURE PUSH NOTIFICATION HERE:
       try {
         const tokenRes = await db.query(
           `SELECT fcm_token, expo_push_token FROM users WHERE id = $1`,
@@ -525,8 +527,9 @@ exports.processDocument = async (req, res) => {
           await sendVerificationNotification(
             pushToken,
             document.title || "Document",
-            false, // isSuccessful = false
-            documentTypeValidation.message || "Document verification failed.",
+            false,
+            documentTypeValidation.message ||
+              "Document verification failed. Invalid or mismatched document type.",
           );
         }
       } catch (notifErr) {
@@ -535,11 +538,12 @@ exports.processDocument = async (req, res) => {
         });
       }
 
-      return res.status(documentTypeValidation.httpStatus).json({
+      return res.status(422).json({
         status: "error",
-        code: documentTypeValidation.code,
-        errorCode: documentTypeValidation.code,
-        error: documentTypeValidation.message,
+        code: "DOCUMENT_TYPE_MISMATCH",
+        errorCode: "DOCUMENT_TYPE_MISMATCH",
+        error:
+          "Verification halted. The uploaded document does not match the required ID layout or type.",
       });
     }
 

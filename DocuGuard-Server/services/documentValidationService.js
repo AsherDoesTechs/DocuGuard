@@ -143,7 +143,7 @@ function evaluateExtractionConfidence(extractedData) {
   };
 }
 
-async function validateDocumentType({ fileUrl }) {
+async function validateDocumentType({ fileUrl, fileType, selectedCategory }) {
   if (!fileUrl) {
     return {
       status: "unsupported",
@@ -156,14 +156,26 @@ async function validateDocumentType({ fileUrl }) {
   try {
     const classificationResult = await classifyDocument(fileUrl);
 
+    // If classification explicitly flags manual review or low confidence
     if (classificationResult.status === "manual_review") {
+      // Check if it's a completely wrong/unrecognized document type
+      const isMismatchReason = [
+        "no_classification",
+        "missing_document_type",
+        "conflicting_document_types",
+        "unmapped_document_type",
+        "low_classification_confidence",
+      ].includes(classificationResult.reason);
+
       return {
-        status: "manual_review",
+        status: isMismatchReason ? "mismatch" : "manual_review",
         httpStatus: 422,
-        code: "DOCUMENT_CLASSIFICATION_REVIEW",
+        code: isMismatchReason
+          ? "DOCUMENT_TYPE_MISMATCH"
+          : "DOCUMENT_CLASSIFICATION_REVIEW",
         message:
           classificationResult.message ||
-          "The document could not be classified confidently. Please review it manually.",
+          "The document layout is incompatible or could not be verified. Please upload the correct ID.",
         reason: classificationResult.reason,
         classification: classificationResult.classification || null,
       };
@@ -174,7 +186,13 @@ async function validateDocumentType({ fileUrl }) {
       !classificationResult.classification ||
       !classificationResult.modelId
     ) {
-      throw new Error("Azure classification returned an invalid decision.");
+      return {
+        status: "mismatch",
+        httpStatus: 422,
+        code: "DOCUMENT_TYPE_MISMATCH",
+        message:
+          "Verification halted. The uploaded document does not match a supported ID layout.",
+      };
     }
 
     const extractedData = await extractClassifiedDocumentData(
@@ -191,7 +209,7 @@ async function validateDocumentType({ fileUrl }) {
         httpStatus: 422,
         code: "DOCUMENT_EXTRACTION_REVIEW",
         message:
-          "Some extracted information could not be verified confidently. Please review the document and enter its details manually.",
+          "Some extracted information could not be verified confidently. Please review the document.",
         reason: confidenceEvaluation.reason,
         classification: classificationResult.classification,
         confidenceEvaluation,
@@ -216,13 +234,22 @@ async function validateDocumentType({ fileUrl }) {
 
     const timedOut = /timed out/i.test(String(error?.message || ""));
 
+    // If it's a timeout or network glitch, return processing error
+    if (timedOut) {
+      return {
+        status: "processing_error",
+        httpStatus: 502,
+        code: "OCR_PROCESS_FAILED",
+        message: "Document processing timed out. Please try again.",
+      };
+    }
+
+    // For other unexpected evaluation errors on invalid files, treat as a mismatch/rejection
     return {
-      status: "processing_error",
-      httpStatus: 502,
-      code: "OCR_PROCESS_FAILED",
-      message: timedOut
-        ? "Document processing timed out. Please try again."
-        : `Document processing failed: ${error?.message || "Please try again."}`,
+      status: "mismatch",
+      httpStatus: 422,
+      code: "DOCUMENT_TYPE_MISMATCH",
+      message: `Verification failed: ${error?.message || "The uploaded document layout is invalid."}`,
     };
   }
 }
