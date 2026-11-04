@@ -92,6 +92,10 @@ export class DocumentVerificationOrchestrator {
           "driverslicense",
           "driverlicense",
           "document",
+          "employment",
+          "government",
+          "civil",
+          "education",
           normalizedSelectedId,
         ];
 
