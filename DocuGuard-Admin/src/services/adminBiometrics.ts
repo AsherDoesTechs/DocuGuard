@@ -109,7 +109,7 @@ export async function prepareAdminSigningKey(): Promise<AdminBiometricKey> {
     return { publicKeyPem: existing.publicKey };
   }
 
-  const result = await createKeys(
+ const result = await createKeys(
     ADMIN_KEY_ALIAS,
     {
       signatureType: "ecdsa",
@@ -121,6 +121,9 @@ export async function prepareAdminSigningKey(): Promise<AdminBiometricKey> {
     "pem",
     BIOMETRIC_PROMPT,
   );
+
+  // Debug log to inspect the exact native response
+  console.log("NATIVE KEY GEN RESULT:", JSON.stringify(result, null, 2));
 
   if (!result.publicKey || result.error || result.code !== "success") {
     throw new Error(getBiometricErrorMessage(result.code, result.error));
