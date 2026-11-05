@@ -1413,7 +1413,10 @@ exports.updateDocument = async (req, res) => {
     }
     if (enableAlerts !== undefined && enableAlerts !== null) {
       updates.push(`enable_alerts = $${idx++}`);
-      values.push(enableAlerts ? true : false);
+      values.push(enableAlerts === true);
+    } else if (enableAlerts === null) {
+      updates.push(`enable_alerts = $${idx++}`);
+      values.push(null);
     }
 
     if (updates.length === 0) {
@@ -1647,12 +1650,12 @@ exports.syncDocument = async (req, res) => {
           notes,
           enableAlerts,
           status || "active",
-          s3Key,
-          fileUrl,
-          fileType,
+          s3Key || null,
+          fileUrl || null,
+          fileType || null,
           processingStatus || "completed",
-          riskScore,
-          riskLevel,
+          riskScore === undefined ? null : riskScore,
+          riskLevel === undefined ? null : riskLevel,
           target.rowId,
           userId,
           baseRevision || null,
