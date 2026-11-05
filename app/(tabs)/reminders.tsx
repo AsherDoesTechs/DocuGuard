@@ -97,6 +97,7 @@ export default function RemindersScreen() {
 
   const styles = useMemo(() => createStyles(themeColors), [themeColors]);
 
+  const [error, setError] = useState<string | null>(null);
   const [notificationsEnabled, setNotificationsEnabled] =
     useState<boolean>(true);
   const [permissionGranted, setPermissionGranted] = useState<boolean>(false);
