@@ -4,7 +4,7 @@
     "slug": "docuguard-admin",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./src/app/assets/icon.jpg",
+    "icon": "./src/app/assets/icon.png",
     "scheme": "docuguardadmin",
     "userInterfaceStyle": "automatic",
     "updates": {
@@ -37,9 +37,7 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#142D4E",
-          "image": "./assets/images/splash-icon.png",
-          "imageWidth": 76
+          "backgroundColor": "#0A192F"
         }
       ],
       "expo-secure-store",
@@ -52,7 +50,7 @@
       [
         "expo-notifications",
         {
-          "icon": "./src/app/assets/icon.jpg",
+          "icon": "./src/app/assets/icon.png",
           "color": "#142D4E",
           "sounds": []
         }
@@ -69,4 +67,6 @@
     }
   }
 }
+
+
 

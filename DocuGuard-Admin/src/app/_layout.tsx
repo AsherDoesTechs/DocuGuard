@@ -1,7 +1,15 @@
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
+import { useState } from "react";
+import CustomSplashScreen from "../components/CustomSplashScreen";
 
 export default function RootLayout() {
+  const [showSplash, setShowSplash] = useState(true);
+
+  if (showSplash) {
+    return <CustomSplashScreen onAnimationFinished={() => setShowSplash(false)} />;
+  }
+
   return (
     <>
       <StatusBar style="light" />
