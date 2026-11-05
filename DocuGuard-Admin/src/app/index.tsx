@@ -126,6 +126,14 @@ export default function AdminLoginScreen() {
 
       router.replace("/dashboard");
     } catch (error) {
+      // Detailed console debug logging for sign-in failures
+      console.error("[Sign-In Debug Error]:", error);
+
+      const errorMessage =
+        error instanceof Error
+          ? `${error.message}${error.stack ? `\n\nStack: ${error.stack}` : ""}`
+          : JSON.stringify(error);
+
       const message =
         error instanceof Error
           ? error.message
@@ -138,7 +146,7 @@ export default function AdminLoginScreen() {
         setTotpCode("");
       }
 
-      Alert.alert("Sign-in failed", message);
+      Alert.alert("Sign-in failed", errorMessage);
     } finally {
       setLoading(false);
     }
@@ -195,12 +203,15 @@ export default function AdminLoginScreen() {
         "This device is registered. You can now sign in using your Admin ID, password, and biometric verification.",
       );
     } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : "Unable to enroll this device. Please try again.";
+      // Detailed console debug logging for enrollment failures
+      console.error("[Device Enrollment Debug Error]:", error);
 
-      Alert.alert("Enrollment failed", message);
+      const detailedErrorMessage =
+        error instanceof Error
+          ? `${error.message}${error.stack ? `\n\nStack: ${error.stack}` : ""}`
+          : JSON.stringify(error);
+
+      Alert.alert("Enrollment failed", detailedErrorMessage);
     } finally {
       setLoading(false);
     }
