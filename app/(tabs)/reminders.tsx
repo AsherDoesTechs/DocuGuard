@@ -107,6 +107,8 @@ export default function RemindersScreen() {
   const [updatingNotifications, setUpdatingNotifications] = useState(false);
   const [lastFetch, setLastFetch] = useState<number>(0);
   const [now, setNow] = useState(() => Date.now());
+  const mountedRef = useRef(true);
+  const fetchInProgressRef = useRef(false);
 
   useEffect(() => {
     const interval = setInterval(() => {
