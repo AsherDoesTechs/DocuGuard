@@ -1373,38 +1373,74 @@ exports.updateDocument = async (req, res) => {
 
   try {
     // Encrypt PII fields before persisting (document_number, issuer).
-    const encryptedIssuer = encryptFields({ issuer }, PII_FIELDS).issuer;
-    const encryptedDocumentNumber = encryptFields(
+    const encryptedIssuer = issuer !== undefined ? encryptFields({ issuer }, PII_FIELDS).issuer : undefined;
+    const encryptedDocumentNumber = documentNumber !== undefined ? encryptFields(
       { document_number: documentNumber },
       PII_FIELDS,
-    ).document_number;
+    ).document_number : undefined;
+
+    const updates = [];
+    const values = [];
+    let idx = 1;
+
+    if (title !== undefined && title !== null) {
+      updates.push(`title = $${idx++}`);
+      values.push(title);
+    }
+    if (category !== undefined && category !== null) {
+      updates.push(`category = $${idx++}`);
+      values.push(category);
+    }
+    if (issuer !== undefined) {
+      updates.push(`issuer = $${idx++}`);
+      values.push(encryptedIssuer);
+    }
+    if (documentNumber !== undefined) {
+      updates.push(`document_number = $${idx++}`);
+      values.push(encryptedDocumentNumber);
+    }
+    if (issueDate !== undefined) {
+      updates.push(`issue_date = $${idx++}`);
+      values.push(issueDate);
+    }
+    if (expiryDate !== undefined) {
+      updates.push(`expiry_date = $${idx++}`);
+      values.push(expiryDate);
+    }
+    if (notes !== undefined) {
+      updates.push(`notes = $${idx++}`);
+      values.push(typeof notes === "string" ? notes.trim() : notes);
+    }
+    if (enableAlerts !== undefined && enableAlerts !== null) {
+      updates.push(`enable_alerts = $${idx++}`);
+      values.push(enableAlerts ? true : false);
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({
+        error: "No updatable fields provided.",
+        code: ErrorCodes.DOC_VALIDATION,
+      });
+    }
+
+    updates.push(`updated_at = clock_timestamp()`);
+
+    values.push(docId);
+    values.push(userId);
+    values.push(baseRevision || null);
+    values.push(exactRevision);
 
     const updated = await db.query(
       `UPDATE documents
-       SET title = $1, category = $2, issuer = $3, document_number = $4,
-           issue_date = $5, expiry_date = $6, notes = $7, enable_alerts = $8,
-           updated_at = clock_timestamp()
-       WHERE id = $9 AND user_id = $10
-         AND ($11::timestamptz IS NULL OR ${REVISION_MATCH_SQL_UPDATE})
+       SET ${updates.join(", ")}
+       WHERE id = $${idx++} AND user_id = $${idx++}
+         AND ($${idx++}::timestamptz IS NULL OR ${REVISION_MATCH_SQL_UPDATE})
        RETURNING id, title, category, issuer, document_number AS "documentNumber",
                   issue_date AS "issueDate", expiry_date AS "expiryDate", notes, status, enable_alerts AS "enableAlerts",
                   s3_key AS "s3Key", file_url AS "fileUrl", file_type AS "fileType",
                   processing_status AS "processingStatus",
                   ${UPDATED_AT_ISO_SQL} AS "updatedAt"`,
-      [
-        title,
-        category,
-        encryptedIssuer,
-        encryptedDocumentNumber,
-        issueDate,
-        expiryDate,
-        typeof notes === "string" ? notes.trim() : null,
-        typeof enableAlerts === "boolean" ? enableAlerts : true,
-        docId,
-        userId,
-        baseRevision || null,
-        exactRevision,
-      ],
+      values,
     );
 
     if (updated.rows.length === 0) {
