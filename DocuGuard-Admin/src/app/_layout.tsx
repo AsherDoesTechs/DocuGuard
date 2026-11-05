@@ -13,6 +13,11 @@ export default function RootLayout() {
         }}
       >
         <Stack.Screen name="index" />
+        <Stack.Screen name="dashboard" />
+        <Stack.Screen name="documents" />
+        <Stack.Screen name="health" />
+        <Stack.Screen name="logs" />
+        <Stack.Screen name="users" />
       </Stack>
     </>
   );
