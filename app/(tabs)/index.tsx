@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useCallback, useMemo } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, Image } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
+import { useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { Card } from "../../components/ui";
 import { COLORS as BASE_COLORS, Spacing, BORDER_RADIUS } from "@/constants";
@@ -20,7 +20,7 @@ import {
 import {
   feedbackService,
   useFeedbackService,
-} from "../../services/feedbackService";
+} from "@/services/feedbackService";
 
 interface DashboardSummary {
   safetyScore: number;
@@ -86,13 +86,13 @@ export default function HomeScreen() {
   const [urgentReminders, setUrgentReminders] = useState<Reminder[]>([]);
   const [userName, setUserName] = useState("User");
 
-  const fetchDashboardData = async () => {
+  const fetchDashboardData = useCallback(async () => {
     try {
       const [
         localProfile,
         localDocs,
         expiringList,
-        expiredDocs,
+        expiredDocsList,
         localReminders,
       ] = await Promise.all([
         getUserProfile(),
@@ -125,7 +125,7 @@ export default function HomeScreen() {
 
       const docCount = localDocs.length;
       const expiringCount = expiringList.length;
-      const expiredCount = expiredDocs.length;
+      const expiredCount = expiredDocsList.length;
 
       const validCount = Math.max(0, docCount - expiringCount - expiredCount);
 
@@ -160,11 +160,14 @@ export default function HomeScreen() {
     } finally {
       setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    void fetchDashboardData();
   }, []);
+
+  // Automatically refresh dashboard widgets and hero scores on focus transition
+  useFocusEffect(
+    useCallback(() => {
+      void fetchDashboardData();
+    }, [fetchDashboardData]),
+  );
 
   const handleDataReload = async () => {
     try {
@@ -229,441 +232,472 @@ export default function HomeScreen() {
         contentContainerStyle={styles.content}
       >
         <View style={styles.container}>
-
-          {loading ? <HomeSkeleton /> : (
+          {loading ? (
+            <HomeSkeleton />
+          ) : (
             <>
-          {/* Greeting and dashboard title */}
-          <View style={styles.header}>
-            <Text style={styles.greeting}>{getGreeting()}</Text>
-            <Text style={styles.title}>Your Dashboard</Text>
-          </View>
+              {/* Greeting and dashboard title */}
+              <View style={styles.header}>
+                <Text style={styles.greeting}>{getGreeting()}</Text>
+                <Text style={styles.title}>Your Dashboard</Text>
+              </View>
 
-          {/* Vault Safety Score */}
-          <Card style={styles.heroCard}>
-            <View style={styles.scoreContainer}>
-              <View style={styles.scoreRow}>
-                <Text style={styles.scoreLabel}>Vault Safety Score</Text>
+              {/* Vault Safety Score */}
+              <Card style={styles.heroCard}>
+                <View style={styles.scoreContainer}>
+                  <View style={styles.scoreRow}>
+                    <Text style={styles.scoreLabel}>Vault Safety Score</Text>
 
-                <Text style={styles.scoreValue}>{summary.safetyScore}%</Text>
+                    <Text style={styles.scoreValue}>
+                      {summary.safetyScore}%
+                    </Text>
 
-                <View style={styles.progressBarTrack}>
-                  <View
-                    style={[
-                      styles.progressBarFill,
-                      {
-                        width: `${summary.safetyScore}%`,
-                        backgroundColor: status.color,
-                      },
-                    ]}
+                    <View style={styles.progressBarTrack}>
+                      <View
+                        style={[
+                          styles.progressBarFill,
+                          {
+                            width: `${summary.safetyScore}%`,
+                            backgroundColor: status.color,
+                          },
+                        ]}
+                      />
+                    </View>
+
+                    <Text
+                      style={[styles.riskDescription, { color: status.color }]}
+                    >
+                      {status.label}: {status.action}
+                    </Text>
+                  </View>
+
+                  <Ionicons
+                    name="shield-checkmark"
+                    size={48}
+                    color={status.color}
                   />
                 </View>
 
-                <Text style={[styles.riskDescription, { color: status.color }]}>
-                  {status.label}: {status.action}
-                </Text>
-              </View>
-
-              <Ionicons
-                name="shield-checkmark"
-                size={48}
-                color={status.color}
-              />
-            </View>
-
-            <View style={styles.statsGrid}>
-              <View style={styles.statItem}>
-                <Ionicons
-                  name="document-text"
-                  size={20}
-                  color={COLORS.success}
-                />
-                <Text style={styles.statValue}>{summary.validDocuments}</Text>
-                <Text style={styles.statLabel}>Valid</Text>
-              </View>
-
-              <View style={styles.statItem}>
-                <Ionicons name="time" size={20} color={COLORS.warning} />
-                <Text style={styles.statValue}>
-                  {summary.expiringDocuments}
-                </Text>
-                <Text style={styles.statLabel}>Expiring</Text>
-              </View>
-
-              <View style={styles.statItem}>
-                <Ionicons name="alert-circle" size={20} color={COLORS.danger} />
-                <Text style={styles.statValue}>{summary.expiredDocuments}</Text>
-                <Text style={styles.statLabel}>Expired</Text>
-              </View>
-
-              <View style={styles.statItem}>
-                <Ionicons
-                  name="notifications"
-                  size={20}
-                  color={COLORS.primary}
-                />
-                <Text style={styles.statValue}>{summary.totalReminders}</Text>
-                <Text style={styles.statLabel}>Reminders</Text>
-              </View>
-            </View>
-          </Card>
-
-          {/* Action Required */}
-          <View style={styles.section}>
-            <View style={styles.sectionHeaderRow}>
-              <View>
-                <Text style={styles.sectionTitle}>Action Required</Text>
-                <Text style={styles.sectionSubtitle}>Urgent reminders</Text>
-              </View>
-
-              <TouchableOpacity
-                accessibilityRole="button"
-                onPress={() => router.push("/(tabs)/reminders" as any)}
-              >
-                <Text style={styles.seeAllText}>View All</Text>
-              </TouchableOpacity>
-            </View>
-
-            {urgentReminders.length === 0 ? (
-              <Card style={styles.emptyRemindersCard}>
-                <Ionicons
-                  name="checkmark-circle-outline"
-                  size={24}
-                  color={COLORS.success}
-                />
-                <Text style={styles.emptyRemindersText}>
-                  No urgent actions pending.
-                </Text>
-              </Card>
-            ) : (
-              urgentReminders.map((reminder) => (
-                <Card key={reminder.id} style={styles.reminderItem}>
-                  <View style={styles.reminderContent}>
-                    <View style={styles.reminderIcon}>
-                      <Ionicons
-                        name="alert-circle"
-                        size={24}
-                        color={
-                          reminder.severity === "urgent"
-                            ? COLORS.danger
-                            : COLORS.warning
-                        }
-                      />
-                    </View>
-
-                    <View style={styles.reminderInfo}>
-                      <Text style={styles.reminderTitle}>{reminder.title}</Text>
-                      <Text style={styles.reminderDesc}>
-                        {reminder.description}
-                      </Text>
-                      <Text style={styles.reminderDate}>
-                        Due: {formatShortDate(reminder.dueDate)}
-                      </Text>
-                    </View>
+                <View style={styles.statsGrid}>
+                  <View style={styles.statItem}>
+                    <Ionicons
+                      name="document-text"
+                      size={20}
+                      color={COLORS.success}
+                    />
+                    <Text style={styles.statValue}>
+                      {summary.validDocuments}
+                    </Text>
+                    <Text style={styles.statLabel}>Valid</Text>
                   </View>
-                </Card>
-              ))
-            )}
-          </View>
 
-          {/* Expiring Soon */}
-          {expiringDocs.length > 0 && (
-            <View style={styles.section}>
-              <View style={styles.sectionHeaderRow}>
-                <View>
-                  <Text style={styles.sectionTitle}>Expiring Soon</Text>
-                  <Text style={styles.sectionSubtitle}>
-                    Requires upcoming renewal
-                  </Text>
+                  <View style={styles.statItem}>
+                    <Ionicons name="time" size={20} color={COLORS.warning} />
+                    <Text style={styles.statValue}>
+                      {summary.expiringDocuments}
+                    </Text>
+                    <Text style={styles.statLabel}>Expiring</Text>
+                  </View>
+
+                  <View style={styles.statItem}>
+                    <Ionicons
+                      name="alert-circle"
+                      size={20}
+                      color={COLORS.danger}
+                    />
+                    <Text style={styles.statValue}>
+                      {summary.expiredDocuments}
+                    </Text>
+                    <Text style={styles.statLabel}>Expired</Text>
+                  </View>
+
+                  <View style={styles.statItem}>
+                    <Ionicons
+                      name="notifications"
+                      size={20}
+                      color={COLORS.primary}
+                    />
+                    <Text style={styles.statValue}>
+                      {summary.totalReminders}
+                    </Text>
+                    <Text style={styles.statLabel}>Reminders</Text>
+                  </View>
+                </View>
+              </Card>
+
+              {/* Action Required */}
+              <View style={styles.section}>
+                <View style={styles.sectionHeaderRow}>
+                  <View>
+                    <Text style={styles.sectionTitle}>Action Required</Text>
+                    <Text style={styles.sectionSubtitle}>Urgent reminders</Text>
+                  </View>
+
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    onPress={() => router.push("/(tabs)/reminders" as any)}
+                  >
+                    <Text style={styles.seeAllText}>View All</Text>
+                  </TouchableOpacity>
                 </View>
 
-                <TouchableOpacity
-                  accessibilityRole="button"
-                  onPress={() => router.push("/(tabs)/documents" as any)}
-                >
-                  <Text style={styles.seeAllText}>View All</Text>
-                </TouchableOpacity>
-              </View>
-
-              {expiringDocs.map((doc) => (
-                <TouchableOpacity
-                  key={doc.id || doc.documentNumber}
-                  accessibilityRole="button"
-                  onPress={() =>
-                    router.push(`/document-details/${doc.id}` as any)
-                  }
-                >
-                  <Card style={styles.docCard}>
-                    <View style={styles.docRow}>
-                      <View
-                        style={[
-                          styles.docImage,
-                          styles.docImagePlaceholder,
-                          { backgroundColor: COLORS.warningLight },
-                        ]}
-                      >
-                        <Ionicons
-                          name="time-outline"
-                          size={24}
-                          color={COLORS.warning}
-                        />
-                      </View>
-
-                      <View style={styles.docInfo}>
-                        <Text style={styles.docTitle} numberOfLines={1}>
-                          {doc.title || "Untitled Document"}
-                        </Text>
-
-                        <Text style={styles.docSubtitle} numberOfLines={1}>
-                          Issuer: {doc.issuer || "Unknown"}
-                        </Text>
-
-                        <Text
-                          style={[styles.docDate, { color: COLORS.warning }]}
-                        >
-                          Expires:{" "}
-                          {doc.expiryDate
-                            ? formatShortDate(doc.expiryDate)
-                            : "N/A"}
-                        </Text>
-                      </View>
-
-                      <Ionicons
-                        name="chevron-forward"
-                        size={20}
-                        color={COLORS.textSecondary}
-                      />
-                    </View>
+                {urgentReminders.length === 0 ? (
+                  <Card style={styles.emptyRemindersCard}>
+                    <Ionicons
+                      name="checkmark-circle-outline"
+                      size={24}
+                      color={COLORS.success}
+                    />
+                    <Text style={styles.emptyRemindersText}>
+                      No urgent actions pending.
+                    </Text>
                   </Card>
-                </TouchableOpacity>
-              ))}
-            </View>
-          )}
-
-          {/* Recent Documents */}
-          <View style={styles.section}>
-            <View style={styles.sectionHeaderRow}>
-              <Text style={styles.sectionTitle}>Recent Documents</Text>
-
-              <TouchableOpacity
-                accessibilityRole="button"
-                onPress={() => router.push("/(tabs)/documents" as any)}
-              >
-                <Text style={styles.seeAllText}>View All</Text>
-              </TouchableOpacity>
-            </View>
-
-            {recentDocs.length === 0 ? (
-              <Card style={styles.emptyCard}>
-                <Ionicons
-                  name="folder-open-outline"
-                  size={36}
-                  color={COLORS.textSecondary}
-                />
-
-                <Text style={styles.emptyTitle}>
-                  Your document vault is empty
-                </Text>
-
-                <Text style={styles.emptyText}>
-                  Add your first document to start tracking expiration dates,
-                  reminders, and document status.
-                </Text>
-
-                <TouchableOpacity
-                  accessibilityRole="button"
-                  style={styles.emptyButton}
-                  onPress={() => router.push("/add-document" as any)}
-                >
-                  <Text style={styles.emptyButtonText}>
-                    Add Your First Document
-                  </Text>
-                </TouchableOpacity>
-              </Card>
-            ) : (
-              recentDocs.map((doc) => {
-                const docImage =
-                  (doc as any).thumbnailUri ||
-                  (doc as any).thumbnailPath ||
-                  (doc as any).imageUri ||
-                  (doc as any).imagePath ||
-                  (doc as any).filePath;
-
-                const documentType =
-                  (doc as any).documentType ||
-                  (doc as any).type ||
-                  (doc as any).category ||
-                  "Document";
-
-                const expiryDate = doc.expiryDate
-                  ? formatShortDate(doc.expiryDate)
-                  : "No expiration date";
-
-                const isExpired =
-                  !!doc.expiryDate &&
-                  new Date(doc.expiryDate).getTime() <
-                    new Date().setHours(0, 0, 0, 0);
-
-                const isExpiringSoon =
-                  !!doc.expiryDate &&
-                  !isExpired &&
-                  new Date(doc.expiryDate).getTime() <=
-                    Date.now() + 30 * 24 * 60 * 60 * 1000;
-
-                const status = isExpired
-                  ? "Expired"
-                  : isExpiringSoon
-                    ? "Expiring Soon"
-                    : "Valid";
-
-                const statusColor = isExpired
-                  ? COLORS.danger
-                  : isExpiringSoon
-                    ? COLORS.warning
-                    : COLORS.success;
-
-                return (
-                  <TouchableOpacity
-                    key={doc.id || doc.documentNumber}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Open ${doc.title || "document"} details`}
-                    onPress={() =>
-                      router.push(`/document-details/${doc.id}` as any)
-                    }
-                    activeOpacity={0.85}
-                  >
-                    <Card style={styles.recentDocumentCard}>
-                      <View style={styles.recentDocumentRow}>
-                        <View style={styles.recentPreviewFrame}>
-                          {docImage ? (
-                            <Image
-                              source={{ uri: docImage }}
-                              style={styles.recentPreviewImage}
-                              resizeMode="cover"
-                              onError={() =>
-                                console.warn(
-                                  "Recent document preview unavailable:",
-                                  doc.id,
-                                )
-                              }
-                            />
-                          ) : (
-                            <View style={styles.recentPreviewFallback}>
-                              <Ionicons
-                                name="document-text-outline"
-                                size={30}
-                                color={COLORS.primary}
-                              />
-                              <Text style={styles.previewFallbackText}>
-                                Preview
-                              </Text>
-                            </View>
-                          )}
+                ) : (
+                  urgentReminders.map((reminder) => (
+                    <Card key={reminder.id} style={styles.reminderItem}>
+                      <View style={styles.reminderContent}>
+                        <View style={styles.reminderIcon}>
+                          <Ionicons
+                            name="alert-circle"
+                            size={24}
+                            color={
+                              reminder.severity === "urgent"
+                                ? COLORS.danger
+                                : COLORS.warning
+                            }
+                          />
                         </View>
 
-                        <View style={styles.recentDocumentInfo}>
-                          <View
-                            style={[
-                              styles.recentStatusBadge,
-                              { backgroundColor: `${statusColor}18` },
-                            ]}
-                          >
-                            <View
-                              style={[
-                                styles.recentStatusDot,
-                                { backgroundColor: statusColor },
-                              ]}
-                            />
-                            <Text
-                              style={[
-                                styles.recentStatusText,
-                                { color: statusColor },
-                              ]}
-                            >
-                              {status}
-                            </Text>
-                          </View>
-
-                          <Text
-                            style={styles.recentDocumentTitle}
-                            numberOfLines={2}
-                          >
-                            {doc.title || "Untitled Document"}
+                        <View style={styles.reminderInfo}>
+                          <Text style={styles.reminderTitle}>
+                            {reminder.title}
                           </Text>
-
-                          <Text
-                            style={styles.recentDocumentType}
-                            numberOfLines={1}
-                          >
-                            {documentType}
+                          <Text style={styles.reminderDesc}>
+                            {reminder.description}
                           </Text>
-
-                          <Text
-                            style={styles.recentDocumentNumber}
-                            numberOfLines={1}
-                          >
-                            No. {doc.documentNumber || "Not provided"}
+                          <Text style={styles.reminderDate}>
+                            Due: {formatShortDate(reminder.dueDate)}
                           </Text>
-
-                          <View style={styles.recentExpiryRow}>
-                            <Ionicons
-                              name="calendar-outline"
-                              size={14}
-                              color={statusColor}
-                            />
-                            <Text
-                              style={[
-                                styles.recentExpiryText,
-                                { color: statusColor },
-                              ]}
-                              numberOfLines={2}
-                            >
-                              {isExpired ? "Expired: " : "Expires: "}
-                              {expiryDate}
-                            </Text>
-                          </View>
                         </View>
-
-                        <Ionicons
-                          name="chevron-forward"
-                          size={19}
-                          color={COLORS.textSecondary}
-                        />
                       </View>
                     </Card>
+                  ))
+                )}
+              </View>
+
+              {/* Expiring Soon */}
+              {expiringDocs.length > 0 && (
+                <View style={styles.section}>
+                  <View style={styles.sectionHeaderRow}>
+                    <View>
+                      <Text style={styles.sectionTitle}>Expiring Soon</Text>
+                      <Text style={styles.sectionSubtitle}>
+                        Requires upcoming renewal
+                      </Text>
+                    </View>
+
+                    <TouchableOpacity
+                      accessibilityRole="button"
+                      onPress={() => router.push("/(tabs)/documents" as any)}
+                    >
+                      <Text style={styles.seeAllText}>View All</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {expiringDocs.map((doc) => (
+                    <TouchableOpacity
+                      key={doc.id || doc.documentNumber}
+                      accessibilityRole="button"
+                      onPress={() =>
+                        router.push(`/document-details/${doc.id}` as any)
+                      }
+                    >
+                      <Card style={styles.docCard}>
+                        <View style={styles.docRow}>
+                          <View
+                            style={[
+                              styles.docImage,
+                              styles.docImagePlaceholder,
+                              { backgroundColor: COLORS.warningLight },
+                            ]}
+                          >
+                            <Ionicons
+                              name="time-outline"
+                              size={24}
+                              color={COLORS.warning}
+                            />
+                          </View>
+
+                          <View style={styles.docInfo}>
+                            <Text style={styles.docTitle} numberOfLines={1}>
+                              {doc.title || "Untitled Document"}
+                            </Text>
+
+                            <Text style={styles.docSubtitle} numberOfLines={1}>
+                              Issuer: {doc.issuer || "Unknown"}
+                            </Text>
+
+                            <Text
+                              style={[
+                                styles.docDate,
+                                { color: COLORS.warning },
+                              ]}
+                            >
+                              Expires:{" "}
+                              {doc.expiryDate
+                                ? formatShortDate(doc.expiryDate)
+                                : "N/A"}
+                            </Text>
+                          </View>
+
+                          <Ionicons
+                            name="chevron-forward"
+                            size={20}
+                            color={COLORS.textSecondary}
+                          />
+                        </View>
+                      </Card>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+
+              {/* Recent Documents */}
+              <View style={styles.section}>
+                <View style={styles.sectionHeaderRow}>
+                  <Text style={styles.sectionTitle}>Recent Documents</Text>
+
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    onPress={() => router.push("/(tabs)/documents" as any)}
+                  >
+                    <Text style={styles.seeAllText}>View All</Text>
                   </TouchableOpacity>
-                );
-              })
-            )}
-          </View>
+                </View>
 
-          {/* Sync Status Footer */}
-          <View style={styles.syncFooter}>
-            <Ionicons
-              name={
-                summary.expiringDocuments + summary.expiredDocuments > 0
-                  ? "warning-outline"
-                  : "cloud-done-outline"
-              }
-              size={16}
-              color={
-                summary.expiringDocuments + summary.expiredDocuments > 0
-                  ? COLORS.warning
-                  : COLORS.success
-              }
-            />
+                {recentDocs.length === 0 ? (
+                  <Card style={styles.emptyCard}>
+                    <Ionicons
+                      name="folder-open-outline"
+                      size={36}
+                      color={COLORS.textSecondary}
+                    />
 
-            <Text style={styles.syncFooterText}>
-              {summary.expiredDocuments > 0
-                ? `${summary.expiredDocuments} document${
-                    summary.expiredDocuments !== 1 ? "s" : ""
-                  } expired`
-                : summary.expiringDocuments > 0
-                  ? `${summary.expiringDocuments} document${
-                      summary.expiringDocuments !== 1 ? "s" : ""
-                    } expiring soon`
-                  : "All documents up to date"}
-            </Text>
-          </View>
+                    <Text style={styles.emptyTitle}>
+                      Your document vault is empty
+                    </Text>
+
+                    <Text style={styles.emptyText}>
+                      Add your first document to start tracking expiration
+                      dates, reminders, and document status.
+                    </Text>
+
+                    <TouchableOpacity
+                      accessibilityRole="button"
+                      style={styles.emptyButton}
+                      onPress={() => router.push("/add-document" as any)}
+                    >
+                      <Text style={styles.emptyButtonText}>
+                        Add Your First Document
+                      </Text>
+                    </TouchableOpacity>
+                  </Card>
+                ) : (
+                  recentDocs.map((doc) => {
+                    // Check all possible keys for both scanned and uploaded documents
+                    const rawImage =
+                      (doc as any).thumbnailUri ||
+                      (doc as any).thumbnailPath ||
+                      (doc as any).imageUri ||
+                      (doc as any).imagePath ||
+                      (doc as any).filePath ||
+                      (doc as any).uri;
+
+                    // Ensure local file paths have proper 'file://' or formatting if needed
+                    const docImage = rawImage
+                      ? rawImage.startsWith("file://") ||
+                        rawImage.startsWith("http") ||
+                        rawImage.startsWith("data:")
+                        ? rawImage
+                        : `file://${rawImage}`
+                      : null;
+
+                    const documentType =
+                      (doc as any).documentType ||
+                      (doc as any).type ||
+                      (doc as any).category ||
+                      "Document";
+
+                    const expiryDate = doc.expiryDate
+                      ? formatShortDate(doc.expiryDate)
+                      : "No expiration date";
+
+                    const isExpired =
+                      !!doc.expiryDate &&
+                      new Date(doc.expiryDate).getTime() <
+                        new Date().setHours(0, 0, 0, 0);
+
+                    const isExpiringSoon =
+                      !!doc.expiryDate &&
+                      !isExpired &&
+                      new Date(doc.expiryDate).getTime() <=
+                        Date.now() + 30 * 24 * 60 * 60 * 1000;
+
+                    const status = isExpired
+                      ? "Expired"
+                      : isExpiringSoon
+                        ? "Expiring Soon"
+                        : "Valid";
+
+                    const statusColor = isExpired
+                      ? COLORS.danger
+                      : isExpiringSoon
+                        ? COLORS.warning
+                        : COLORS.success;
+
+                    return (
+                      <TouchableOpacity
+                        key={doc.id || doc.documentNumber}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Open ${doc.title || "document"} details`}
+                        onPress={() =>
+                          router.push(`/document-details/${doc.id}` as any)
+                        }
+                        activeOpacity={0.85}
+                      >
+                        <Card style={styles.recentDocumentCard}>
+                          <View style={styles.recentDocumentRow}>
+                            <View style={styles.recentPreviewFrame}>
+                              {docImage ? (
+                                <Image
+                                  source={{ uri: docImage }}
+                                  style={styles.recentPreviewImage}
+                                  resizeMode="cover"
+                                  onError={() =>
+                                    console.warn(
+                                      "Recent document preview failed to load for doc ID:",
+                                      doc.id,
+                                    )
+                                  }
+                                />
+                              ) : (
+                                <View style={styles.recentPreviewFallback}>
+                                  <Ionicons
+                                    name="document-text-outline"
+                                    size={30}
+                                    color={COLORS.primary}
+                                  />
+                                  <Text style={styles.previewFallbackText}>
+                                    Preview
+                                  </Text>
+                                </View>
+                              )}
+                            </View>
+
+                            <View style={styles.recentDocumentInfo}>
+                              <View
+                                style={[
+                                  styles.recentStatusBadge,
+                                  { backgroundColor: `${statusColor}18` },
+                                ]}
+                              >
+                                <View
+                                  style={[
+                                    styles.recentStatusDot,
+                                    { backgroundColor: statusColor },
+                                  ]}
+                                />
+                                <Text
+                                  style={[
+                                    styles.recentStatusText,
+                                    { color: statusColor },
+                                  ]}
+                                >
+                                  {status}
+                                </Text>
+                              </View>
+
+                              <Text
+                                style={styles.recentDocumentTitle}
+                                numberOfLines={2}
+                              >
+                                {doc.title || "Untitled Document"}
+                              </Text>
+
+                              <Text
+                                style={styles.recentDocumentType}
+                                numberOfLines={1}
+                              >
+                                {documentType}
+                              </Text>
+
+                              <Text
+                                style={styles.recentDocumentNumber}
+                                numberOfLines={1}
+                              >
+                                No. {doc.documentNumber || "Not provided"}
+                              </Text>
+
+                              <View style={styles.recentExpiryRow}>
+                                <Ionicons
+                                  name="calendar-outline"
+                                  size={14}
+                                  color={statusColor}
+                                />
+                                <Text
+                                  style={[
+                                    styles.recentExpiryText,
+                                    { color: statusColor },
+                                  ]}
+                                  numberOfLines={2}
+                                >
+                                  {isExpired ? "Expired: " : "Expires: "}
+                                  {expiryDate}
+                                </Text>
+                              </View>
+                            </View>
+
+                            <Ionicons
+                              name="chevron-forward"
+                              size={19}
+                              color={COLORS.textSecondary}
+                            />
+                          </View>
+                        </Card>
+                      </TouchableOpacity>
+                    );
+                  })
+                )}
+              </View>
+
+              {/* Sync Status Footer */}
+              <View style={styles.syncFooter}>
+                <Ionicons
+                  name={
+                    summary.expiringDocuments + summary.expiredDocuments > 0
+                      ? "warning-outline"
+                      : "cloud-done-outline"
+                  }
+                  size={16}
+                  color={
+                    summary.expiringDocuments + summary.expiredDocuments > 0
+                      ? COLORS.warning
+                      : COLORS.success
+                  }
+                />
+
+                <Text style={styles.syncFooterText}>
+                  {summary.expiredDocuments > 0
+                    ? `${summary.expiredDocuments} document${
+                        summary.expiredDocuments !== 1 ? "s" : ""
+                      } expired`
+                    : summary.expiringDocuments > 0
+                      ? `${summary.expiringDocuments} document${
+                          summary.expiringDocuments !== 1 ? "s" : ""
+                        } expiring soon`
+                      : "All documents up to date"}
+                </Text>
+              </View>
             </>
           )}
         </View>
@@ -1065,4 +1099,3 @@ const createStyles = (COLORS: typeof BASE_COLORS) =>
       color: COLORS.textSecondary,
     },
   });
-

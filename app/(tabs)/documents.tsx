@@ -228,17 +228,9 @@ export default function DocumentsScreen() {
   const fetchDocuments = useCallback(async () => {
     try {
       setLoadError(false);
-      try {
-        await pullDocumentsFromCloud();
-      } catch (cloudError) {
-        console.warn(
-          "Cloud document pull failed; continuing with local documents:",
-          cloudError,
-        );
-      }
 
+      // 1. Check and update expired documents locally first
       const expiredDocs = await getExpiredDocuments();
-
       for (const doc of expiredDocs) {
         if (doc.status !== "expired" && doc.id != null) {
           await updateDocumentStatus(doc.id, "expired");
@@ -253,16 +245,43 @@ export default function DocumentsScreen() {
         }
       }
 
+      // 2. Instantly load local cached data so UI renders immediately
       const localDocs = await getAllDocuments();
       setDocuments(localDocs);
 
       const summary = await getDashboardSummary();
       setDashboardSummary(summary);
     } catch (err: unknown) {
-      console.error("Failed to fetch documents:", err);
+      console.error("Failed to fetch local documents:", err);
       setLoadError(true);
     } finally {
+      // 3. Turn off loading skeleton right away
       setLoading(false);
+    }
+
+    // 4. Run cloud synchronization silently in the background without blocking the UI
+    try {
+      await pullDocumentsFromCloud();
+
+      // Re-run expiration check and refresh local view once cloud data is pulled/merged
+      const refreshedExpiredDocs = await getExpiredDocuments();
+      for (const doc of refreshedExpiredDocs) {
+        if (doc.status !== "expired" && doc.id != null) {
+          await updateDocumentStatus(doc.id, "expired");
+          await cancelExpiringSoonNotifications(doc.id);
+        }
+      }
+
+      const refreshedDocs = await getAllDocuments();
+      setDocuments(refreshedDocs);
+
+      const refreshedSummary = await getDashboardSummary();
+      setDashboardSummary(refreshedSummary);
+    } catch (cloudError) {
+      console.warn(
+        "Background cloud document pull failed; continuing with local documents:",
+        cloudError,
+      );
     }
   }, []);
 

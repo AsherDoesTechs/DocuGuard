@@ -1,3 +1,4 @@
+import { router } from "expo-router";
 import axios, {
   AxiosInstance,
   AxiosResponse,
@@ -173,10 +174,43 @@ apiClient.interceptors.request.use(
 apiClient.interceptors.response.use(
   (response: AxiosResponse) => response,
   async (error) => {
+    // 1. Handle Network / Offline Errors
     if (error.code === "ERR_NETWORK" || !error.response) {
       error.isOffline = true;
       error.message = "Network unavailable. Please check your connection.";
+      return Promise.reject(error);
     }
+
+    const status = error.response?.status;
+    const requestPath = (error.config?.url || "")
+      .split("?")[0]
+      .replace(/\/+$/, "");
+    const isAuthEndpoint = PUBLIC_AUTH_PATHS.some(
+      (path) => requestPath === path || requestPath.endsWith(path),
+    );
+
+    // 2. Handle Global 401 Unauthorized (Expired or Revoked Sessions)
+    // Avoid triggering on login/register endpoints themselves if credentials were bad
+    if (status === 401 && !isAuthEndpoint) {
+      try {
+        const token = await getStoredToken();
+        const { getLocalDataOwnerIdForSessionExpiration } =
+          await import("./localDatabase");
+        const ownerId = await getLocalDataOwnerIdForSessionExpiration();
+
+        // Securely clean up local session, push tokens, and SQLite data ownership
+        await auth.logout(token, ownerId);
+
+        // Force redirect to login screen
+        router.replace("/(auth)/login");
+      } catch (logoutError) {
+        console.error(
+          "[ApiClient] Failed to handle 401 session expiration:",
+          logoutError,
+        );
+      }
+    }
+
     return Promise.reject(error);
   },
 );

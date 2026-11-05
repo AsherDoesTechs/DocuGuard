@@ -228,10 +228,37 @@ export default function ProfileScreen() {
   const styles = useMemo(() => createStyles(colors), [colors]);
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<SettingsTab>("none");
-  const [loading, setLoading] = useState(true);
-  const [user, setUser] = useState<UserProfile | null>(null);
+
+  // 1. Change initial loading state to false so the UI renders instantly
+  const [loading, setLoading] = useState(false);
+
+  // 2. Pre-populate user state with local data immediately if available
+  const [user, setUser] = useState<UserProfile | null>(() => {
+    // We can do a quick synchronous or initial default fallback state here
+    return {
+      name: "Loading...",
+      email: "",
+      securityLevel: "Standard",
+      documentCount: 0,
+      expiringCount: 0,
+      notifyPush: false,
+      notifyEmail: true,
+      notifyExpiry: true,
+      twoFactor: false,
+      biometricEnabled: false,
+      appLockEnabled: false,
+      subscription: {
+        planName: "Free",
+        renewalDate: "N/A",
+        storageUsed: 0,
+        storageTotal: 50,
+      },
+      serialNumber: "DG-USER-0000",
+    };
+  });
 
   useFeedbackService();
+  // ... (keep all your existing state hooks here: passwords, twoFactor, biometric, etc.)
 
   const [passwords, setPasswords] = useState({
     current: "",
@@ -371,6 +398,7 @@ export default function ProfileScreen() {
 
   const fetchProfile = useCallback(async () => {
     try {
+      // 1. Instantly pull local cached profile & documents so UI renders immediately
       const localProfile = (await getUserProfile()) as any;
       const localDocs = await getAllDocuments();
 
@@ -420,65 +448,66 @@ export default function ProfileScreen() {
         setNotifyPush(localProfile.notificationsEnabled ?? false);
         setNotifyExpiry(localProfile.notifyExpiry ?? true);
       }
+    } catch (err) {
+      console.error("Failed to load local profile cache:", err);
+    }
 
+    // 2. Run remote cloud synchronization silently in the background without blocking the UI
+    try {
       const token = await SecureStore.getItemAsync("userToken");
 
       if (token) {
-        try {
-          const res = await api.client.get("/profile");
-          const subData = res.data.subscription || {};
-          const remoteOcc = res.data.occupation || "";
-          const isStandardRemote = OCCUPATION_LIST.includes(remoteOcc);
-          if (remoteOcc && !isStandardRemote) {
-            setIsCustomOccupation(true);
-          }
+        const res = await api.client.get("/profile");
+        const subData = res.data.subscription || {};
+        const remoteOcc = res.data.occupation || "";
+        const isStandardRemote = OCCUPATION_LIST.includes(remoteOcc);
+        if (remoteOcc && !isStandardRemote) {
+          setIsCustomOccupation(true);
+        }
 
-          setUser((prev) => ({
-            ...prev!,
-            ...res.data,
-            storageUsedMB:
-              typeof res.data.storageUsedMB === "number" &&
-              isFinite(res.data.storageUsedMB)
-                ? res.data.storageUsedMB
-                : res.data.storageUsedMB === null
-                  ? null
-                  : undefined,
+        setUser((prev) => ({
+          ...prev!,
+          ...res.data,
+          storageUsedMB:
+            typeof res.data.storageUsedMB === "number" &&
+            isFinite(res.data.storageUsedMB)
+              ? res.data.storageUsedMB
+              : res.data.storageUsedMB === null
+                ? null
+                : undefined,
+          serialNumber:
+            res.data.serialNumber ||
+            res.data.user?.serialNumber ||
+            subData.serialNumber ||
+            prev?.serialNumber ||
+            "DG-USER-0000",
+          subscription: {
+            planName:
+              subData.planName || prev?.subscription?.planName || "Free",
+            renewalDate:
+              subData.renewalDate || prev?.subscription?.renewalDate || "N/A",
+            storageUsed:
+              subData.storageUsed || prev?.subscription?.storageUsed || 0,
+            storageTotal:
+              subData.storageTotal || prev?.subscription?.storageTotal || 50,
             serialNumber:
-              res.data.serialNumber ||
-              res.data.user?.serialNumber ||
-              subData.serialNumber ||
-              prev?.serialNumber ||
-              "DG-USER-0000",
-            subscription: {
-              planName:
-                subData.planName || prev?.subscription?.planName || "Free",
-              renewalDate:
-                subData.renewalDate || prev?.subscription?.renewalDate || "N/A",
-              storageUsed:
-                subData.storageUsed || prev?.subscription?.storageUsed || 0,
-              storageTotal:
-                subData.storageTotal || prev?.subscription?.storageTotal || 50,
-              serialNumber:
-                subData.serialNumber || prev?.subscription?.serialNumber,
-            },
-          }));
+              subData.serialNumber || prev?.subscription?.serialNumber,
+          },
+        }));
 
-          setPersonalInfo({
-            name: res.data.name || "",
-            email: res.data.email || "",
-            phone: res.data.phone || "",
-            occupation: remoteOcc,
-          });
+        setPersonalInfo({
+          name: res.data.name || "",
+          email: res.data.email || "",
+          phone: res.data.phone || "",
+          occupation: remoteOcc,
+        });
 
-          if (res.data.twoFactor !== undefined) {
-            setTwoFactor(res.data.twoFactor);
-          }
+        if (res.data.twoFactor !== undefined) {
+          setTwoFactor(res.data.twoFactor);
+        }
 
-          if (res.data.documentPreferences) {
-            setDocPreferences(res.data.documentPreferences);
-          }
-        } catch (err) {
-          console.warn("Failed to load remote profile:", err);
+        if (res.data.documentPreferences) {
+          setDocPreferences(res.data.documentPreferences);
         }
 
         try {
@@ -497,9 +526,10 @@ export default function ProfileScreen() {
         }
       }
     } catch (err: any) {
-      console.error("Failed to load profile:", err);
-    } finally {
-      setLoading(false);
+      console.warn(
+        "Background remote profile sync failed; continuing with local profile:",
+        err,
+      );
     }
   }, []);
 

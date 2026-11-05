@@ -17,7 +17,7 @@ import {
   AppStateStatus,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
+import { useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { Card } from "../../components/ui";
 import { COLORS as BASE_COLORS } from "@/constants";
@@ -229,6 +229,12 @@ export default function RemindersScreen() {
       }
     }
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      void fetchReminders();
+    }, [fetchReminders]),
+  );
 
   useEffect(() => {
     mountedRef.current = true;
