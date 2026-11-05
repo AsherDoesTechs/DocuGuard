@@ -51,6 +51,9 @@ export class DocumentVerificationOrchestrator {
   public static verifyAndExtract(
     payload: VerificationRequest,
   ): VerificationResponse {
+    console.log("=== [DocumentVerificationOrchestrator] START ===");
+    console.log("Received Payload:", JSON.stringify(payload, null, 2));
+
     const { selectedSpecificId, azureOcrResult } = payload;
     const docType = (azureOcrResult.documentType || "")
       .toLowerCase()
@@ -59,59 +62,9 @@ export class DocumentVerificationOrchestrator {
       .toLowerCase()
       .replace(/[\s\-_]/g, "");
 
-    // 1. Specific Passport Validation
-    if (normalizedSelectedId.includes("passport")) {
-      if (!azureOcrResult.passportModel && !docType.includes("passport")) {
-        return {
-          allow_processing: false,
-          error_code: "DOCUMENT_TYPE_MISMATCH",
-          message:
-            "Verification halted. You selected Philippine Passport, but the system detected an incompatible layout. Please upload the correct physical document.",
-        };
-      }
-    } else {
-      // 2. Flexible General ID / Driver's License / Government ID Validation
-      const isIdFamily = [
-        "driver",
-        "license",
-        "id",
-        "card",
-        "identity",
-        "postal",
-        "unified",
-        "prc",
-        "tin",
-        "philhealth",
-        "sss",
-      ].some((keyword) => normalizedSelectedId.includes(keyword));
-
-      if (docType && isIdFamily) {
-        const acceptedAzureTypes = [
-          "identitycard",
-          "idcard",
-          "driverslicense",
-          "driverlicense",
-          "document",
-          "employment",
-          "government",
-          "civil",
-          "education",
-          normalizedSelectedId,
-        ];
-
-        const isCompatible = acceptedAzureTypes.some(
-          (type) => docType.includes(type) || type.includes(docType),
-        );
-
-        if (!isCompatible && docType !== "other" && docType !== "") {
-          return {
-            allow_processing: false,
-            error_code: "DOCUMENT_TYPE_MISMATCH",
-            message: `Verification halted. You selected document type [${selectedSpecificId}], but the system detected an incompatible layout. Please upload the correct physical document.`,
-          };
-        }
-      }
-    }
+    console.log(
+      `Parsed Normalized ID: "${normalizedSelectedId}" | Parsed Doc Type: "${docType}"`,
+    );
 
     // Support fallback keys for document/license numbers returned by Azure OCR
     const fields = azureOcrResult.fields || {};
@@ -128,16 +81,23 @@ export class DocumentVerificationOrchestrator {
       getFieldContent(fields.idNumber) ||
       getFieldContent(fields.cardNumber);
 
-    if (!rawDocNum) {
+    console.log(`Extracted Raw Document Number: "${rawDocNum}"`);
+
+    // SAFETY CHECK: Only block if the entire response and fields are completely empty (non-document / blank image).
+    const hasAnyFields = Object.keys(fields).length > 0 || rawDocNum;
+    if (!hasAnyFields && !docType) {
+      console.warn(
+        "[DocumentVerificationOrchestrator] Halted: Image is completely unreadable or blank.",
+      );
       return {
         allow_processing: false,
         error_code: "DOCUMENT_TYPE_MISMATCH",
         message:
-          "Verification halted. The uploaded document image is blurry, unreadable, or missing core identifying numbers.",
+          "Verification halted. The uploaded document image is unreadable or does not appear to be a valid document.",
       };
     }
 
-    const documentNumber = this.cleanDocumentNumber(rawDocNum);
+    const documentNumber = this.cleanDocumentNumber(rawDocNum || "");
     const issueDate =
       this.normalizeDate(getFieldContent(fields.issueDate)) || "";
 
@@ -153,10 +113,10 @@ export class DocumentVerificationOrchestrator {
       ? null
       : this.normalizeDate(String(rawExpiry));
 
-    return {
+    const successResponse: VerificationResponse = {
       allow_processing: true,
       error_code: null,
-      message: "Document validated and fields parsed successfully.",
+      message: "Document scanned. Please review the extracted fields.",
       extracted_data: {
         documentNumber,
         issueDate,
@@ -164,6 +124,14 @@ export class DocumentVerificationOrchestrator {
         hasNoExpirationDate,
       },
     };
+
+    console.log(
+      "Verification Success Output:",
+      JSON.stringify(successResponse, null, 2),
+    );
+    console.log("=== [DocumentVerificationOrchestrator] END ===");
+
+    return successResponse;
   }
 }
 
