@@ -4,7 +4,7 @@
     "slug": "docuguard-admin",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./src/app/assets/icon.jpg",
     "scheme": "docuguardadmin",
     "userInterfaceStyle": "automatic",
     "updates": {
@@ -52,7 +52,7 @@
       [
         "expo-notifications",
         {
-          "icon": "./assets/images/icon.png",
+          "icon": "./src/app/assets/icon.jpg",
           "color": "#142D4E",
           "sounds": []
         }
@@ -69,3 +69,4 @@
     }
   }
 }
+
