@@ -31,6 +31,54 @@ import {
 import { pullDocumentsFromCloud } from "@/services/syncService";
 import { cancelExpiringSoonNotifications } from "../../services/notificationScheduler";
 
+/**
+ * Normalize category/status values from local DB and cloud sync.
+ * Stored documents may contain either category keys or display labels
+ * (including apostrophe/spacing/case differences).
+ */
+const normalizeFilterValue = (value?: unknown): string =>
+  String(value ?? "")
+    .normalize("NFKC")
+    .replace(/[’‘`]/g, "'")
+    .trim()
+    .toLowerCase()
+    .replace(/\\s+/g, " ");
+
+const categoryMatches = (
+  category: unknown,
+  selectedCategory: string,
+): boolean => {
+  if (selectedCategory === "all") return true;
+
+  const stored = normalizeFilterValue(category);
+  const selectedKey = normalizeFilterValue(selectedCategory);
+  const selectedLabel = normalizeFilterValue(
+    DOCUMENT_CATEGORIES[selectedCategory as keyof typeof DOCUMENT_CATEGORIES],
+  );
+
+  return stored !== "" && (stored === selectedKey || stored === selectedLabel);
+};
+
+const statusMatches = (
+  expiryDate: unknown,
+  selectedStatus: string,
+): boolean => {
+  if (selectedStatus === "all") return true;
+  if (typeof expiryDate !== "string" || !expiryDate.trim()) return false;
+
+  const status = normalizeFilterValue(classifyExpiration(expiryDate));
+  const selected = normalizeFilterValue(selectedStatus);
+
+  // Support both internal filter keys and user-facing labels.
+  if (selected === "expiring" || selected === "expiring soon") {
+    return status === "expiring" || status === "expiring soon";
+  }
+  if (selected === "expired") return status === "expired";
+  if (selected === "valid") return status === "valid";
+
+  return status === selected;
+};
+
 interface DocumentItemProps {
   doc: LocalDocument;
   COLORS: typeof BASE_COLORS;
@@ -316,22 +364,21 @@ export default function DocumentsScreen() {
    * Apply search, category, and expiration-status filters together.
    */
   const filtered = useMemo(() => {
-    const query = search.trim().toLowerCase();
+    const query = normalizeFilterValue(search);
 
     return documents.filter((doc) => {
+      const title = normalizeFilterValue(doc.title);
+      const issuer = normalizeFilterValue(doc.issuer);
+      const documentNumber = normalizeFilterValue(doc.documentNumber);
+
       const matchesSearch =
         !query ||
-        doc.title?.toLowerCase().includes(query) ||
-        doc.issuer?.toLowerCase().includes(query) ||
-        doc.documentNumber?.toLowerCase().includes(query);
+        title.includes(query) ||
+        issuer.includes(query) ||
+        documentNumber.includes(query);
 
-      const matchesCategory =
-        selectedCategory === "all" || doc.category === selectedCategory;
-
-      const expiration = classifyExpiration(doc.expiryDate);
-
-      const matchesStatus =
-        selectedStatus === "all" || expiration === selectedStatus;
+      const matchesCategory = categoryMatches(doc.category, selectedCategory);
+      const matchesStatus = statusMatches(doc.expiryDate, selectedStatus);
 
       return matchesSearch && matchesCategory && matchesStatus;
     });

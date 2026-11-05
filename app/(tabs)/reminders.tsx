@@ -165,8 +165,8 @@ export default function RemindersScreen() {
 
   const getDaysUntil = (dateStr: string) => {
     const due = parseLocalDate(dateStr);
-    if (!due) {
-      return 0;
+    if (!due || Number.isNaN(due.getTime())) {
+      return Number.NaN;
     }
     due.setHours(0, 0, 0, 0);
     const today = new Date();
@@ -177,6 +177,8 @@ export default function RemindersScreen() {
   const calculateSeverity = (dueDate: string): ReminderSeverity => {
     const days = getDaysUntil(dueDate);
 
+    // Invalid dates are excluded during mapping; keep severity safe if called elsewhere.
+    if (!Number.isFinite(days)) return "Valid";
     if (days < 0) return "Expired";
     if (days <= 30) return "Expiring Soon";
 
@@ -561,26 +563,35 @@ export default function RemindersScreen() {
           </View>
 
           <View style={styles.summaryRow} accessibilityLabel="Reminder summary">
-            <View style={styles.summaryCard}>
-              <Text style={styles.summaryValue}>{reminders.length}</Text>
-              <Text style={styles.summaryLabel}>Total</Text>
-            </View>
-            <View style={styles.summaryCard}>
-              <Text
-                style={[styles.summaryValue, { color: themeColors.warning }]}
-              >
-                {expiringCount}
-              </Text>
-              <Text style={styles.summaryLabel}>Expiring</Text>
-            </View>
-            <View style={styles.summaryCard}>
-              <Text
-                style={[styles.summaryValue, { color: themeColors.danger }]}
-              >
-                {expiredCount}
-              </Text>
-              <Text style={styles.summaryLabel}>Expired</Text>
-            </View>
+            {[
+              {
+                label: "Total",
+                value: reminders.length,
+                color: themeColors.text,
+              },
+              {
+                label: "Unread",
+                value: unreadCount,
+                color: themeColors.primary,
+              },
+              {
+                label: "Expired",
+                value: expiredCount,
+                color: themeColors.danger,
+              },
+              {
+                label: "Expiring",
+                value: expiringCount,
+                color: themeColors.warning,
+              },
+            ].map((item) => (
+              <View key={item.label} style={styles.summaryCard}>
+                <Text style={[styles.summaryValue, { color: item.color }]}>
+                  {item.value}
+                </Text>
+                <Text style={styles.summaryLabel}>{item.label}</Text>
+              </View>
+            ))}
           </View>
         </View>
 
@@ -664,7 +675,8 @@ export default function RemindersScreen() {
                       ]}
                       accessibilityRole="button"
                       accessibilityState={{ selected: isActive }}
-                      accessibilityLabel={`Filter by ${tab.label}`}
+                      accessibilityLabel={`Filter by ${tab.label}, ${tab.key === "all" ? reminders.length : tab.key === "unread" ? unreadCount : tab.key === "expired" ? expiredCount : expiringCount} reminders`}
+                      accessibilityHint="Shows only reminders matching this filter"
                       activeOpacity={0.75}
                     >
                       <Text
@@ -962,31 +974,34 @@ const createStyles = (COLORS: typeof BASE_COLORS) =>
     },
     summaryRow: {
       flexDirection: "row",
-      gap: 10,
-      marginTop: 16,
+      gap: 7,
+      marginTop: 14,
     },
     summaryCard: {
       flex: 1,
-      minHeight: 68,
+      minWidth: 0,
+      minHeight: 54,
       justifyContent: "center",
-      paddingHorizontal: 12,
-      paddingVertical: 10,
-      borderRadius: 14,
+      alignItems: "center",
+      paddingHorizontal: 4,
+      paddingVertical: 7,
+      borderRadius: 11,
       borderWidth: 1,
       borderColor: COLORS.border,
       backgroundColor: COLORS.surface,
     },
     summaryValue: {
-      fontSize: 21,
-      lineHeight: 27,
+      fontSize: 18,
+      lineHeight: 22,
       fontWeight: "700",
       color: COLORS.text,
     },
     summaryLabel: {
       marginTop: 2,
-      fontSize: 11,
+      fontSize: 10,
       fontWeight: "600",
       color: COLORS.textSecondary,
+      textAlign: "center",
     },
     markAllButton: {
       flexDirection: "row",
@@ -1003,19 +1018,21 @@ const createStyles = (COLORS: typeof BASE_COLORS) =>
       fontWeight: "600",
     },
     filterScroll: {
-      marginBottom: 20,
+      marginBottom: 16,
     },
     filterScrollContent: {
-      flexGrow: 1,
+      paddingRight: 4,
     },
     filterTabs: {
       flexDirection: "row",
-      gap: 8,
+      gap: 7,
+      alignItems: "center",
     },
     filterTab: {
-      paddingHorizontal: 15,
-      paddingVertical: 9,
-      borderRadius: 12,
+      minHeight: 34,
+      paddingHorizontal: 11,
+      paddingVertical: 7,
+      borderRadius: 18,
       borderWidth: 1,
       borderColor: COLORS.border,
       backgroundColor: COLORS.surface,
@@ -1027,7 +1044,7 @@ const createStyles = (COLORS: typeof BASE_COLORS) =>
       borderColor: COLORS.primary,
     },
     filterTabText: {
-      fontSize: 13,
+      fontSize: 12,
       fontWeight: "600",
       color: COLORS.textSecondary,
     },
