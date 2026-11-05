@@ -571,20 +571,6 @@ export default function DocumentDetailsScreen() {
               Export
             </Text>
           </TouchableOpacity>
-          {document.fileUrl && (
-            <TouchableOpacity
-              style={[styles.actionButton, styles.actionSecondary]}
-              onPress={handleShare}
-              disabled={isDeleting}
-            >
-              <Ionicons name="share-outline" size={20} color={COLORS.primary} />
-              <Text
-                style={[styles.actionButtonText, { color: COLORS.primary }]}
-              >
-                Share
-              </Text>
-            </TouchableOpacity>
-          )}
           <TouchableOpacity
             style={[styles.actionButton, styles.actionDanger]}
             onPress={handleDelete}
