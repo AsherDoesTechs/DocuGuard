@@ -67,12 +67,17 @@ const categoryMatches = (
   const stored = normalizeFilterValue(category);
   if (stored === "") return false;
 
-  const selectedKey = normalizedSelected;
+  const selectedKey = normalizeFilterValue(selectedCategory);
   const selectedLabel = normalizeFilterValue(
     DOCUMENT_CATEGORIES[selectedCategory as keyof typeof DOCUMENT_CATEGORIES],
   );
 
-  return stored === selectedKey || stored === selectedLabel;
+  if (stored === selectedKey || stored === selectedLabel) return true;
+  // Also match against the normalized label of the key
+  const normalizedSelectedKeyLabel = normalizeFilterValue(
+    DOCUMENT_CATEGORIES[normalizedSelected as keyof typeof DOCUMENT_CATEGORIES],
+  );
+  return normalizedSelectedKeyLabel !== "" && stored === normalizedSelectedKeyLabel;
 };
 
 const statusMatches = (
