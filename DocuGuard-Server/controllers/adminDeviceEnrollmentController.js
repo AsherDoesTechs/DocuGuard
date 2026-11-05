@@ -52,11 +52,17 @@ function validatePublicKey(value) {
 }
 
 exports.enrollDevice = async (req, res) => {
+  // Render Debug Logs: Log incoming request details
+  console.log("--- INCOMING ENROLLMENT REQUEST ---");
+  console.log("Headers:", JSON.stringify(req.headers, null, 2));
+  console.log("Body payload:", JSON.stringify(req.body, null, 2));
+
   const enrollmentToken = req.body?.enrollmentToken;
   const publicKeyPem = validatePublicKey(req.body?.publicKeyPem);
   const suppliedLabel = req.body?.deviceLabel;
 
   if (!validOpaqueToken(enrollmentToken)) {
+    console.log("DEBUG: Enrollment token failed opaque token validation:", enrollmentToken);
     return sendError(
       res,
       400,
@@ -66,26 +72,12 @@ exports.enrollDevice = async (req, res) => {
   }
 
   if (!publicKeyPem) {
+    console.log("DEBUG: Public key validation failed. Raw input length:", req.body?.publicKeyPem?.length);
     return sendError(
       res,
       400,
       "A valid ECDSA P-256 public key is required.",
       "ADMIN_DEVICE_KEY_INVALID",
-    );
-  }
-
-  if (
-    suppliedLabel !== undefined &&
-    suppliedLabel !== null &&
-    (typeof suppliedLabel !== "string" ||
-      suppliedLabel.trim().length === 0 ||
-      suppliedLabel.trim().length > 80)
-  ) {
-    return sendError(
-      res,
-      400,
-      "Device label must contain between 1 and 80 characters.",
-      "ADMIN_DEVICE_LABEL_INVALID",
     );
   }
 
