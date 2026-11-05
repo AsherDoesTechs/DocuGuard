@@ -60,15 +60,19 @@ const categoryMatches = (
   category: unknown,
   selectedCategory: string,
 ): boolean => {
-  if (selectedCategory === "all") return true;
+  if (!selectedCategory) return true;
+  const normalizedSelected = normalizeFilterValue(selectedCategory);
+  if (normalizedSelected === "all" || normalizedSelected === "all categories") return true;
 
   const stored = normalizeFilterValue(category);
-  const selectedKey = normalizeFilterValue(selectedCategory);
+  if (stored === "") return false;
+
+  const selectedKey = normalizedSelected;
   const selectedLabel = normalizeFilterValue(
     DOCUMENT_CATEGORIES[selectedCategory as keyof typeof DOCUMENT_CATEGORIES],
   );
 
-  return stored !== "" && (stored === selectedKey || stored === selectedLabel);
+  return stored === selectedKey || stored === selectedLabel;
 };
 
 const statusMatches = (
