@@ -1260,8 +1260,11 @@ export default function AddDocumentScreen() {
       });
 
       if (!verification.allow_processing) {
-        feedbackService.error(verification.message);
-        setStep(3);
+        feedbackService.warning(
+          verification.message ||
+            "The document could not be processed confidently. Please review it manually or rescan.",
+        );
+        setStep(3); // STAYS ON SELECT SCAN OR UPLOAD PAGE
         return;
       }
 
@@ -1323,7 +1326,7 @@ export default function AddDocumentScreen() {
           : error?.message || "The document could not be processed.",
       );
 
-      setStep(4);
+      setStep(3); // STAY ON SELECT SCAN OR UPLOAD PAGE INSTEAD OF STEP 4
     } finally {
       if (requestId === scanRequestIdRef.current) {
         setOcrLoading(false);
