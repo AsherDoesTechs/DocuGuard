@@ -59,25 +59,41 @@ const normalizeFilterValue = (value?: unknown): string =>
 const categoryMatches = (
   category: unknown,
   selectedCategory: string,
+  title?: unknown,
 ): boolean => {
   if (!selectedCategory) return true;
   const normalizedSelected = normalizeFilterValue(selectedCategory);
   if (normalizedSelected === "all" || normalizedSelected === "all categories") return true;
 
-  const stored = normalizeFilterValue(category);
-  if (stored === "") return false;
+  const storedCategory = normalizeFilterValue(category);
+  const storedTitle = normalizeFilterValue(title);
 
   const selectedKey = normalizeFilterValue(selectedCategory);
   const selectedLabel = normalizeFilterValue(
     DOCUMENT_CATEGORIES[selectedCategory as keyof typeof DOCUMENT_CATEGORIES],
   );
 
-  if (stored === selectedKey || stored === selectedLabel) return true;
+  if (storedCategory === selectedKey || storedCategory === selectedLabel) return true;
   // Also match against the normalized label of the key
   const normalizedSelectedKeyLabel = normalizeFilterValue(
     DOCUMENT_CATEGORIES[normalizedSelected as keyof typeof DOCUMENT_CATEGORIES],
   );
-  return normalizedSelectedKeyLabel !== "" && stored === normalizedSelectedKeyLabel;
+  if (normalizedSelectedKeyLabel !== "" && storedCategory === normalizedSelectedKeyLabel) {
+    return true;
+  }
+
+  // Match by document name/title when selecting a category label/name
+  if (selectedLabel && storedTitle && storedTitle.includes(selectedLabel)) {
+    return true;
+  }
+  if (normalizedSelectedKeyLabel && storedTitle && storedTitle.includes(normalizedSelectedKeyLabel)) {
+    return true;
+  }
+  if (selectedKey && selectedKey !== "all" && storedTitle && storedTitle.includes(selectedKey)) {
+    return true;
+  }
+
+  return false;
 };
 
 const statusMatches = (
@@ -425,7 +441,7 @@ export default function DocumentsScreen() {
         issuer.includes(query) ||
         documentNumber.includes(query);
 
-      const matchesCategory = categoryMatches(doc.category, selectedCategory);
+      const matchesCategory = categoryMatches(doc.category, selectedCategory, doc.title);
       const matchesStatus = statusMatches(doc.expiryDate, selectedStatus);
 
       return matchesSearch && matchesCategory && matchesStatus;
