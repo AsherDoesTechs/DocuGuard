@@ -1412,10 +1412,10 @@ exports.updateDocument = async (req, res) => {
       values.push(typeof notes === "string" ? notes.trim() : notes);
     }
     if (enableAlerts !== undefined && enableAlerts !== null) {
-      updates.push(`enable_alerts = $${idx++}`);
+      updates.push(`enable_alerts = $${idx++}::boolean`);
       values.push(enableAlerts === true);
     } else if (enableAlerts === null) {
-      updates.push(`enable_alerts = $${idx++}`);
+      updates.push(`enable_alerts = $${idx++}::boolean`);
       values.push(null);
     }
 
@@ -1428,10 +1428,10 @@ exports.updateDocument = async (req, res) => {
 
     updates.push(`updated_at = clock_timestamp()`);
 
-    values.push(docId);
-    values.push(userId);
+    values.push(Number(docId));
+    values.push(Number(userId));
     values.push(baseRevision || null);
-    values.push(exactRevision);
+    values.push(exactRevision === true);
 
     const updated = await db.query(
       `UPDATE documents
