@@ -1400,12 +1400,12 @@ exports.updateDocument = async (req, res) => {
       values.push(encryptedDocumentNumber);
     }
     if (issueDate !== undefined) {
-      updates.push(`issue_date = $${idx++}`);
-      values.push(issueDate);
+      updates.push(`issue_date = $${idx++}::date`);
+      values.push(issueDate === null ? null : issueDate);
     }
     if (expiryDate !== undefined) {
-      updates.push(`expiry_date = $${idx++}`);
-      values.push(expiryDate);
+      updates.push(`expiry_date = $${idx++}::date`);
+      values.push(expiryDate === null ? null : expiryDate);
     }
     if (notes !== undefined) {
       updates.push(`notes = $${idx++}`);
