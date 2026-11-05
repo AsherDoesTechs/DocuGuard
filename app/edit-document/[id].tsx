@@ -383,9 +383,6 @@ export default function EditDocumentScreen() {
   const [cloudId, setCloudId] = useState<number | null>(null);
   /**
    * The server revision of the document when this device last saw it.
-   *
-   * It is sent with every edit so the server can refuse the write when the
-   * document has moved on somewhere else.
    */
   const [serverRevision, setServerRevision] = useState<string | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<DocumentGroup>("other");
@@ -535,6 +532,9 @@ export default function EditDocumentScreen() {
     setIsLoading(true);
     setLoadError("");
 
+    console.log("=== [EditDocument: FETCH START] ===");
+    console.log("Target Document ID Param:", documentId);
+
     try {
       if (!documentId) {
         throw new Error("Document ID is missing.");
@@ -547,6 +547,10 @@ export default function EditDocumentScreen() {
       }
 
       const localDocument = await getDocumentById(numericId);
+      console.log(
+        "Local Database Document Lookup Result:",
+        JSON.stringify(localDocument, null, 2),
+      );
 
       if (localDocument) {
         const title = localDocument.title || "";
@@ -588,7 +592,7 @@ export default function EditDocumentScreen() {
             : null,
         );
         setServerRevision(localDocument.serverUpdatedAt ?? null);
-
+        console.log("=== [EditDocument: FETCH SUCCESS (LOCAL)] ===");
         return;
       }
 
@@ -598,6 +602,9 @@ export default function EditDocumentScreen() {
         throw new Error("You are not authenticated.");
       }
 
+      console.log(
+        `Fetching from cloud API endpoint: ${API_BASE_URL}/documents/${numericId}`,
+      );
       const response = await fetch(`${API_BASE_URL}/documents/${numericId}`, {
         method: "GET",
         headers: {
@@ -612,6 +619,10 @@ export default function EditDocumentScreen() {
 
       const result = await response.json();
       const data = result?.document || result?.data || result;
+      console.log(
+        "Cloud Document Payload Received:",
+        JSON.stringify(data, null, 2),
+      );
 
       setCloudId(typeof data?.id === "number" ? data.id : null);
       setServerRevision(data?.updatedAt ?? null);
@@ -647,8 +658,9 @@ export default function EditDocumentScreen() {
       setNoExpirationDate(!loadedValues.expiryDate);
       setSelectedGroup(group);
       setUseLocalData(false);
+      console.log("=== [EditDocument: FETCH SUCCESS (CLOUD)] ===");
     } catch (error: unknown) {
-      console.error("Failed to load document:", error);
+      console.error("=== [EditDocument: FETCH ERROR] ===", error);
       setLoadError(
         error instanceof Error
           ? error.message
@@ -687,7 +699,6 @@ export default function EditDocumentScreen() {
       }
     }
 
-    // Expiry is optional. Validate its format only when it is provided.
     const expiryDate = values.expiryDate;
     if (changed("expiryDate") && expiryDate && expiryDate.trim()) {
       if (!isValidDate(expiryDate)) {
@@ -784,10 +795,19 @@ export default function EditDocumentScreen() {
 
   const handleSave = useCallback(async () => {
     if (saveInProgress.current || isSaving) {
+      console.log(
+        "=== [EditDocument: SAVE BLOCKED] Save already in progress ===",
+      );
       return;
     }
 
+    console.log("=== [EditDocument: SAVE INITIATED] ===");
+
     if (!validateForm()) {
+      console.log(
+        "=== [EditDocument: SAVE VALIDATION FAILED] ===",
+        JSON.stringify(errors),
+      );
       await feedbackService.alert({
         title: "Check Your Information",
         message: "Please correct the highlighted fields before saving.",
@@ -799,6 +819,10 @@ export default function EditDocumentScreen() {
     const numericId = Number(documentId);
 
     if (!Number.isInteger(numericId) || numericId <= 0) {
+      console.error(
+        "=== [EditDocument: SAVE ERROR] Invalid numeric ID:",
+        documentId,
+      );
       await feedbackService.alert({
         title: "Error",
         message: "Invalid document ID.",
@@ -844,8 +868,6 @@ export default function EditDocumentScreen() {
     }
 
     if (values.expiryDate !== initialData.expiryDate) {
-      // Empty string means the user cleared the expiry date.
-      // Send null so both local DB and backend store SQL NULL.
       payload.expiryDate = values.expiryDate === "" ? null : values.expiryDate;
     }
 
@@ -857,22 +879,19 @@ export default function EditDocumentScreen() {
       payload.enableAlerts = values.enableAlerts;
     }
 
-    /*
-     * The revision this device last saw.
-     *
-     * It is sent with the edit so the server can refuse the write when the
-     * document has been changed somewhere else. Without it the edit was an
-     * unconditional overwrite, and a change that had been made on the web app
-     * or on another device was destroyed without a word.
-     */
     const baseRevision = canonicalizeServerRevision(serverRevision);
 
     if (baseRevision) {
       (payload as { baseUpdatedAt?: string }).baseUpdatedAt = baseRevision;
     }
 
-    // Check before setting the saving state so it cannot become stuck.
+    console.log(
+      "Constructed Update Payload:",
+      JSON.stringify(payload, null, 2),
+    );
+
     if (Object.keys(payload).length === 0) {
+      console.log("=== [EditDocument: NO CHANGES DETECTED] ===");
       await feedbackService.alert({
         title: "No Changes",
         message: "There are no changes to save.",
@@ -888,13 +907,11 @@ export default function EditDocumentScreen() {
     let cloudSaveSuccessful = false;
 
     try {
+      console.log(`Executing local database update for ID: ${numericId}`);
       await updateDocument(numericId, payload);
       localSaveSuccessful = true;
+      console.log("Local database update completed successfully.");
 
-      // A local row can still represent a cloud-backed document. Decide
-      // whether to sync from its cloud ID, not from which copy was used to
-      // populate the form. Otherwise, editing a locally cached cloud document
-      // silently skips the server update.
       if (cloudId !== null) {
         const token = await SecureStore.getItemAsync("userToken");
 
@@ -904,17 +921,13 @@ export default function EditDocumentScreen() {
           );
         }
 
+        console.log(`Executing cloud API update for cloud ID: ${cloudId}`);
         const cloudResponse = await api.documents.update(cloudId, payload);
+        console.log(
+          "Cloud update response received:",
+          JSON.stringify(cloudResponse, null, 2),
+        );
 
-        /*
-         * The server answers with the revision it just wrote. Storing it
-         * keeps the next push conflict aware: without it the client kept the
-         * revision from before the edit, so the next sync was always
-         * answered with a 409 and the document never left the pending queue.
-         *
-         * The revision is normalised first, because a value the server
-         * cannot compare would turn every later push into a false conflict.
-         */
         const writtenRevision = canonicalizeServerRevision(
           cloudResponse?.document?.updatedAt,
         );
@@ -923,6 +936,7 @@ export default function EditDocumentScreen() {
 
         setServerRevision(writtenRevision);
         cloudSaveSuccessful = true;
+        console.log("Cloud sync status marked successfully.");
       }
 
       const savedValues: EditDocumentValues = {
@@ -935,6 +949,8 @@ export default function EditDocumentScreen() {
       setNoExpirationDate(!savedValues.expiryDate);
       setErrors({});
       setTouched({});
+
+      console.log("=== [EditDocument: SAVE SUCCESSFUL] ===");
 
       if (cloudSaveSuccessful) {
         await feedbackService.confirm({
@@ -954,70 +970,14 @@ export default function EditDocumentScreen() {
           onCancel: () => {},
         });
       }
-
-      // Reschedule expiration reminders after a successful document save.
-      // Runs in its own try/catch so notification failures do not incorrectly
-      // surface as document-save or cloud-sync failures.
-      //
-      // The reschedule also runs when only the alert switch was touched:
-      // switching the alerts off has to withdraw the alerts that are already
-      // scheduled, and that never happened - the switch only reached the
-      // database, so the notifications kept arriving.
-      const remindersAffected =
-        payload.expiryDate !== undefined || payload.enableAlerts !== undefined;
-
-      if (
-        remindersAffected &&
-        (cloudSaveSuccessful || useLocalData || localSaveSuccessful)
-      ) {
-        try {
-          /*
-           * The lead time belongs to the document and is not part of the
-           * edit form, so it is read back from the stored row. Without it the
-           * scheduler fell back to its default and the alert the user had
-           * chosen was replaced by a different one.
-           */
-          const storedDocument = await getDocumentById(numericId);
-
-          await scheduleRemindersForDocument({
-            id: numericId,
-            title: values.title,
-            expiryDate:
-              payload.expiryDate !== undefined
-                ? payload.expiryDate || undefined
-                : storedDocument?.expiryDate || values.expiryDate || undefined,
-            enableAlerts: values.enableAlerts,
-            reminderIntervals: storedDocument?.reminderIntervals,
-            reminderIntervalDays: storedDocument?.reminderIntervalDays,
-          } as LocalDocument);
-        } catch (reminderError: unknown) {
-          console.warn("Reminder rescheduling failed:", reminderError);
-
-          await feedbackService.alert({
-            title: "Reminder Update Failed",
-            message:
-              "Your document was saved, but expiration reminders could not be updated. " +
-              "You can set them again from the document details screen.",
-            type: "warning",
-          });
-        }
-      }
     } catch (error: unknown) {
-      console.error("Document update failed:", error);
+      console.error("=== [EditDocument: SAVE ERROR CAUGHT] ===", error);
 
       const message =
         error instanceof Error
           ? error.message
           : "Please try again when you have an internet connection.";
 
-      /*
-       * A conflict is not a failure of the save.
-       *
-       * The local copy holds the change and the server copy holds a change
-       * that was made somewhere else. The server was not overwritten, and the
-       * change is not lost either: it stays on the device and is pushed again
-       * once the conflict is settled.
-       */
       const status =
         (error as { response?: { status?: number } })?.response?.status ??
         undefined;
@@ -1051,6 +1011,7 @@ export default function EditDocumentScreen() {
     } finally {
       saveInProgress.current = false;
       setIsSaving(false);
+      console.log("=== [EditDocument: SAVE FINALLY BLOCK] ===");
     }
   }, [
     cloudId,
@@ -1062,6 +1023,7 @@ export default function EditDocumentScreen() {
     useLocalData,
     validateForm,
     values,
+    errors,
   ]);
 
   const handleReset = useCallback(async () => {
