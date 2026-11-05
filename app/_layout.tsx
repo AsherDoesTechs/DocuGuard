@@ -126,8 +126,6 @@ export default function RootLayout() {
         } catch (error) {
           console.warn("Failed to schedule alerts:", error);
         }
-
-        syncWorker.start();
       } catch (error) {
         console.error("Failed to initialize local database:", error);
 

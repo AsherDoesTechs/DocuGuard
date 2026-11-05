@@ -1585,28 +1585,9 @@ export default function AddDocumentScreen() {
       });
 
       /*
-       * The upload happens in the background so the user is not kept waiting
-       * on the network, and the outcome is reported when it is known. Only the
-       * document that was just saved is pushed, so a record that is waiting
-       * for its backoff is not pushed early by an unrelated save.
+       * Automatic background upload disabled: changes are saved locally only.
+       * Use the manual "Sync Now" action to upload to the cloud.
        */
-      syncWorker.requestSync({
-        force: true,
-        onlyDocumentId: result.localId,
-        onComplete: (syncResult) => {
-          if (syncResult.documentsSynced > 0) {
-            feedbackService.success("Document synced to your account.");
-            return;
-          }
-
-          const firstError = syncResult.errors?.[0];
-          feedbackService.warning(
-            firstError
-              ? `Saved on this device. ${firstError}`
-              : "Saved on this device. The cloud sync will be retried automatically.",
-          );
-        },
-      });
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Could not save the document.";

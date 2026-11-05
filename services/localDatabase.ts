@@ -3058,15 +3058,17 @@ export async function markDocumentSyncedWithCloud(
  * deletion can still be pushed to the cloud. The local id is preserved as the
  * queue key; cloud_id identifies the server row.
  */
-export async function softDeleteDocument(id: number): Promise<void> {
+export async function hardDeleteDocument(id: number): Promise<void> {
   const userId = await getLocalUserId();
+
+  // 1. Delete associated child tags first
+  await run(`DELETE FROM document_tags WHERE document_id = ?`, [id]);
+
+  // 2. Permanently delete the document record from disk
   await run(
-    `UPDATE documents
-     SET status = 'deleted', needs_sync = 1, sync_status = 'pending', updated_at = ?
+    `DELETE FROM documents
      WHERE id = ? AND ${userId === null ? "1 = 0" : "user_id = ?"}`,
-    userId === null
-      ? [new Date().toISOString(), id]
-      : [new Date().toISOString(), id, userId],
+    userId === null ? [id] : [id, userId],
   );
 }
 

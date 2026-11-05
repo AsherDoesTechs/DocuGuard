@@ -7,9 +7,13 @@ import {
   ActivityIndicator,
   Modal,
   FlatList,
+  Platform,
+  UIManager,
 } from "react-native";
+import { LayoutAnimation } from "react-native";
+import { api } from "../../services/api";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
+import { useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
 import { Card, StatusBadge, EmptyState } from "../../components/ui";
@@ -25,11 +29,19 @@ import {
   getExpiredDocuments,
   getDashboardSummary,
   updateDocumentStatus,
+  hardDeleteDocument,
   type LocalDocument,
   type DocumentDashboardSummary,
 } from "../../services/localDatabase";
 import { pullDocumentsFromCloud } from "@/services/syncService";
 import { cancelExpiringSoonNotifications } from "../../services/notificationScheduler";
+
+if (
+  Platform.OS === "android" &&
+  UIManager.setLayoutAnimationEnabledExperimental
+) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 /**
  * Normalize category/status values from local DB and cloud sync.
@@ -333,9 +345,36 @@ export default function DocumentsScreen() {
     }
   }, []);
 
-  useEffect(() => {
-    void fetchDocuments();
-  }, [fetchDocuments]);
+  useFocusEffect(
+    useCallback(() => {
+      void fetchDocuments();
+    }, [fetchDocuments]),
+  );
+
+  const handleDeleteDocument = async (documentId: number) => {
+    const previousDocuments = [...documents];
+
+    // 1. Animate and remove instantly from UI (Optimistic Update)
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setDocuments((prev) => prev.filter((doc) => doc.id !== documentId));
+
+    try {
+      // 2. Permanently hard-delete from local SQLite database
+      await hardDeleteDocument(documentId);
+
+      // 3. Delete from the backend server API
+      await api.documents.delete(documentId);
+    } catch (error) {
+      console.error(
+        "[Documents] Deletion failed, rolling back UI state:",
+        error,
+      );
+
+      // Rollback UI state and animation on failure
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      setDocuments(previousDocuments);
+    }
+  };
 
   /**
    * Refresh without resetting the whole screen to its initial

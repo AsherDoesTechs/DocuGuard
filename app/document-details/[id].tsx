@@ -20,11 +20,10 @@ import {
 } from "@/utils";
 import {
   getDocumentById,
-  deleteDocument,
+  hardDeleteDocument,
   updateDocument,
   getDocumentHistory,
   logDocumentAction,
-  softDeleteDocument,
   LocalDocument,
 } from "@/services/localDatabase";
 import { cancelDocumentNotifications } from "@/services/notificationScheduler";
@@ -46,6 +45,7 @@ export default function DocumentDetailsScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [isDownloading, setIsDownloading] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [history, setHistory] = useState<any[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const mountedRef = useRef(true);
@@ -99,37 +99,43 @@ export default function DocumentDetailsScreen() {
   }, [fetchDocumentDetails, fetchHistory]);
 
   const handleDelete = async () => {
-    if (!document?.id) return;
+    if (!document?.id || isDeleting) return;
+
     await feedbackService.confirm({
       title: "Delete Document",
-      message: "Are you sure you want to delete this document from your vault?",
+      message:
+        "Are you sure you want to permanently delete this document from your vault?",
       confirmText: "Delete",
       cancelText: "Cancel",
       destructive: true,
       onConfirm: async () => {
         const localId = document.id as number;
+        setIsDeleting(true);
+
         try {
-          // Cancel pending reminders first
+          // 1. Cancel pending local notification alerts
           await cancelDocumentNotifications(localId);
-          await logDocumentAction(localId, "deleted", document);
 
+          // 2. Hard-delete from local SQLite database immediately
+          await hardDeleteDocument(localId);
+
+          // 3. Delete from cloud backend API if synced
           if (document.cloudId) {
-            // 1. Hit your backend API directly to delete it from the cloud
-            await api.client.delete(`/api/documents/${document.cloudId}`);
-
-            // 2. Once the server confirms, permanently delete it locally
-            await deleteDocument(localId);
-          } else {
-            // Never uploaded to cloud, just delete locally
-            await deleteDocument(localId);
+            const token = await SecureStore.getItemAsync("userToken");
+            if (token) {
+              await api.documents.delete(document.cloudId);
+            }
           }
 
+          feedbackService.success("Document permanently deleted.");
           router.back();
-        } catch (err) {
-          console.error("Failed to delete document on server:", err);
+        } catch (err: any) {
+          console.error("Failed to delete document:", err);
           feedbackService.error(
-            "Could not delete document from server. Please check your connection.",
+            "Could not complete document deletion. Please try again.",
           );
+        } finally {
+          if (mountedRef.current) setIsDeleting(false);
         }
       },
       onCancel: () => {},
@@ -165,7 +171,6 @@ export default function DocumentDetailsScreen() {
       await updateDocument(localId, { status: "verified", needsSync: true });
       setDocument({ ...document, status: "verified" });
       const token = await SecureStore.getItemAsync("userToken");
-      // The backend addresses documents by their own id, not the local row id.
       if (token && document.cloudId) {
         try {
           await api.documents.verifyDocument(document.cloudId);
@@ -510,7 +515,7 @@ export default function DocumentDetailsScreen() {
             <TouchableOpacity
               style={[styles.actionButton, styles.actionVerify]}
               onPress={handleVerify}
-              disabled={isVerifying}
+              disabled={isVerifying || isDeleting}
             >
               {isVerifying ? (
                 <ActivityIndicator size="small" color="#fff" />
@@ -527,7 +532,7 @@ export default function DocumentDetailsScreen() {
           <TouchableOpacity
             style={[styles.actionButton, styles.actionPrimary]}
             onPress={() => router.push(`/edit-document/${document.id}` as any)}
-            disabled={isDownloading}
+            disabled={isDownloading || isDeleting}
           >
             <Ionicons name="create" size={20} color="#fff" />
             <Text style={[styles.actionButtonText, { color: "#fff" }]}>
@@ -537,7 +542,7 @@ export default function DocumentDetailsScreen() {
           <TouchableOpacity
             style={[styles.actionButton, styles.actionSecondary]}
             onPress={handleDownload}
-            disabled={isDownloading}
+            disabled={isDownloading || isDeleting}
           >
             {isDownloading ? (
               <ActivityIndicator size="small" color={COLORS.primary} />
@@ -555,6 +560,7 @@ export default function DocumentDetailsScreen() {
           <TouchableOpacity
             style={[styles.actionButton, styles.actionSecondary]}
             onPress={handleExport}
+            disabled={isDeleting}
           >
             <Ionicons
               name="document-text-outline"
@@ -569,6 +575,7 @@ export default function DocumentDetailsScreen() {
             <TouchableOpacity
               style={[styles.actionButton, styles.actionSecondary]}
               onPress={handleShare}
+              disabled={isDeleting}
             >
               <Ionicons name="share-outline" size={20} color={COLORS.primary} />
               <Text
@@ -581,12 +588,20 @@ export default function DocumentDetailsScreen() {
           <TouchableOpacity
             style={[styles.actionButton, styles.actionDanger]}
             onPress={handleDelete}
-            disabled={isDownloading}
+            disabled={isDownloading || isDeleting}
           >
-            <Ionicons name="trash" size={20} color={COLORS.danger} />
-            <Text style={[styles.actionButtonText, { color: COLORS.danger }]}>
-              Delete
-            </Text>
+            {isDeleting ? (
+              <ActivityIndicator size="small" color={COLORS.danger} />
+            ) : (
+              <>
+                <Ionicons name="trash" size={20} color={COLORS.danger} />
+                <Text
+                  style={[styles.actionButtonText, { color: COLORS.danger }]}
+                >
+                  Delete
+                </Text>
+              </>
+            )}
           </TouchableOpacity>
         </View>
       </ScrollView>
