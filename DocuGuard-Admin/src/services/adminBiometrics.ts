@@ -109,7 +109,7 @@ export async function prepareAdminSigningKey(): Promise<AdminBiometricKey> {
     return { publicKeyPem: existing.publicKey };
   }
 
- const result = await createKeys(
+  const result = await createKeys(
     ADMIN_KEY_ALIAS,
     {
       signatureType: "ecdsa",
@@ -122,11 +122,12 @@ export async function prepareAdminSigningKey(): Promise<AdminBiometricKey> {
     BIOMETRIC_PROMPT,
   );
 
-  // Debug log to inspect the exact native response
+  // Debug log to inspect the exact native response in the terminal
   console.log("NATIVE KEY GEN RESULT:", JSON.stringify(result, null, 2));
 
   if (!result.publicKey || result.error || result.code !== "success") {
-    throw new Error(getBiometricErrorMessage(result.code, result.error));
+    const rawDebugInfo = `[Code: ${result.code ?? "none"}, Error: ${result.error ?? "none"}]`;
+    throw new Error(`${getBiometricErrorMessage(result.code, result.error)} ${rawDebugInfo}`);
   }
 
   if (!isExpectedAdminKeyAlgorithm(result.algorithm)) {
@@ -172,8 +173,12 @@ export async function signAdminChallenge(challenge: string): Promise<string> {
     BIOMETRIC_PROMPT,
   );
 
+  // Debug log to inspect the signature response in the terminal
+  console.log("NATIVE SIGNATURE RESULT:", JSON.stringify(result, null, 2));
+
   if (!result.signature || result.error || result.code !== "success") {
-    throw new Error(getBiometricErrorMessage(result.code, result.error));
+    const rawDebugInfo = `[Code: ${result.code ?? "none"}, Error: ${result.error ?? "none"}]`;
+    throw new Error(`${getBiometricErrorMessage(result.code, result.error)} ${rawDebugInfo}`);
   }
 
   if (result.authenticationType !== "biometric") {
