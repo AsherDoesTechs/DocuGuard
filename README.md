@@ -281,8 +281,10 @@ DocuGuard is being developed as a Bachelor of Science in Information Technology 
 
 eas build --platform android --profile preview
 .\gradlew.bat app:assembleRelease -x lint -x test --configure-on-demand --build-cache
-eas build --platform androud --profile preview
-npx eas-cli update --channel preview --message "Describe the verified fix"
+npx eas-cli update --channel preview --message "Debug login authentication flow" --platform android --environment preview
+npx expo run:android
+npx expo start --dev-client
+npx expo run:android --variant release
 
 # 📄 License
 
