@@ -76,13 +76,15 @@ async function setAuthTokenAndSwitchLocalUser(
   }
 
   return runAuthTokenOperation(async () => {
+    // 1. Switch local database user scope FIRST so stale tables are wiped/partitioned
+    // before the token ever unlocks network calls.
+    const { switchLocalUser } = await import("./localDatabase");
+    await switchLocalUser(userId);
+
+    // 2. Commit token globally only after SQLite user-scoping is safely finished.
     await SecureStore.setItemAsync("userToken", token);
     authToken = token;
     authTokenLoaded = true;
-
-    // Keep the lock order consistent with logout: auth queue, then local queue.
-    const { switchLocalUser } = await import("./localDatabase");
-    await switchLocalUser(userId);
   });
 }
 export async function replaceAuthTokenIfCurrent(
