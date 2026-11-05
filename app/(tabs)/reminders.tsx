@@ -106,10 +106,16 @@ export default function RemindersScreen() {
   const [markingAllRead, setMarkingAllRead] = useState(false);
   const [updatingNotifications, setUpdatingNotifications] = useState(false);
   const [lastFetch, setLastFetch] = useState<number>(0);
-  const [error, setError] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
 
-  const mountedRef = useRef(true);
-  const fetchInProgressRef = useRef(false);
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (mountedRef.current) {
+        setNow(Date.now());
+      }
+    }, 60000);
+    return () => clearInterval(interval);
+  }, []);
 
   const loadNotificationPreference = useCallback(async () => {
     try {
@@ -163,27 +169,33 @@ export default function RemindersScreen() {
     }
   }, []);
 
-  const getDaysUntil = (dateStr: string) => {
-    const due = parseLocalDate(dateStr);
-    if (!due || Number.isNaN(due.getTime())) {
-      return Number.NaN;
-    }
-    due.setHours(0, 0, 0, 0);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    return Math.round((due.getTime() - today.getTime()) / 86400000);
-  };
+  const getDaysUntil = useCallback(
+    (dateStr: string) => {
+      const due = parseLocalDate(dateStr);
+      if (!due || Number.isNaN(due.getTime())) {
+        return Number.NaN;
+      }
+      due.setHours(0, 0, 0, 0);
+      const today = new Date(now);
+      today.setHours(0, 0, 0, 0);
+      return Math.round((due.getTime() - today.getTime()) / 86400000);
+    },
+    [now],
+  );
 
-  const calculateSeverity = (dueDate: string): ReminderSeverity => {
-    const days = getDaysUntil(dueDate);
+  const calculateSeverity = useCallback(
+    (dueDate: string): ReminderSeverity => {
+      const days = getDaysUntil(dueDate);
 
-    // Invalid dates are excluded during mapping; keep severity safe if called elsewhere.
-    if (!Number.isFinite(days)) return "Valid";
-    if (days < 0) return "Expired";
-    if (days <= 30) return "Expiring Soon";
+      // Invalid dates are excluded during mapping; keep severity safe if called elsewhere.
+      if (!Number.isFinite(days)) return "Valid";
+      if (days < 0) return "Expired";
+      if (days <= 30) return "Expiring Soon";
 
-    return "Valid";
-  };
+      return "Valid";
+    },
+    [getDaysUntil],
+  );
 
   const fetchReminders = useCallback(async () => {
     if (!mountedRef.current || fetchInProgressRef.current) {
@@ -230,12 +242,13 @@ export default function RemindersScreen() {
         setLoading(false);
       }
     }
-  }, []);
+  }, [calculateSeverity]);
 
   useFocusEffect(
     useCallback(() => {
       void fetchReminders();
-    }, [fetchReminders]),
+      void scheduleAlertsIfEnabled();
+    }, [fetchReminders, scheduleAlertsIfEnabled]),
   );
 
   useEffect(() => {
@@ -273,6 +286,11 @@ export default function RemindersScreen() {
     checkNotificationPermission,
     scheduleAlertsIfEnabled,
   ]);
+
+  useEffect(() => {
+    if (reminders.length === 0) return;
+    void scheduleAlertsIfEnabled();
+  }, [reminders, scheduleAlertsIfEnabled]);
 
   const handleToggleNotifications = async (value: boolean) => {
     if (updatingNotifications || value === notificationsEnabled) {
@@ -428,7 +446,7 @@ export default function RemindersScreen() {
 
         return true;
       }),
-    [filter, reminders],
+    [filter, reminders, now],
   );
 
   const getSeverityIcon = (severity: ReminderSeverity) => {
@@ -464,22 +482,25 @@ export default function RemindersScreen() {
     }
   };
 
-  const getDueStatus = (date: string) => {
-    const days = getDaysUntil(date);
+  const getDueStatus = useCallback(
+    (date: string) => {
+      const days = getDaysUntil(date);
 
-    if (days < 0) {
-      const overdueDays = Math.abs(days);
+      if (days < 0) {
+        const overdueDays = Math.abs(days);
 
-      return overdueDays === 1
-        ? "1 day overdue"
-        : `${overdueDays} days overdue`;
-    }
+        return overdueDays === 1
+          ? "1 day overdue"
+          : `${overdueDays} days overdue`;
+      }
 
-    if (days === 0) return "Due today";
-    if (days === 1) return "1 day remaining";
+      if (days === 0) return "Due today";
+      if (days === 1) return "1 day remaining";
 
-    return `${days} days remaining`;
-  };
+      return `${days} days remaining`;
+    },
+    [getDaysUntil],
+  );
 
   const formatLastUpdated = (timestamp: number) => {
     if (!timestamp) return "Never";
