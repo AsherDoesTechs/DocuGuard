@@ -60,9 +60,10 @@ export default function AdminLoginScreen() {
       const deviceId = await getAdminDeviceId();
 
       if (!deviceId) {
+        setEnrollmentMode(true);
         Alert.alert(
           "Device enrollment required",
-          "This device is not enrolled. Choose “Enroll this device” and use a valid, separately provisioned enrollment token.",
+          "This device is not enrolled. Enter a one-time enrollment token to enroll it, then sign in.",
         );
         return;
       }
