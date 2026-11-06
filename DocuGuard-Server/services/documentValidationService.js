@@ -143,6 +143,7 @@ function evaluateExtractionConfidence(extractedData) {
   };
 }
 
+
 async function validateDocumentType({ fileUrl, fileType, selectedCategory }) {
   if (!fileUrl) {
     return {
@@ -156,9 +157,7 @@ async function validateDocumentType({ fileUrl, fileType, selectedCategory }) {
   try {
     const classificationResult = await classifyDocument(fileUrl);
 
-    // If classification explicitly flags manual review or low confidence
     if (classificationResult.status === "manual_review") {
-      // Check if it's a completely wrong/unrecognized document type
       const isMismatchReason = [
         "no_classification",
         "missing_document_type",
@@ -186,12 +185,18 @@ async function validateDocumentType({ fileUrl, fileType, selectedCategory }) {
       !classificationResult.classification ||
       !classificationResult.modelId
     ) {
+      warn("DocumentValidation", "Invalid classifier result", {
+        status: classificationResult?.status || "missing_status",
+        hasClassification: Boolean(classificationResult?.classification),
+        hasModelId: Boolean(classificationResult?.modelId),
+      });
+
       return {
-        status: "mismatch",
-        httpStatus: 422,
-        code: "DOCUMENT_TYPE_MISMATCH",
+        status: "processing_error",
+        httpStatus: 502,
+        code: "OCR_PROCESS_FAILED",
         message:
-          "Verification halted. The uploaded document does not match a supported ID layout.",
+          "Document classification could not be completed. Please try again.",
       };
     }
 
@@ -226,7 +231,6 @@ async function validateDocumentType({ fileUrl, fileType, selectedCategory }) {
       confidenceEvaluation,
     };
   } catch (error) {
-    // Log the actual error message for debugging on Render
     warn("DocumentValidation", "Classification-first validation failed", {
       error: error?.message || "OCR operation failed",
       stack: error?.stack,
@@ -234,25 +238,17 @@ async function validateDocumentType({ fileUrl, fileType, selectedCategory }) {
 
     const timedOut = /timed out/i.test(String(error?.message || ""));
 
-    // If it's a timeout or network glitch, return processing error
-    if (timedOut) {
-      return {
-        status: "processing_error",
-        httpStatus: 502,
-        code: "OCR_PROCESS_FAILED",
-        message: "Document processing timed out. Please try again.",
-      };
-    }
-
-    // For other unexpected evaluation errors on invalid files, treat as a mismatch/rejection
     return {
-      status: "mismatch",
-      httpStatus: 422,
-      code: "DOCUMENT_TYPE_MISMATCH",
-      message: `Verification failed: ${error?.message || "The uploaded document layout is invalid."}`,
+      status: "processing_error",
+      httpStatus: 502,
+      code: "OCR_PROCESS_FAILED",
+      message: timedOut
+        ? "Document processing timed out. Please try again."
+        : "Document processing could not be completed. Please try again.",
     };
   }
 }
+
 
 module.exports = {
   validateDocumentType,

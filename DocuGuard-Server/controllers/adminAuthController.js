@@ -52,7 +52,7 @@ function isExpired(value) {
 function isAdminAccount(user) {
   return (
     user &&
-    user.role === "admin" &&
+    String(user.role).trim().toLowerCase() === "admin" &&
     typeof user.admin_id === "string" &&
     user.admin_id.trim().length > 0 &&
     user.is_verified === true

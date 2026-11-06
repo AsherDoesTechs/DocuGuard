@@ -42,7 +42,7 @@ console.log(
   `WITH matching_admins AS MATERIALIZED (
      SELECT u.id
        FROM public.users AS u
-      WHERE u.role = 'admin'
+      WHERE LOWER(BTRIM(u.role)) = 'admin'
         AND LOWER(BTRIM(u.admin_id)) = LOWER(${adminIdLiteral})
         AND u.is_verified IS TRUE
         AND BTRIM(u.admin_id) <> ''

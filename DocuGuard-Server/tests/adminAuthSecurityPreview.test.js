@@ -8,7 +8,7 @@ const path = require("node:path");
 
 const previewPath = path.resolve(
   __dirname,
-  "../controllers/adminAuthController.security-preview.js",
+  "../controllers/adminAuthController.js",
 );
 
 let queryImpl;
@@ -430,8 +430,8 @@ test("missing JWT secret fails closed without issuing a token", async () => {
     assert.equal(res.statusCode, 503);
     assert.equal(res.body.code, "ADMIN_AUTH_UNAVAILABLE");
     assert.equal(signCalls.length, 0);
-    assert.equal(commitCount, 1);
-    assert.equal(rollbackCount, 0);
+assert.equal(commitCount, 0);
+assert.equal(rollbackCount, 0);
   } finally {
     if (originalSecret === undefined) {
       delete process.env.JWT_SECRET;
@@ -454,8 +454,8 @@ test("weak JWT secret fails closed without issuing a token", async () => {
     assert.equal(res.statusCode, 503);
     assert.equal(res.body.code, "ADMIN_AUTH_UNAVAILABLE");
     assert.equal(signCalls.length, 0);
-    assert.equal(commitCount, 1);
-    assert.equal(rollbackCount, 0);
+assert.equal(commitCount, 0);
+assert.equal(rollbackCount, 0);
   } finally {
     if (originalSecret === undefined) {
       delete process.env.JWT_SECRET;

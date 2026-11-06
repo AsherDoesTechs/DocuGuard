@@ -288,7 +288,18 @@ async function drive(
   };
 
   try {
-    await handler({ body, params, headers, user: { userId: USER_ID } }, res);
+   await handler(
+  {
+    body,
+    params,
+    headers,
+    user: {
+      userId: USER_ID,
+      id: USER_ID,
+    },
+  },
+  res,
+);
   } finally {
     db.query = originalQuery;
     db.withTransaction = originalWithTransaction;

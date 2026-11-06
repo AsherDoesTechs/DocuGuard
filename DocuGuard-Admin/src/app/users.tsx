@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useState } from "react";
+
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -25,7 +26,6 @@ type UserAccount = {
 
 export default function AdminUsersScreen() {
   const [users, setUsers] = useState<UserAccount[]>([]);
-  const [filteredUsers, setFilteredUsers] = useState<UserAccount[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
@@ -36,15 +36,16 @@ export default function AdminUsersScreen() {
 
     try {
       const token = await getAdminToken();
+
       if (!token) {
         router.replace("/");
         return;
       }
 
-      // TODO: Replace with your actual backend endpoint e.g., authedRequest('/admin/users')
       const API_BASE_URL =
         process.env.EXPO_PUBLIC_API_BASE_URL ??
         "https://docuguard-api-onoj.onrender.com";
+
       const response = await fetch(`${API_BASE_URL}/admin/users`, {
         method: "GET",
         headers: {
@@ -63,10 +64,11 @@ export default function AdminUsersScreen() {
       }
 
       const data = await response.json();
-      // Expecting data.users or data directly as array
+
+      // Expecting data.users or data directly as an array
       const userList = data.users || data || [];
+
       setUsers(userList);
-      setFilteredUsers(userList);
     } catch (error) {
       setErrorMessage(
         error instanceof Error
@@ -78,31 +80,33 @@ export default function AdminUsersScreen() {
     }
   }, []);
 
-  useEffect(() => {
-    void fetchUsers();
-  }, [fetchUsers]);
+useEffect(() => {
+  // Initial API request; fetchUsers manages loading and data state.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  void fetchUsers();
+}, [fetchUsers]);
 
-  // Handle live searching
-  useEffect(() => {
-    if (!searchQuery.trim()) {
-      setFilteredUsers(users);
-    } else {
-      const query = searchQuery.toLowerCase();
-      setFilteredUsers(
-        users.filter(
-          (u) =>
-            u.email.toLowerCase().includes(query) ||
-            (u.name && u.name.toLowerCase().includes(query)),
-        ),
-      );
+  // Derive filtered users instead of maintaining duplicate state.
+  const filteredUsers = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+
+    if (!query) {
+      return users;
     }
-  }, [searchQuery, users]);
+
+    return users.filter(
+      (user) =>
+        user.email.toLowerCase().includes(query) ||
+        (user.name && user.name.toLowerCase().includes(query)),
+    );
+  }, [users, searchQuery]);
 
   const handleToggleStatus = (
     userId: string | number,
     currentStatus: string,
   ) => {
     const action = currentStatus === "active" ? "suspend" : "activate";
+
     Alert.alert(
       `Confirm ${action}`,
       `Are you sure you want to ${action} this user account?`,
@@ -123,6 +127,7 @@ export default function AdminUsersScreen() {
 
   const renderItem = ({ item }: { item: UserAccount }) => {
     const isActive = item.status === "active";
+
     return (
       <View style={styles.userCard}>
         <View style={styles.userInfo}>
@@ -131,9 +136,16 @@ export default function AdminUsersScreen() {
               {(item.name || item.email).charAt(0).toUpperCase()}
             </Text>
           </View>
+
           <View style={styles.userDetails}>
-            <Text style={styles.userName}>{item.name || "Unnamed User"}</Text>
-            <Text style={styles.userEmail}>{item.email}</Text>
+            <Text style={styles.userName}>
+              {item.name || "Unnamed User"}
+            </Text>
+
+            <Text style={styles.userEmail}>
+              {item.email}
+            </Text>
+
             <View style={styles.badgeRow}>
               <View
                 style={[
@@ -152,7 +164,10 @@ export default function AdminUsersScreen() {
                   {item.status.toUpperCase()}
                 </Text>
               </View>
-              <Text style={styles.roleText}>Role: {item.role}</Text>
+
+              <Text style={styles.roleText}>
+                Role: {item.role}
+              </Text>
             </View>
           </View>
         </View>
@@ -187,11 +202,16 @@ export default function AdminUsersScreen() {
             View and manage registered DocuGuard accounts
           </Text>
         </View>
+
         <Pressable
           style={styles.refreshButton}
           onPress={() => void fetchUsers()}
         >
-          <Ionicons name="refresh-outline" size={18} color="#204D91" />
+          <Ionicons
+            name="refresh-outline"
+            size={18}
+            color="#204D91"
+          />
           <Text style={styles.refreshText}>Refresh</Text>
         </Pressable>
       </View>
@@ -203,6 +223,7 @@ export default function AdminUsersScreen() {
           color="#8A96A8"
           style={styles.searchIcon}
         />
+
         <TextInput
           style={styles.searchInput}
           placeholder="Search by name or email..."
@@ -210,9 +231,14 @@ export default function AdminUsersScreen() {
           value={searchQuery}
           onChangeText={setSearchQuery}
         />
+
         {searchQuery.length > 0 && (
           <Pressable onPress={() => setSearchQuery("")}>
-            <Ionicons name="close-circle" size={18} color="#8A96A8" />
+            <Ionicons
+              name="close-circle"
+              size={18}
+              color="#8A96A8"
+            />
           </Pressable>
         )}
       </View>
@@ -221,24 +247,46 @@ export default function AdminUsersScreen() {
       {loading ? (
         <View style={styles.centerContainer}>
           <ActivityIndicator size="large" color="#204D91" />
-          <Text style={styles.centerText}>Loading users...</Text>
+          <Text style={styles.centerText}>
+            Loading users...
+          </Text>
         </View>
       ) : errorMessage ? (
         <View style={styles.errorContainer}>
-          <Ionicons name="alert-circle-outline" size={32} color="#9B2C2C" />
-          <Text style={styles.errorTitle}>Could not load users</Text>
-          <Text style={styles.errorText}>{errorMessage}</Text>
+          <Ionicons
+            name="alert-circle-outline"
+            size={32}
+            color="#9B2C2C"
+          />
+
+          <Text style={styles.errorTitle}>
+            Could not load users
+          </Text>
+
+          <Text style={styles.errorText}>
+            {errorMessage}
+          </Text>
+
           <Pressable
             style={styles.retryButton}
             onPress={() => void fetchUsers()}
           >
-            <Text style={styles.retryButtonText}>Try again</Text>
+            <Text style={styles.retryButtonText}>
+              Try again
+            </Text>
           </Pressable>
         </View>
       ) : filteredUsers.length === 0 ? (
         <View style={styles.centerContainer}>
-          <Ionicons name="people-outline" size={48} color="#A0AEC0" />
-          <Text style={styles.centerText}>No users found.</Text>
+          <Ionicons
+            name="people-outline"
+            size={48}
+            color="#A0AEC0"
+          />
+
+          <Text style={styles.centerText}>
+            No users found.
+          </Text>
         </View>
       ) : (
         <FlatList

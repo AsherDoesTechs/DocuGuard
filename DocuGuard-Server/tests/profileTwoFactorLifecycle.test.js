@@ -10,6 +10,19 @@ const {
   generateRecoveryCodes,
   hashRecoveryCodes,
 } = require("../utils/twoFactorRecovery");
+const dataSyncServicePath = require.resolve(
+  "../services/dataSyncService",
+);
+
+require.cache[dataSyncServicePath] = {
+  id: dataSyncServicePath,
+  filename: dataSyncServicePath,
+  loaded: true,
+  exports: {
+    syncProfile: async () => {},
+  },
+};
+
 const profileController = require("../controllers/profileController");
 
 function makeResponse() {

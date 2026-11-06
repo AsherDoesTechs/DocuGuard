@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useState } from "react";
+
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -18,7 +24,7 @@ type VaultDocument = {
   id: string | number;
   title: string;
   fileName: string;
-  fileSize: number; // in bytes
+  fileSize: number;
   ownerEmail: string;
   ocrStatus: "completed" | "pending" | "failed";
   createdAt: string;
@@ -26,7 +32,6 @@ type VaultDocument = {
 
 export default function AdminDocumentsScreen() {
   const [documents, setDocuments] = useState<VaultDocument[]>([]);
-  const [filteredDocs, setFilteredDocs] = useState<VaultDocument[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
@@ -37,6 +42,7 @@ export default function AdminDocumentsScreen() {
 
     try {
       const token = await getAdminToken();
+
       if (!token) {
         router.replace("/");
         return;
@@ -45,17 +51,23 @@ export default function AdminDocumentsScreen() {
       const API_BASE_URL =
         process.env.EXPO_PUBLIC_API_BASE_URL ??
         "https://docuguard-api-onoj.onrender.com";
-      const response = await fetch(`${API_BASE_URL}/admin/documents`, {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: "application/json",
+
+      const response = await fetch(
+        `${API_BASE_URL}/admin/documents`,
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/json",
+          },
         },
-      });
+      );
 
       if (response.status === 401) {
         router.replace("/");
-        throw new Error("Session expired. Please sign in again.");
+        throw new Error(
+          "Session expired. Please sign in again.",
+        );
       }
 
       if (!response.ok) {
@@ -65,9 +77,14 @@ export default function AdminDocumentsScreen() {
       }
 
       const data = await response.json();
-      const docList = data.documents || data || [];
+
+      const docList: VaultDocument[] = Array.isArray(data.documents)
+        ? data.documents
+        : Array.isArray(data)
+          ? data
+          : [];
+
       setDocuments(docList);
-      setFilteredDocs(docList);
     } catch (error) {
       setErrorMessage(
         error instanceof Error
@@ -79,44 +96,69 @@ export default function AdminDocumentsScreen() {
     }
   }, []);
 
-  useEffect(() => {
-    void fetchDocuments();
-  }, [fetchDocuments]);
+useEffect(() => {
+  // Initial API request; fetchDocuments manages loading and data state.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  void fetchDocuments();
+}, [fetchDocuments]);
 
-  // Live filtering by title, filename, or owner email
-  useEffect(() => {
-    if (!searchQuery.trim()) {
-      setFilteredDocs(documents);
-    } else {
-      const query = searchQuery.toLowerCase();
-      setFilteredDocs(
-        documents.filter(
-          (d) =>
-            d.title.toLowerCase().includes(query) ||
-            d.fileName.toLowerCase().includes(query) ||
-            d.ownerEmail.toLowerCase().includes(query),
-        ),
-      );
+  // Derive filtered documents instead of maintaining duplicate state.
+  const filteredDocs = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+
+    if (!query) {
+      return documents;
     }
-  }, [searchQuery, documents]);
+
+    return documents.filter((document) => {
+      const title = document.title ?? "";
+      const fileName = document.fileName ?? "";
+      const ownerEmail = document.ownerEmail ?? "";
+
+      return (
+        title.toLowerCase().includes(query) ||
+        fileName.toLowerCase().includes(query) ||
+        ownerEmail.toLowerCase().includes(query)
+      );
+    });
+  }, [documents, searchQuery]);
 
   const formatFileSize = (bytes: number) => {
-    if (bytes === 0) return "0 Bytes";
+    if (!Number.isFinite(bytes) || bytes <= 0) {
+      return "0 Bytes";
+    }
+
     const k = 1024;
     const sizes = ["Bytes", "KB", "MB", "GB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+    const i = Math.min(
+      Math.floor(Math.log(bytes) / Math.log(k)),
+      sizes.length - 1,
+    );
+
+    return (
+      parseFloat((bytes / Math.pow(k, i)).toFixed(2)) +
+      " " +
+      sizes[i]
+    );
   };
 
   const handleInspectDoc = (doc: VaultDocument) => {
     Alert.alert(
       "Document Details",
-      `Title: ${doc.title}\nFile: ${doc.fileName}\nOwner: ${doc.ownerEmail}\nOCR Status: ${doc.ocrStatus.toUpperCase()}\nSize: ${formatFileSize(doc.fileSize)}`,
+      `Title: ${doc.title || doc.fileName}\n` +
+        `File: ${doc.fileName}\n` +
+        `Owner: ${doc.ownerEmail}\n` +
+        `OCR Status: ${doc.ocrStatus.toUpperCase()}\n` +
+        `Size: ${formatFileSize(doc.fileSize)}`,
       [{ text: "Close" }],
     );
   };
 
-  const renderItem = ({ item }: { item: VaultDocument }) => {
+  const renderItem = ({
+    item,
+  }: {
+    item: VaultDocument;
+  }) => {
     const isCompleted = item.ocrStatus === "completed";
     const isFailed = item.ocrStatus === "failed";
 
@@ -124,13 +166,24 @@ export default function AdminDocumentsScreen() {
       <View style={styles.docCard}>
         <View style={styles.docInfo}>
           <View style={styles.iconBox}>
-            <Ionicons name="document-text-outline" size={22} color="#204D91" />
+            <Ionicons
+              name="document-text-outline"
+              size={22}
+              color="#204D91"
+            />
           </View>
+
           <View style={styles.docDetails}>
-            <Text style={styles.docTitle} numberOfLines={1}>
+            <Text
+              style={styles.docTitle}
+              numberOfLines={1}
+            >
               {item.title || item.fileName}
             </Text>
-            <Text style={styles.docOwner}>Owner: {item.ownerEmail}</Text>
+
+            <Text style={styles.docOwner}>
+              Owner: {item.ownerEmail}
+            </Text>
 
             <View style={styles.metaRow}>
               <View
@@ -156,6 +209,7 @@ export default function AdminDocumentsScreen() {
                   OCR: {item.ocrStatus.toUpperCase()}
                 </Text>
               </View>
+
               <Text style={styles.sizeText}>
                 {formatFileSize(item.fileSize)}
               </Text>
@@ -166,8 +220,14 @@ export default function AdminDocumentsScreen() {
         <Pressable
           style={styles.inspectButton}
           onPress={() => handleInspectDoc(item)}
+          accessibilityRole="button"
+          accessibilityLabel={`Inspect ${item.title || item.fileName}`}
         >
-          <Ionicons name="ellipsis-vertical" size={18} color="#68778D" />
+          <Ionicons
+            name="ellipsis-vertical"
+            size={18}
+            color="#68778D"
+          />
         </Pressable>
       </View>
     );
@@ -178,17 +238,30 @@ export default function AdminDocumentsScreen() {
       {/* Header & Search */}
       <View style={styles.headerRow}>
         <View>
-          <Text style={styles.title}>Document Vault Audits</Text>
+          <Text style={styles.title}>
+            Document Vault Audits
+          </Text>
+
           <Text style={styles.subtitle}>
             Inspect uploaded files and Azure OCR processing status
           </Text>
         </View>
+
         <Pressable
           style={styles.refreshButton}
           onPress={() => void fetchDocuments()}
+          accessibilityRole="button"
+          accessibilityLabel="Refresh documents"
         >
-          <Ionicons name="refresh-outline" size={18} color="#204D91" />
-          <Text style={styles.refreshText}>Refresh</Text>
+          <Ionicons
+            name="refresh-outline"
+            size={18}
+            color="#204D91"
+          />
+
+          <Text style={styles.refreshText}>
+            Refresh
+          </Text>
         </Pressable>
       </View>
 
@@ -199,16 +272,28 @@ export default function AdminDocumentsScreen() {
           color="#8A96A8"
           style={styles.searchIcon}
         />
+
         <TextInput
           style={styles.searchInput}
           placeholder="Search by title, filename, or owner email..."
           placeholderTextColor="#8A96A8"
           value={searchQuery}
           onChangeText={setSearchQuery}
+          accessibilityLabel="Search documents"
+          returnKeyType="search"
         />
+
         {searchQuery.length > 0 && (
-          <Pressable onPress={() => setSearchQuery("")}>
-            <Ionicons name="close-circle" size={18} color="#8A96A8" />
+          <Pressable
+            onPress={() => setSearchQuery("")}
+            accessibilityRole="button"
+            accessibilityLabel="Clear search"
+          >
+            <Ionicons
+              name="close-circle"
+              size={18}
+              color="#8A96A8"
+            />
           </Pressable>
         )}
       </View>
@@ -216,26 +301,54 @@ export default function AdminDocumentsScreen() {
       {/* Content Body */}
       {loading ? (
         <View style={styles.centerContainer}>
-          <ActivityIndicator size="large" color="#204D91" />
-          <Text style={styles.centerText}>Loading documents...</Text>
+          <ActivityIndicator
+            size="large"
+            color="#204D91"
+          />
+
+          <Text style={styles.centerText}>
+            Loading documents...
+          </Text>
         </View>
       ) : errorMessage ? (
         <View style={styles.errorContainer}>
-          <Ionicons name="alert-circle-outline" size={32} color="#9B2C2C" />
-          <Text style={styles.errorTitle}>Could not load documents</Text>
-          <Text style={styles.errorText}>{errorMessage}</Text>
+          <Ionicons
+            name="alert-circle-outline"
+            size={32}
+            color="#9B2C2C"
+          />
+
+          <Text style={styles.errorTitle}>
+            Could not load documents
+          </Text>
+
+          <Text style={styles.errorText}>
+            {errorMessage}
+          </Text>
+
           <Pressable
             style={styles.retryButton}
             onPress={() => void fetchDocuments()}
+            accessibilityRole="button"
+            accessibilityLabel="Retry loading documents"
           >
-            <Text style={styles.retryButtonText}>Try again</Text>
+            <Text style={styles.retryButtonText}>
+              Try again
+            </Text>
           </Pressable>
         </View>
       ) : filteredDocs.length === 0 ? (
         <View style={styles.centerContainer}>
-          <Ionicons name="folder-open-outline" size={48} color="#A0AEC0" />
+          <Ionicons
+            name="folder-open-outline"
+            size={48}
+            color="#A0AEC0"
+          />
+
           <Text style={styles.centerText}>
-            No documents found in the vault.
+            {searchQuery.trim()
+              ? "No documents match your search."
+              : "No documents found in the vault."}
           </Text>
         </View>
       ) : (
@@ -244,6 +357,7 @@ export default function AdminDocumentsScreen() {
           keyExtractor={(item) => String(item.id)}
           renderItem={renderItem}
           contentContainerStyle={styles.listContainer}
+          keyboardShouldPersistTaps="handled"
         />
       )}
     </View>
@@ -397,6 +511,7 @@ const styles = StyleSheet.create({
     color: "#68778D",
     marginTop: 10,
     fontSize: 14,
+    textAlign: "center",
   },
   errorContainer: {
     padding: 24,

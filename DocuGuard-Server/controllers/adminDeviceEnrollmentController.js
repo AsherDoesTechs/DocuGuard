@@ -61,6 +61,22 @@ exports.enrollDevice = async (req, res) => {
   const publicKeyPem = validatePublicKey(req.body?.publicKeyPem);
   const suppliedLabel = req.body?.deviceLabel;
 
+  if (
+  suppliedLabel !== undefined &&
+  (
+    typeof suppliedLabel !== "string" ||
+    suppliedLabel.trim().length === 0 ||
+    suppliedLabel.trim().length > 80
+  )
+) {
+  return sendError(
+    res,
+    400,
+    "A valid device label is required.",
+    "ADMIN_DEVICE_LABEL_INVALID",
+  );
+}
+
   if (!validOpaqueToken(enrollmentToken)) {
     console.log("DEBUG: Enrollment token failed opaque token validation:", enrollmentToken);
     return sendError(
@@ -107,7 +123,7 @@ exports.enrollDevice = async (req, res) => {
 
       if (
         !grant ||
-        grant.role !== "admin" ||
+        String(grant.role).trim().toLowerCase() !== "admin" ||
         typeof grant.admin_id !== "string" ||
         grant.admin_id.trim().length === 0 ||
         grant.is_verified !== true

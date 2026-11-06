@@ -1,5 +1,5 @@
 import React, { useEffect } from "react";
-import { StyleSheet, Text, View, Dimensions } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -9,8 +9,6 @@ import Animated, {
   runOnJS,
 } from "react-native-reanimated";
 import { LinearGradient } from "expo-linear-gradient";
-
-const { width } = Dimensions.get("window");
 
 interface CustomSplashScreenProps {
   onAnimationFinished: () => void;
@@ -24,7 +22,7 @@ export default function CustomSplashScreen({
   const textTranslateY = useSharedValue(20);
   const textOpacity = useSharedValue(0);
 
-  useEffect(() => {
+   useEffect(() => {
     // Trigger animations sequentially for a high-end feel
     logoOpacity.value = withTiming(1, { duration: 600 });
     logoScale.value = withSpring(1, { damping: 12, stiffness: 90 });
@@ -33,12 +31,18 @@ export default function CustomSplashScreen({
     textOpacity.value = withSequence(
       withTiming(0, { duration: 200 }),
       withTiming(1, { duration: 600 }, (finished) => {
-        if (finished && onAnimationFinished) {
+        if (finished) {
           runOnJS(onAnimationFinished)();
         }
       })
     );
-  }, []);
+  }, [
+    logoOpacity,
+    logoScale,
+    onAnimationFinished,
+    textOpacity,
+    textTranslateY,
+  ]);
 
   const logoAnimatedStyle = useAnimatedStyle(() => ({
     opacity: logoOpacity.value,

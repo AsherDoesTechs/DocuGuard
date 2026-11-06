@@ -4,6 +4,19 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const db = require("../config/db");
+const dataSyncServicePath = require.resolve(
+  "../services/dataSyncService",
+);
+
+require.cache[dataSyncServicePath] = {
+  id: dataSyncServicePath,
+  filename: dataSyncServicePath,
+  loaded: true,
+  exports: {
+    syncProfile: async () => {},
+  },
+};
+
 const profileController = require("../controllers/profileController");
 
 function makeResponse() {

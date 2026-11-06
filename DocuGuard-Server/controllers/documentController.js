@@ -538,13 +538,14 @@ exports.processDocument = async (req, res) => {
         });
       }
 
-      return res.status(422).json({
-        status: "error",
-        code: "DOCUMENT_TYPE_MISMATCH",
-        errorCode: "DOCUMENT_TYPE_MISMATCH",
-        error:
-          "Verification halted. The uploaded document does not match the required ID layout or type.",
-      });
+    return res.status(422).json({
+  status: "error",
+  code: "DOCUMENT_TYPE_MISMATCH",
+  errorCode: "DOCUMENT_TYPE_MISMATCH",
+  error:
+    documentTypeValidation.message ||
+    "Verification halted. The uploaded document does not match the required ID layout or type.",
+});
     }
 
     if (documentTypeValidation.status === "processing_error") {

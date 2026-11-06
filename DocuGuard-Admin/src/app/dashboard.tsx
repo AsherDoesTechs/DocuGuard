@@ -49,9 +49,11 @@ export default function AdminDashboardScreen() {
     }
   }, []);
 
-  useEffect(() => {
-    void loadOverview();
-  }, [loadOverview]);
+ useEffect(() => {
+  // Initial API request; loadOverview handles loading and data state.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  void loadOverview();
+}, [loadOverview]);
 
   const handleSignOut = async () => {
     try {

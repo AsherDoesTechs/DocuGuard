@@ -82,9 +82,11 @@ export default function AdminHealthScreen() {
     }
   }, []);
 
-  useEffect(() => {
-    void fetchHealthMetrics();
-  }, [fetchHealthMetrics]);
+useEffect(() => {
+  // Initial API request; fetchHealthMetrics manages loading and data state.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  void fetchHealthMetrics();
+}, [fetchHealthMetrics]);
 
   const formatBytes = (bytes: number) => {
     if (!bytes || bytes === 0) return "0 MB";

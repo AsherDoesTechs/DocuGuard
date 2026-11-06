@@ -34,6 +34,19 @@ const dataSyncService = require("../services/dataSyncService");
 dataSyncService.syncProfile = async () => {};
 dataSyncService.syncReminder = async () => {};
 
+const dataSyncServicePath = require.resolve(
+  "../services/dataSyncService",
+);
+
+require.cache[dataSyncServicePath] = {
+  id: dataSyncServicePath,
+  filename: dataSyncServicePath,
+  loaded: true,
+  exports: {
+    syncProfile: async () => {},
+  },
+};
+
 const profileController = require("../controllers/profileController");
 const reminderController = require("../controllers/reminderController");
 

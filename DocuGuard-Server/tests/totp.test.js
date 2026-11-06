@@ -63,7 +63,11 @@ test("verifyTOTP accepts the current, previous and next code", () => {
 
   for (const offset of [-1, 0, 1]) {
     assert.ok(
-      verifyTOTP(secret, generateTOTP(secret, counter + offset)),
+      verifyTOTP(
+        secret,
+        generateTOTP(secret, counter + offset),
+        1,
+      ),
       `offset ${offset} should be inside the drift window`,
     );
   }
@@ -75,7 +79,7 @@ test("verifyTOTP rejects codes outside the drift window", () => {
 
   // Far enough in the past that no window position can match.
   const stale = generateTOTP(secret, counter - 10);
-  assert.equal(verifyTOTP(secret, stale), false);
+assert.equal(verifyTOTP(secret, stale, 1), false);
 });
 
 test("verifyTOTP rejects malformed tokens", () => {

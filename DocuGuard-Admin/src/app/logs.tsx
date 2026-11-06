@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useState } from "react";
+
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -16,8 +17,8 @@ import { getAdminToken } from "../services/adminSession";
 // Define Audit Log item type
 type AuditLogEntry = {
   id: string | number;
-  action: string; // e.g. "ADMIN_LOGIN", "DEVICE_CHALLENGE", "SESSION_REVOKED", "DOCUMENT_ACCESS"
-  actor: string; // Admin or user email/ID
+  action: string;
+  actor: string;
   severity: "info" | "warning" | "critical";
   ipAddress?: string;
   timestamp: string;
@@ -26,7 +27,6 @@ type AuditLogEntry = {
 
 export default function AdminLogsScreen() {
   const [logs, setLogs] = useState<AuditLogEntry[]>([]);
-  const [filteredLogs, setFilteredLogs] = useState<AuditLogEntry[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
@@ -37,6 +37,7 @@ export default function AdminLogsScreen() {
 
     try {
       const token = await getAdminToken();
+
       if (!token) {
         router.replace("/");
         return;
@@ -45,6 +46,7 @@ export default function AdminLogsScreen() {
       const API_BASE_URL =
         process.env.EXPO_PUBLIC_API_BASE_URL ??
         "https://docuguard-api-onoj.onrender.com";
+
       const response = await fetch(`${API_BASE_URL}/admin/logs`, {
         method: "GET",
         headers: {
@@ -59,13 +61,15 @@ export default function AdminLogsScreen() {
       }
 
       if (!response.ok) {
-        throw new Error("Failed to load security audit logs from the server.");
+        throw new Error(
+          "Failed to load security audit logs from the server.",
+        );
       }
 
       const data = await response.json();
       const logList = data.logs || data || [];
+
       setLogs(logList);
-      setFilteredLogs(logList);
     } catch (error) {
       setErrorMessage(
         error instanceof Error
@@ -77,26 +81,27 @@ export default function AdminLogsScreen() {
     }
   }, []);
 
-  useEffect(() => {
-    void fetchLogs();
-  }, [fetchLogs]);
+ useEffect(() => {
+  // Initial API request; fetchLogs manages loading and data state.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  void fetchLogs();
+}, [fetchLogs]);
 
-  // Live filtering by action name, actor, or details
-  useEffect(() => {
-    if (!searchQuery.trim()) {
-      setFilteredLogs(logs);
-    } else {
-      const query = searchQuery.toLowerCase();
-      setFilteredLogs(
-        logs.filter(
-          (l) =>
-            l.action.toLowerCase().includes(query) ||
-            l.actor.toLowerCase().includes(query) ||
-            (l.details && l.details.toLowerCase().includes(query)),
-        ),
-      );
+  // Derive filtered logs instead of maintaining duplicate state.
+  const filteredLogs = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+
+    if (!query) {
+      return logs;
     }
-  }, [searchQuery, logs]);
+
+    return logs.filter(
+      (log) =>
+        log.action.toLowerCase().includes(query) ||
+        log.actor.toLowerCase().includes(query) ||
+        (log.details && log.details.toLowerCase().includes(query)),
+    );
+  }, [logs, searchQuery]);
 
   const handleInspectLog = (log: AuditLogEntry) => {
     Alert.alert(
@@ -132,12 +137,20 @@ export default function AdminLogsScreen() {
                     : "checkmark-circle"
               }
               size={20}
-              color={isCritical ? "#9B1C1C" : isWarning ? "#92400E" : "#204D91"}
+              color={
+                isCritical
+                  ? "#9B1C1C"
+                  : isWarning
+                    ? "#92400E"
+                    : "#204D91"
+              }
             />
           </View>
+
           <View style={styles.logDetails}>
             <View style={styles.actionRow}>
               <Text style={styles.actionTitle}>{item.action}</Text>
+
               <View
                 style={[
                   styles.badge,
@@ -162,7 +175,11 @@ export default function AdminLogsScreen() {
                 </Text>
               </View>
             </View>
-            <Text style={styles.logActor}>Actor: {item.actor}</Text>
+
+            <Text style={styles.logActor}>
+              Actor: {item.actor}
+            </Text>
+
             <Text style={styles.logTimestamp}>
               {new Date(item.timestamp).toLocaleString()}{" "}
               {item.ipAddress ? `· IP: ${item.ipAddress}` : ""}
@@ -174,7 +191,11 @@ export default function AdminLogsScreen() {
           style={styles.inspectButton}
           onPress={() => handleInspectLog(item)}
         >
-          <Ionicons name="chevron-forward" size={18} color="#68778D" />
+          <Ionicons
+            name="chevron-forward"
+            size={18}
+            color="#68778D"
+          />
         </Pressable>
       </View>
     );
@@ -190,11 +211,16 @@ export default function AdminLogsScreen() {
             Track admin device challenges, sign-ins, and security events
           </Text>
         </View>
+
         <Pressable
           style={styles.refreshButton}
           onPress={() => void fetchLogs()}
         >
-          <Ionicons name="refresh-outline" size={18} color="#204D91" />
+          <Ionicons
+            name="refresh-outline"
+            size={18}
+            color="#204D91"
+          />
           <Text style={styles.refreshText}>Refresh</Text>
         </Pressable>
       </View>
@@ -206,6 +232,7 @@ export default function AdminLogsScreen() {
           color="#8A96A8"
           style={styles.searchIcon}
         />
+
         <TextInput
           style={styles.searchInput}
           placeholder="Search by action, actor, or details..."
@@ -213,9 +240,14 @@ export default function AdminLogsScreen() {
           value={searchQuery}
           onChangeText={setSearchQuery}
         />
+
         {searchQuery.length > 0 && (
           <Pressable onPress={() => setSearchQuery("")}>
-            <Ionicons name="close-circle" size={18} color="#8A96A8" />
+            <Ionicons
+              name="close-circle"
+              size={18}
+              color="#8A96A8"
+            />
           </Pressable>
         )}
       </View>
@@ -224,24 +256,46 @@ export default function AdminLogsScreen() {
       {loading ? (
         <View style={styles.centerContainer}>
           <ActivityIndicator size="large" color="#204D91" />
-          <Text style={styles.centerText}>Loading audit logs...</Text>
+          <Text style={styles.centerText}>
+            Loading audit logs...
+          </Text>
         </View>
       ) : errorMessage ? (
         <View style={styles.errorContainer}>
-          <Ionicons name="alert-circle-outline" size={32} color="#9B2C2C" />
-          <Text style={styles.errorTitle}>Could not load audit logs</Text>
-          <Text style={styles.errorText}>{errorMessage}</Text>
+          <Ionicons
+            name="alert-circle-outline"
+            size={32}
+            color="#9B2C2C"
+          />
+
+          <Text style={styles.errorTitle}>
+            Could not load audit logs
+          </Text>
+
+          <Text style={styles.errorText}>
+            {errorMessage}
+          </Text>
+
           <Pressable
             style={styles.retryButton}
             onPress={() => void fetchLogs()}
           >
-            <Text style={styles.retryButtonText}>Try again</Text>
+            <Text style={styles.retryButtonText}>
+              Try again
+            </Text>
           </Pressable>
         </View>
       ) : filteredLogs.length === 0 ? (
         <View style={styles.centerContainer}>
-          <Ionicons name="shield-checkmark-outline" size={48} color="#A0AEC0" />
-          <Text style={styles.centerText}>No security logs found.</Text>
+          <Ionicons
+            name="shield-checkmark-outline"
+            size={48}
+            color="#A0AEC0"
+          />
+
+          <Text style={styles.centerText}>
+            No security logs found.
+          </Text>
         </View>
       ) : (
         <FlatList
