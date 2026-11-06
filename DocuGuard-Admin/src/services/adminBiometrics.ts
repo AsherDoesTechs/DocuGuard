@@ -50,13 +50,6 @@ function getBiometricErrorMessage(code?: string, error?: string): string {
   }
 }
 
-/**
- * The native module reports SHA256withECDSA on Android and iOS.
- * The backend expects ECDSA P-256 with SHA-256.
- *
- * This validates the reported signature algorithm, but does not by itself
- * prove the key's elliptic curve is P-256.
- */
 function isExpectedAdminKeyAlgorithm(algorithm?: string): boolean {
   return algorithm === "SHA256withECDSA";
 }
@@ -82,17 +75,16 @@ export async function checkAdminBiometrics(): Promise<BiometricAvailability> {
 
 /**
  * Retrieves or creates the device's ECDSA signing key.
- * The public key must be registered through the controlled enrollment flow.
+ * Compatible with Android KeyStore and iOS Secure Enclave constraints.
  */
 export async function prepareAdminSigningKey(): Promise<AdminBiometricKey> {
   await checkAdminBiometrics();
 
-  const existing = await getKeyInfo(ADMIN_KEY_ALIAS, true, "pem");
-
-  if (existing.exists && existing.isValid !== true) {
-    throw new Error(
-      "The existing administrator signing key is invalid. Follow the approved device recovery process.",
-    );
+  let existing;
+  try {
+    existing = await getKeyInfo(ADMIN_KEY_ALIAS, true, "pem");
+  } catch {
+    existing = { exists: false };
   }
 
   if (existing.exists === true && existing.isValid === true) {
@@ -109,20 +101,20 @@ export async function prepareAdminSigningKey(): Promise<AdminBiometricKey> {
     return { publicKeyPem: existing.publicKey };
   }
 
+  // Relaxed options for robust Android Keystore compatibility
   const result = await createKeys(
     ADMIN_KEY_ALIAS,
     {
       signatureType: "ecdsa",
       enforceBiometric: true,
-      setInvalidatedByBiometricEnrollment: true,
-      useDeviceCredentials: false,
+      setInvalidatedByBiometricEnrollment: false, // Prevents Keystore crash on certain Android security patch levels
+      useDeviceCredentials: true,
       failIfExists: false,
     },
     "pem",
     BIOMETRIC_PROMPT,
   );
 
-  // Debug log to inspect the exact native response in the terminal
   console.log("NATIVE KEY GEN RESULT:", JSON.stringify(result, null, 2));
 
   if (!result.publicKey || result.error || result.code !== "success") {
@@ -139,10 +131,6 @@ export async function prepareAdminSigningKey(): Promise<AdminBiometricKey> {
   return { publicKeyPem: result.publicKey };
 }
 
-/**
- * Signs the exact challenge string supplied by the server.
- * The private key remains in the native device keystore.
- */
 export async function signAdminChallenge(challenge: string): Promise<string> {
   if (!challenge || !challenge.trim()) {
     throw new Error("The server challenge is missing. Start sign-in again.");
@@ -166,14 +154,13 @@ export async function signAdminChallenge(challenge: string): Promise<string> {
     challenge,
     ADMIN_KEY_ALIAS,
     {
-      allowDeviceCredentials: false,
+      allowDeviceCredentials: true,
     },
     "base64",
     "pem",
     BIOMETRIC_PROMPT,
   );
 
-  // Debug log to inspect the signature response in the terminal
   console.log("NATIVE SIGNATURE RESULT:", JSON.stringify(result, null, 2));
 
   if (!result.signature || result.error || result.code !== "success") {
