@@ -181,26 +181,34 @@ export default function AdminLoginScreen() {
 // Never log or display the actual token.
 // Safely validate the enrollment token locally.
 // Never log or display the actual token.
-const tokenForValidation = enrollmentToken.trim();
+ // Validate the enrollment token locally before sending it.
+      const tokenForValidation = enrollmentToken.trim();
 
-const tokenDiagnostic = {
-  length: tokenForValidation.length,
-  validFormat: /^[A-Za-z0-9_-]{32,256}$/.test(
-    tokenForValidation,
-  ),
-};
+      const tokenDiagnostic = {
+        length: tokenForValidation.length,
+        validFormat: /^[A-Za-z0-9_-]{32,256}$/.test(
+          tokenForValidation,
+        ),
+      };
 
-console.log(
-  "[Enrollment Token Diagnostic]",
-  tokenDiagnostic,
-);
+      console.log(
+        "[Enrollment Token Diagnostic]",
+        tokenDiagnostic,
+      );
 
-// The backend validates and consumes the separately provisioned token.
-const enrolled = await enrollAdminDevice(
-  tokenForValidation,
-  key.publicKeyPem,
-  "DocuGuard Admin device",
-);
+      if (!tokenDiagnostic.validFormat) {
+        Alert.alert(
+          "Invalid enrollment token",
+          "The enrollment token must contain 32–256 characters using only letters, numbers, underscores, or hyphens. Check that you copied the complete token.",
+        );
+        return;
+      }
+
+      const enrolled = await enrollAdminDevice(
+        tokenForValidation,
+        key.publicKeyPem,
+        "DocuGuard Admin device",
+      );
 
       if (
         enrolled.enrolled !== true ||
