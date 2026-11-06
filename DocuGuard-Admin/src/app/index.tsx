@@ -179,6 +179,8 @@ export default function AdminLoginScreen() {
 
     // Safely validate the enrollment token locally.
 // Never log or display the actual token.
+// Safely validate the enrollment token locally.
+// Never log or display the actual token.
 const tokenForValidation = enrollmentToken.trim();
 
 const tokenDiagnostic = {
@@ -188,7 +190,10 @@ const tokenDiagnostic = {
   ),
 };
 
-console.log("[Enrollment Token Diagnostic]", tokenDiagnostic);
+console.log(
+  "[Enrollment Token Diagnostic]",
+  tokenDiagnostic,
+);
 
 // The backend validates and consumes the separately provisioned token.
 const enrolled = await enrollAdminDevice(
