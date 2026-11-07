@@ -182,7 +182,8 @@ exports.enrollDevice = async (req, res) => {
       keyAlgorithm: "ECDSA_P256_SHA256",
       enrolled: true,
     });
-  } catch {
+  } catch (err) {
+    console.error("ENROLLMENT TRANSACTION ERROR:", err); // <-- Put it right here!
     return sendError(
       res,
       503,
