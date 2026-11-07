@@ -53,15 +53,23 @@ function validatePublicKey(value) {
 
 exports.enrollDevice = async (req, res) => {
   // Render Debug Logs: Log incoming request details
-  console.log("--- INCOMING ENROLLMENT REQUEST ---");
+  console.log("--- INCOMING ENROLLMENT REQUEST ---", {
+    hasToken: Boolean(req.body?.enrollmentToken || req.body?.token),
+    hasKey: Boolean(req.body?.publicKeyPem),
+    bodyKeys: Object.keys(req.body || {}),
+  });
 
-  const enrollmentToken = req.body?.enrollmentToken;
-  const publicKeyPem = validatePublicKey(req.body?.publicKeyPem);
-  const suppliedLabel = req.body?.deviceLabel;
-
-  
+  // Support both frontend naming conventions (enrollmentToken vs token, deviceLabel vs deviceName)
+  const enrollmentToken = req.body?.enrollmentToken || req.body?.token;
+  const rawPublicKey = req.body?.publicKeyPem;
+  const publicKeyPem = validatePublicKey(rawPublicKey);
+  const suppliedLabel = req.body?.deviceLabel || req.body?.deviceName;
 
   if (!validOpaqueToken(enrollmentToken)) {
+    console.log(
+      "DEBUG: Token validation failed. Value received:",
+      enrollmentToken,
+    );
     return sendError(
       res,
       400,
@@ -71,7 +79,10 @@ exports.enrollDevice = async (req, res) => {
   }
 
   if (!publicKeyPem) {
-    console.log("DEBUG: Public key validation failed. Raw input length:", req.body?.publicKeyPem?.length);
+    console.log(
+      "DEBUG: Public key validation failed. Raw input length:",
+      rawPublicKey?.length,
+    );
     return sendError(
       res,
       400,
