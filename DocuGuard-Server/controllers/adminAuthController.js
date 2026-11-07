@@ -395,6 +395,13 @@ exports.verifyDevice = async (req, res) => {
           publicKey.asymmetricKeyType === "ec" &&
           keyDetails?.namedCurve === "prime256v1";
 
+        console.log("DEBUG SIG - Expected Key Valid:", expectedKey);
+        console.log("DEBUG SIG - Challenge Value:", challenge.challenge_value);
+        console.log(
+          "DEBUG SIG - Received Signature Length:",
+          signature?.length,
+        );
+
         if (expectedKey) {
           signatureValid = crypto.verify(
             "sha256",
@@ -403,6 +410,7 @@ exports.verifyDevice = async (req, res) => {
             Buffer.from(signature, "base64"),
           );
         }
+        console.log("DEBUG SIG - Verification Result:", signatureValid);
       } catch (err) {
         console.error("SIGNATURE CRYPTO EXCEPTION:", err);
         signatureValid = false;
