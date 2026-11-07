@@ -403,9 +403,12 @@ exports.verifyDevice = async (req, res) => {
             Buffer.from(signature, "base64"),
           );
         }
-      } catch {
+      } catch (err) {
+        console.error("SIGNATURE CRYPTO EXCEPTION:", err);
         signatureValid = false;
       }
+
+      console.log("SIGNATURE VALID RESULT:", signatureValid);
 
       if (!signatureValid) {
         const rejectedChallenge = await client.query(
