@@ -29,7 +29,11 @@ function validOpaqueToken(value) {
 
 function validDeviceId(value) {
   return (
-    (typeof value === "string" && /^[1-9]\d{0,18}$/.test(value)) ||
+    (typeof value === "string" &&
+      (/^[1-9]\d{0,18}$/.test(value) || // Supports numeric IDs
+        /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(
+          value,
+        ))) || // Supports UUIDs
     (typeof value === "number" && Number.isSafeInteger(value) && value > 0)
   );
 }
