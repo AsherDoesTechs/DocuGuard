@@ -1,3 +1,8 @@
+app.use((req, res, next) => {
+  console.log(`[INCOMING HTTP] ${req.method} ${req.originalUrl}`, req.body);
+  next();
+});
+
 const express = require("express");
 const cors = require("cors");
 const adminRoutes = require("./routes/admin");
