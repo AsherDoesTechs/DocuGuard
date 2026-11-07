@@ -263,7 +263,8 @@ exports.createChallenge = async (req, res) => {
         expiresIn: CHALLENGE_SECONDS,
       };
     });
-  } catch {
+  } catch (err) {
+    console.error("CREATE CHALLENGE ERROR:", err);
     return sendError(
       res,
       503,
@@ -537,12 +538,12 @@ exports.verifyDevice = async (req, res) => {
         name: verifiedAccount.name,
       },
     });
-  } catch {
-    // The one-time proof is already consumed; never issue a partial session.
+  } catch (err) {
+    console.error("VERIFY DEVICE ERROR:", err);
     return sendError(
       res,
       503,
-      "Administrator session creation failed. Please sign in again.",
+      "Administrator verification is temporarily unavailable.",
       "ADMIN_AUTH_UNAVAILABLE",
     );
   }
