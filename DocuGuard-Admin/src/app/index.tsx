@@ -177,24 +177,16 @@ export default function AdminLoginScreen() {
       // Create or retrieve this device's ECDSA P-256 public key.
       const key = await prepareAdminSigningKey();
 
-    // Safely validate the enrollment token locally.
-// Never log or display the actual token.
-// Safely validate the enrollment token locally.
-// Never log or display the actual token.
- // Validate the enrollment token locally before sending it.
+      // Safely validate the enrollment token locally.
+      // Never log or display the actual token.
       const tokenForValidation = enrollmentToken.trim();
 
       const tokenDiagnostic = {
         length: tokenForValidation.length,
-        validFormat: /^[A-Za-z0-9_-]{32,256}$/.test(
-          tokenForValidation,
-        ),
+        validFormat: /^[A-Za-z0-9_-]{32,256}$/.test(tokenForValidation),
       };
 
-      console.log(
-        "[Enrollment Token Diagnostic]",
-        tokenDiagnostic,
-      );
+      console.log("[Enrollment Token Diagnostic]", tokenDiagnostic);
 
       if (!tokenDiagnostic.validFormat) {
         Alert.alert(
@@ -204,6 +196,7 @@ export default function AdminLoginScreen() {
         return;
       }
 
+      // The backend validates and consumes the separately provisioned token.
       const enrolled = await enrollAdminDevice(
         tokenForValidation,
         key.publicKeyPem,
@@ -230,20 +223,18 @@ export default function AdminLoginScreen() {
       );
     } catch (error) {
       // Detailed console debug logging for enrollment failures
-     console.error("[Device Enrollment Debug Error]", {
-  message:
-    error instanceof Error
-      ? error.message
-      : "Unknown enrollment error",
-  status:
-    error && typeof error === "object" && "status" in error
-      ? error.status
-      : undefined,
-  code:
-    error && typeof error === "object" && "code" in error
-      ? error.code
-      : undefined,
-});
+      console.error("[Device Enrollment Debug Error]", {
+        message:
+          error instanceof Error ? error.message : "Unknown enrollment error",
+        status:
+          error && typeof error === "object" && "status" in error
+            ? error.status
+            : undefined,
+        code:
+          error && typeof error === "object" && "code" in error
+            ? error.code
+            : undefined,
+      });
 
       const detailedErrorMessage =
         error instanceof Error
