@@ -13,6 +13,7 @@ import {
   Platform,
   Modal,
   FlatList,
+  Linking,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
@@ -334,6 +335,9 @@ export default function ProfileScreen() {
   const [countdown, setCountdown] = useState(10);
   const [deletePassword, setDeletePassword] = useState("");
   const [deletingAccount, setDeletingAccount] = useState(false);
+  const [ticketSubject, setTicketSubject] = useState("");
+  const [ticketMessage, setTicketMessage] = useState("");
+  const [submittingTicket, setSubmittingTicket] = useState(false);
 
   // Countdown timer for account deletion step 1
   useEffect(() => {
@@ -1069,6 +1073,36 @@ export default function ProfileScreen() {
       },
       onCancel: () => {},
     });
+  };
+
+  const handleSubmitSupportTicket = async () => {
+    const subject = ticketSubject.trim();
+    const message = ticketMessage.trim();
+
+    if (!message) {
+      feedbackService.error("Please enter a message for your support ticket.");
+      return;
+    }
+
+    setSubmittingTicket(true);
+    try {
+      await api.profile.submitSupportTicket({
+        subject: subject || "Support request",
+        message,
+      });
+      setTicketSubject("");
+      setTicketMessage("");
+      feedbackService.success("Support ticket submitted.");
+    } catch (err: any) {
+      console.error("Support ticket submit error:", err);
+      feedbackService.error(
+        err?.response?.data?.error ||
+          err?.message ||
+          "Could not submit support ticket. Please try again.",
+      );
+    } finally {
+      setSubmittingTicket(false);
+    }
   };
 
   const maskEmail = (email: string) => {
@@ -2015,6 +2049,58 @@ export default function ProfileScreen() {
                         storageUsed={user?.subscription.storageUsed || 0}
                         storageTotal={user?.subscription.storageTotal || 50}
                       />
+                      <Text style={styles.sectionSubtitle}>
+                        Need help? Submit a support ticket and our team will follow up.
+                      </Text>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Subject (optional)"
+                        placeholderTextColor={colors.textSecondary}
+                        value={ticketSubject}
+                        onChangeText={setTicketSubject}
+                        editable={!submittingTicket}
+                        maxLength={255}
+                      />
+                      <TextInput
+                        style={[styles.input, styles.ticketMessageInput]}
+                        placeholder="Describe your issue or request..."
+                        placeholderTextColor={colors.textSecondary}
+                        value={ticketMessage}
+                        onChangeText={setTicketMessage}
+                        editable={!submittingTicket}
+                        multiline
+                        textAlignVertical="top"
+                        maxLength={5000}
+                      />
+                      <TouchableOpacity
+                        style={[
+                          styles.saveButton,
+                          styles.supportTicketButton,
+                          { marginTop: 12 },
+                          (submittingTicket || !ticketMessage.trim()) && { opacity: 0.6 },
+                        ]}
+                        onPress={handleSubmitSupportTicket}
+                        disabled={submittingTicket || !ticketMessage.trim()}
+                        activeOpacity={0.85}
+                      >
+                        {submittingTicket ? (
+                          <ActivityIndicator size="small" color={colors.primary} />
+                        ) : (
+                          <Ionicons
+                            name="help-buoy-outline"
+                            size={18}
+                            color={colors.primary}
+                          />
+                        )}
+                        <Text
+                          style={[
+                            styles.saveButtonText,
+                            styles.supportTicketText,
+                          ]}
+                        >
+                          {submittingTicket ? "Submitting..." : "Submit Support Ticket"}
+                        </Text>
+                      </TouchableOpacity>
                     </View>
                   )}
 
@@ -2539,4 +2625,19 @@ const createStyles = (COLORS: ColorScheme) =>
     cancelBtnText: { color: COLORS.text, fontWeight: "600" },
     dangerBtn: { backgroundColor: COLORS.error },
     dangerBtnText: { color: COLORS.buttonPrimaryText, fontWeight: "600" },
+    supportTicketButton: {
+      backgroundColor: "transparent",
+      borderWidth: 1,
+      borderColor: COLORS.primary,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 8,
+    },
+    supportTicketText: { color: COLORS.primary, fontWeight: "600" },
+    ticketMessageInput: {
+      minHeight: 100,
+      marginTop: 10,
+      textAlignVertical: "top",
+    },
   });

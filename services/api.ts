@@ -618,6 +618,14 @@ export const profile = {
     const response = await apiClient.get("/profile/export");
     return response.data;
   },
+
+  submitSupportTicket: async (data: {
+    subject?: string;
+    message: string;
+  }): Promise<{ message: string }> => {
+    const response = await apiClient.post("/profile/support", data);
+    return response.data;
+  },
 };
 
 export async function validateStoredSession(token: string): Promise<boolean> {
