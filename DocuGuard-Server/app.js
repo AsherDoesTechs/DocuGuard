@@ -1,8 +1,3 @@
-app.use((req, res, next) => {
-  console.log(`[INCOMING HTTP] ${req.method} ${req.originalUrl}`, req.body);
-  next();
-});
-
 const express = require("express");
 const cors = require("cors");
 const adminRoutes = require("./routes/admin");
@@ -44,6 +39,12 @@ require("./jobs/dataRetention");
 assertEnvOrExit();
 
 const app = express();
+
+// Place the incoming HTTP request logger here so `app` is initialized and ready
+app.use((req, res, next) => {
+  console.log(`[INCOMING HTTP] ${req.method} ${req.originalUrl}`, req.body);
+  next();
+});
 
 // Behind a reverse proxy (Render) req.ip is otherwise the proxy's address,
 // which collapses every user into a single rate-limit bucket.
