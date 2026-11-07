@@ -113,6 +113,9 @@ exports.enrollDevice = async (req, res) => {
         [hashToken(enrollmentToken)],
       );
 
+      // --- ADD THIS LINE TO DEBUG THE DATABASE MATCH ---
+      console.log("GRANT QUERY RESULT ROWS:", grantResult.rows);
+
       const grant = grantResult.rows[0];
 
       if (
