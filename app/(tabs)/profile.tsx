@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
+import * as ImagePicker from "expo-image-picker";
+
 import {
   View,
   DeviceEventEmitter,
@@ -338,6 +340,9 @@ export default function ProfileScreen() {
   const [ticketSubject, setTicketSubject] = useState("");
   const [ticketMessage, setTicketMessage] = useState("");
   const [submittingTicket, setSubmittingTicket] = useState(false);
+  const [ticketCategory, setTicketCategory] = useState("Bug / App Glitch");
+  const [ticketAttachment, setTicketAttachment] = useState<string | null>(null);
+  const [categoryModalVisible, setCategoryModalVisible] = useState(false);
 
   // Countdown timer for account deletion step 1
   useEffect(() => {
@@ -669,6 +674,56 @@ export default function ProfileScreen() {
       );
     } finally {
       setDisabling2FA(false);
+    }
+  };
+
+  const handleSubmitSupportTicket = async () => {
+    if (!ticketMessage.trim()) {
+      feedbackService.error("Please enter a message for your support ticket.");
+      return;
+    }
+
+    try {
+      setSubmittingTicket(true);
+      const token = await SecureStore.getItemAsync("userToken");
+
+      await api.client.post(
+        "/profile/support",
+        {
+          subject: ticketSubject.trim() || "Support Request",
+          category: ticketCategory,
+          message: ticketMessage.trim(),
+          attachmentUrl: ticketAttachment, // Optional file/image reference
+        },
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      );
+
+      feedbackService.success("Support ticket submitted successfully.");
+      setTicketSubject("");
+      setTicketMessage("");
+      setTicketAttachment(null);
+      setTicketCategory("Bug / App Glitch");
+    } catch (err: any) {
+      feedbackService.error(
+        getApiErrorMessage(err, "Failed to submit support ticket."),
+      );
+    } finally {
+      setSubmittingTicket(false);
+    }
+  };
+
+  const handlePickImage = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      quality: 0.8,
+    });
+
+    if (!result.canceled && result.assets[0].uri) {
+      setTicketAttachment(result.assets[0].uri);
+      feedbackService.success("Screenshot attached successfully.");
     }
   };
 
@@ -1037,6 +1092,15 @@ export default function ProfileScreen() {
     router.replace("/(auth)/login" as any);
   };
 
+  const SUPPORT_CATEGORIES = [
+    "Bug / App Glitch",
+    "Billing & Subscription",
+    "Document / OCR Sync Issue",
+    "Feature Request",
+    "Account & Security",
+    "General Inquiry",
+  ];
+
   const handleSignOut = () => {
     feedbackService.confirm({
       title: "Sign Out",
@@ -1073,36 +1137,6 @@ export default function ProfileScreen() {
       },
       onCancel: () => {},
     });
-  };
-
-  const handleSubmitSupportTicket = async () => {
-    const subject = ticketSubject.trim();
-    const message = ticketMessage.trim();
-
-    if (!message) {
-      feedbackService.error("Please enter a message for your support ticket.");
-      return;
-    }
-
-    setSubmittingTicket(true);
-    try {
-      await api.profile.submitSupportTicket({
-        subject: subject || "Support request",
-        message,
-      });
-      setTicketSubject("");
-      setTicketMessage("");
-      feedbackService.success("Support ticket submitted.");
-    } catch (err: any) {
-      console.error("Support ticket submit error:", err);
-      feedbackService.error(
-        err?.response?.data?.error ||
-          err?.message ||
-          "Could not submit support ticket. Please try again.",
-      );
-    } finally {
-      setSubmittingTicket(false);
-    }
   };
 
   const maskEmail = (email: string) => {
@@ -2049,21 +2083,59 @@ export default function ProfileScreen() {
                         storageUsed={user?.subscription.storageUsed || 0}
                         storageTotal={user?.subscription.storageTotal || 50}
                       />
+                    </View>
+                  )}
+
+                  {/* Help & Support Ticket */}
+                  <SettingRow
+                    colors={colors}
+                    styles={styles}
+                    icon="help-buoy-outline"
+                    title="Help & Support"
+                    subtitle="Submit a support ticket and our team will follow up"
+                    isActive={activeTab === "support"}
+                    onPress={() =>
+                      setActiveTab(activeTab === "support" ? "none" : "support")
+                    }
+                  />
+                  {activeTab === "support" && (
+                    <View style={styles.expandedSection}>
                       <Text style={styles.sectionSubtitle}>
-                        Need help? Submit a support ticket and our team will follow up.
+                        Need help? Send us a message and our team will follow
+                        up.
                       </Text>
+
+                      {/* --- 1. Issue Category Selector --- */}
+                      <Text style={styles.inputLabel}>Issue Category</Text>
+                      <TouchableOpacity
+                        style={styles.dropdownSelectorButton}
+                        onPress={() => setCategoryModalVisible(true)}
+                      >
+                        <Text style={styles.dropdownSelectorText}>
+                          {ticketCategory}
+                        </Text>
+                        <Ionicons
+                          name="chevron-down"
+                          size={18}
+                          color={colors.textSecondary}
+                        />
+                      </TouchableOpacity>
+
+                      <Text style={styles.inputLabel}>Subject (Optional)</Text>
                       <TextInput
                         style={styles.input}
-                        placeholder="Subject (optional)"
+                        placeholder="Brief title of your issue..."
                         placeholderTextColor={colors.textSecondary}
                         value={ticketSubject}
                         onChangeText={setTicketSubject}
                         editable={!submittingTicket}
                         maxLength={255}
                       />
+
+                      <Text style={styles.inputLabel}>Message</Text>
                       <TextInput
                         style={[styles.input, styles.ticketMessageInput]}
-                        placeholder="Describe your issue or request..."
+                        placeholder="Describe your issue or request in detail..."
                         placeholderTextColor={colors.textSecondary}
                         value={ticketMessage}
                         onChangeText={setTicketMessage}
@@ -2072,19 +2144,90 @@ export default function ProfileScreen() {
                         textAlignVertical="top"
                         maxLength={5000}
                       />
+
+                      {/* --- 2. Screenshot Attachment Button & Preview --- */}
+                      <View style={{ marginVertical: 8 }}>
+                        {ticketAttachment ? (
+                          <View
+                            style={{
+                              flexDirection: "row",
+                              alignItems: "center",
+                              gap: 10,
+                            }}
+                          >
+                            <Text
+                              style={[
+                                styles.label,
+                                {
+                                  fontSize: 13,
+                                  color: colors.primary,
+                                  flex: 1,
+                                },
+                              ]}
+                            >
+                              ✓ Screenshot attached
+                            </Text>
+                            <TouchableOpacity
+                              onPress={() => setTicketAttachment(null)}
+                            >
+                              <Ionicons
+                                name="close-circle"
+                                size={20}
+                                color={colors.error}
+                              />
+                            </TouchableOpacity>
+                          </View>
+                        ) : (
+                          <TouchableOpacity
+                            style={[
+                              styles.dropdownSelectorButton,
+                              { marginBottom: 0 },
+                            ]}
+                            onPress={handlePickImage}
+                          >
+                            <View
+                              style={{
+                                flexDirection: "row",
+                                alignItems: "center",
+                                gap: 8,
+                              }}
+                            >
+                              <Ionicons
+                                name="camera-outline"
+                                size={18}
+                                color={colors.primary}
+                              />
+                              <Text
+                                style={[
+                                  styles.dropdownSelectorText,
+                                  { color: colors.primary },
+                                ]}
+                              >
+                                Attach Screenshot (Optional)
+                              </Text>
+                            </View>
+                          </TouchableOpacity>
+                        )}
+                      </View>
+
                       <TouchableOpacity
                         style={[
-                          styles.saveButton,
+                          styles.actionButton,
                           styles.supportTicketButton,
                           { marginTop: 12 },
-                          (submittingTicket || !ticketMessage.trim()) && { opacity: 0.6 },
+                          (submittingTicket || !ticketMessage.trim()) && {
+                            opacity: 0.6,
+                          },
                         ]}
                         onPress={handleSubmitSupportTicket}
                         disabled={submittingTicket || !ticketMessage.trim()}
                         activeOpacity={0.85}
                       >
                         {submittingTicket ? (
-                          <ActivityIndicator size="small" color={colors.primary} />
+                          <ActivityIndicator
+                            size="small"
+                            color={colors.primary}
+                          />
                         ) : (
                           <Ionicons
                             name="help-buoy-outline"
@@ -2094,11 +2237,13 @@ export default function ProfileScreen() {
                         )}
                         <Text
                           style={[
-                            styles.saveButtonText,
+                            styles.actionButtonText,
                             styles.supportTicketText,
                           ]}
                         >
-                          {submittingTicket ? "Submitting..." : "Submit Support Ticket"}
+                          {submittingTicket
+                            ? "Submitting..."
+                            : "Submit Support Ticket"}
                         </Text>
                       </TouchableOpacity>
                     </View>
@@ -2217,6 +2362,57 @@ export default function ProfileScreen() {
                   No occupations found. Choose "Others" to input manually.
                 </Text>
               }
+            />
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={categoryModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setCategoryModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContainer, { height: "50%" }]}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>Select Issue Category</Text>
+              <TouchableOpacity onPress={() => setCategoryModalVisible(false)}>
+                <Ionicons name="close" size={24} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+
+            <FlatList
+              data={SUPPORT_CATEGORIES}
+              keyExtractor={(item) => item}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={styles.dropdownItemRow}
+                  onPress={() => {
+                    setTicketCategory(item);
+                    setCategoryModalVisible(false);
+                  }}
+                >
+                  <Text
+                    style={[
+                      styles.dropdownItemText,
+                      ticketCategory === item && {
+                        color: colors.primary,
+                        fontWeight: "700",
+                      },
+                    ]}
+                  >
+                    {item}
+                  </Text>
+                  {ticketCategory === item && (
+                    <Ionicons
+                      name="checkmark"
+                      size={18}
+                      color={colors.primary}
+                    />
+                  )}
+                </TouchableOpacity>
+              )}
             />
           </View>
         </View>
@@ -2639,5 +2835,20 @@ const createStyles = (COLORS: ColorScheme) =>
       minHeight: 100,
       marginTop: 10,
       textAlignVertical: "top",
+    },
+    actionButton: {
+      backgroundColor: "#2563EB",
+      paddingVertical: 12,
+      paddingHorizontal: 16,
+      borderRadius: 10,
+      alignItems: "center",
+      justifyContent: "center",
+      marginTop: 12,
+    },
+
+    actionButtonText: {
+      color: "#FFFFFF",
+      fontSize: 14,
+      fontWeight: "600",
     },
   });
