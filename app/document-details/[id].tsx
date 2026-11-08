@@ -153,11 +153,32 @@ export default function DocumentDetailsScreen() {
       const cleanTitle = document.title
         .replace(/[^a-z0-9]/gi, "_")
         .toLowerCase();
-      const filename = `${cleanTitle}_${document.id}.pdf`;
-      feedbackService.info(`Downloading ${filename}...`);
+      const ext = document.fileType?.includes("image") ? "jpg" : "pdf";
+      const filename = `${cleanTitle}_${document.id}.${ext}`;
+      const fileUri = `${FileSystem.documentDirectory}${filename}`;
+
+      const downloadResult = await FileSystem.downloadAsync(
+        document.fileUrl,
+        fileUri,
+      );
+
+      if (downloadResult.status === 200) {
+        if (await Sharing.isAvailableAsync()) {
+          await Sharing.shareAsync(downloadResult.uri, {
+            mimeType: document.fileType || "application/pdf",
+            dialogTitle: "Download Document",
+          });
+        } else {
+          feedbackService.success(`Document saved to: ${downloadResult.uri}`);
+        }
+      } else {
+        throw new Error("Failed to download file from server.");
+      }
     } catch (error: any) {
       console.error("Download error:", error);
-      feedbackService.error("Something went wrong while retrieving your file.");
+      feedbackService.error(
+        error.message || "Something went wrong while retrieving your file.",
+      );
     } finally {
       if (mountedRef.current) setIsDownloading(false);
     }
@@ -190,47 +211,43 @@ export default function DocumentDetailsScreen() {
   const handleExport = async () => {
     if (!document) return;
     try {
-      const content = [
-        `${document.title}`,
-        `Issuing Agency: ${document.issuer || "N/A"}`,
-        `Document Number: ${document.documentNumber || "N/A"}`,
-        `Issue Date: ${formatShortDate(document.issueDate || "")}`,
-        `Expiry Date: ${formatShortDate(document.expiryDate || "")}`,
-        `Status: ${document.status}`,
-        document.notes ? `\nNotes: ${document.notes}` : "",
-      ]
-        .filter(Boolean)
-        .join("\n");
+      if (document.fileUrl) {
+        const cleanTitle = document.title
+          .replace(/[^a-z0-9]/gi, "_")
+          .toLowerCase();
+        const ext = document.fileType?.includes("image") ? "jpg" : "pdf";
+        const fileName = `${cleanTitle}_${document.id}.${ext}`;
+        const fileUri = `${FileSystem.cacheDirectory}${fileName}`;
 
-      const fileName = `${document.title.replace(/[^a-z0-9]/gi, "_").toLowerCase()}_${document.id}.txt`;
-      const fileUri = `${FileSystem.documentDirectory}${fileName}`;
+        await FileSystem.downloadAsync(document.fileUrl, fileUri);
+        await Sharing.shareAsync(fileUri, {
+          mimeType: document.fileType || "application/pdf",
+          dialogTitle: "Export Document",
+        });
+      } else {
+        const content = [
+          `${document.title}`,
+          `Issuing Agency: ${document.issuer || "N/A"}`,
+          `Document Number: ${document.documentNumber || "N/A"}`,
+          `Issue Date: ${formatShortDate(document.issueDate || "")}`,
+          `Expiry Date: ${formatShortDate(document.expiryDate || "")}`,
+          `Status: ${document.status}`,
+          document.notes ? `\nNotes: ${document.notes}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n");
 
-      await FileSystem.writeAsStringAsync(fileUri, content);
-      await Sharing.shareAsync(fileUri, {
-        mimeType: "text/plain",
-        dialogTitle: "Export Document Details",
-      });
+        const fileName = `${document.title.replace(/[^a-z0-9]/gi, "_").toLowerCase()}_${document.id}.txt`;
+        const fileUri = `${FileSystem.documentDirectory}${fileName}`;
+
+        await FileSystem.writeAsStringAsync(fileUri, content);
+        await Sharing.shareAsync(fileUri, {
+          mimeType: "text/plain",
+          dialogTitle: "Export Document Details",
+        });
+      }
     } catch (err: any) {
       feedbackService.error(err.message || "Could not export document.");
-    }
-  };
-
-  const handleShare = async () => {
-    if (!document) return;
-    if (!document.fileUrl) {
-      feedbackService.error("This document has no attached file to share.");
-      return;
-    }
-    try {
-      const fileName = `${document.title.replace(/[^a-z0-9]/gi, "_").toLowerCase()}_${document.id}`;
-      const fileUri = `${FileSystem.cacheDirectory}${fileName}.pdf`;
-      await FileSystem.downloadAsync(document.fileUrl, fileUri);
-      await Sharing.shareAsync(fileUri, {
-        mimeType: document.fileType || "application/pdf",
-        dialogTitle: "Share Document",
-      });
-    } catch (err: any) {
-      feedbackService.error(err.message || "Could not share document.");
     }
   };
 
