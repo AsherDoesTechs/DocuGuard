@@ -9,6 +9,7 @@ import {
   FlatList,
   Platform,
   UIManager,
+  DeviceEventEmitter,
 } from "react-native";
 import { LayoutAnimation } from "react-native";
 import { api } from "../../services/api";
@@ -54,7 +55,7 @@ const normalizeFilterValue = (value?: unknown): string =>
     .replace(/[’‘`]/g, "'")
     .trim()
     .toLowerCase()
-    .replace(/\\s+/g, " ");
+    .replace(/\s+/g, " ");
 
 const categoryMatches = (
   category: unknown,
@@ -63,7 +64,8 @@ const categoryMatches = (
 ): boolean => {
   if (!selectedCategory) return true;
   const normalizedSelected = normalizeFilterValue(selectedCategory);
-  if (normalizedSelected === "all" || normalizedSelected === "all categories") return true;
+  if (normalizedSelected === "all" || normalizedSelected === "all categories")
+    return true;
 
   const storedCategory = normalizeFilterValue(category);
   const storedTitle = normalizeFilterValue(title);
@@ -73,23 +75,34 @@ const categoryMatches = (
     DOCUMENT_CATEGORIES[selectedCategory as keyof typeof DOCUMENT_CATEGORIES],
   );
 
-  if (storedCategory === selectedKey || storedCategory === selectedLabel) return true;
-  // Also match against the normalized label of the key
+  if (storedCategory === selectedKey || storedCategory === selectedLabel)
+    return true;
   const normalizedSelectedKeyLabel = normalizeFilterValue(
     DOCUMENT_CATEGORIES[normalizedSelected as keyof typeof DOCUMENT_CATEGORIES],
   );
-  if (normalizedSelectedKeyLabel !== "" && storedCategory === normalizedSelectedKeyLabel) {
+  if (
+    normalizedSelectedKeyLabel !== "" &&
+    storedCategory === normalizedSelectedKeyLabel
+  ) {
     return true;
   }
 
-  // Match by document name/title when selecting a category label/name
   if (selectedLabel && storedTitle && storedTitle.includes(selectedLabel)) {
     return true;
   }
-  if (normalizedSelectedKeyLabel && storedTitle && storedTitle.includes(normalizedSelectedKeyLabel)) {
+  if (
+    normalizedSelectedKeyLabel &&
+    storedTitle &&
+    storedTitle.includes(normalizedSelectedKeyLabel)
+  ) {
     return true;
   }
-  if (selectedKey && selectedKey !== "all" && storedTitle && storedTitle.includes(selectedKey)) {
+  if (
+    selectedKey &&
+    selectedKey !== "all" &&
+    storedTitle &&
+    storedTitle.includes(selectedKey)
+  ) {
     return true;
   }
 
@@ -106,7 +119,6 @@ const statusMatches = (
   const status = normalizeFilterValue(classifyExpiration(expiryDate));
   const selected = normalizeFilterValue(selectedStatus);
 
-  // Support both internal filter keys and user-facing labels.
   if (selected === "expiring" || selected === "expiring soon") {
     return status === "expiring" || status === "expiring soon";
   }
@@ -314,23 +326,14 @@ export default function DocumentsScreen() {
     try {
       setLoadError(false);
 
-      // 1. Check and update expired documents locally first
       const expiredDocs = await getExpiredDocuments();
       for (const doc of expiredDocs) {
         if (doc.status !== "expired" && doc.id != null) {
           await updateDocumentStatus(doc.id, "expired");
-          /*
-           * Only the "expiring soon" alerts are withdrawn here.
-           *
-           * The whole set was cancelled before, which included the daily
-           * expiry notice - the one alert that a document has expired is
-           * supposed to produce. The user was never told.
-           */
           await cancelExpiringSoonNotifications(doc.id);
         }
       }
 
-      // 2. Instantly load local cached data so UI renders immediately
       const localDocs = await getAllDocuments();
       setDocuments(localDocs);
 
@@ -340,15 +343,12 @@ export default function DocumentsScreen() {
       console.error("Failed to fetch local documents:", err);
       setLoadError(true);
     } finally {
-      // 3. Turn off loading skeleton right away
       setLoading(false);
     }
 
-    // 4. Run cloud synchronization silently in the background without blocking the UI
     try {
       await pullDocumentsFromCloud();
 
-      // Re-run expiration check and refresh local view once cloud data is pulled/merged
       const refreshedExpiredDocs = await getExpiredDocuments();
       for (const doc of refreshedExpiredDocs) {
         if (doc.status !== "expired" && doc.id != null) {
@@ -376,35 +376,41 @@ export default function DocumentsScreen() {
     }, [fetchDocuments]),
   );
 
+  // Real-time listener for document updates across the app
+  useEffect(() => {
+    const subscription = DeviceEventEmitter.addListener(
+      "documentVaultChanged",
+      () => {
+        void fetchDocuments();
+      },
+    );
+    return () => {
+      subscription.remove();
+    };
+  }, [fetchDocuments]);
+
   const handleDeleteDocument = async (documentId: number) => {
     const previousDocuments = [...documents];
 
-    // 1. Animate and remove instantly from UI (Optimistic Update)
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setDocuments((prev) => prev.filter((doc) => doc.id !== documentId));
 
     try {
-      // 2. Permanently hard-delete from local SQLite database
       await hardDeleteDocument(documentId);
-
-      // 3. Delete from the backend server API
       await api.documents.delete(documentId);
+      // Emit event so other screens/listeners update in real-time
+      DeviceEventEmitter.emit("documentVaultChanged");
     } catch (error) {
       console.error(
         "[Documents] Deletion failed, rolling back UI state:",
         error,
       );
 
-      // Rollback UI state and animation on failure
       LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
       setDocuments(previousDocuments);
     }
   };
 
-  /**
-   * Refresh without resetting the whole screen to its initial
-   * loading state. RefreshableContainer manages the refresh indicator.
-   */
   const handleDataReload = useCallback(async () => {
     await fetchDocuments();
   }, [fetchDocuments]);
@@ -424,9 +430,6 @@ export default function DocumentsScreen() {
     [],
   );
 
-  /**
-   * Apply search, category, and expiration-status filters together.
-   */
   const filtered = useMemo(() => {
     const query = normalizeFilterValue(search);
 
@@ -441,7 +444,11 @@ export default function DocumentsScreen() {
         issuer.includes(query) ||
         documentNumber.includes(query);
 
-      const matchesCategory = categoryMatches(doc.category, selectedCategory, doc.title);
+      const matchesCategory = categoryMatches(
+        doc.category,
+        selectedCategory,
+        doc.title,
+      );
       const matchesStatus = statusMatches(doc.expiryDate, selectedStatus);
 
       return matchesSearch && matchesCategory && matchesStatus;
@@ -482,7 +489,6 @@ export default function DocumentsScreen() {
   }, [router]);
 
   const getSyncIcon = (doc: LocalDocument) => {
-    // A failed sync must take priority over needsSync.
     if (doc.syncStatus === "failed") {
       return {
         name: "alert-circle-outline" as const,

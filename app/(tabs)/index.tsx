@@ -1,5 +1,12 @@
-import React, { useState, useCallback, useMemo } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, Image } from "react-native";
+import React, { useState, useCallback, useMemo, useEffect } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  Image,
+  DeviceEventEmitter,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -168,6 +175,19 @@ export default function HomeScreen() {
       void fetchDashboardData();
     }, [fetchDashboardData]),
   );
+
+  // Real-time listener for document updates across the app
+  useEffect(() => {
+    const subscription = DeviceEventEmitter.addListener(
+      "documentVaultChanged",
+      () => {
+        void fetchDashboardData();
+      },
+    );
+    return () => {
+      subscription.remove();
+    };
+  }, [fetchDashboardData]);
 
   const handleDataReload = async () => {
     try {
@@ -504,7 +524,6 @@ export default function HomeScreen() {
                   </Card>
                 ) : (
                   recentDocs.map((doc) => {
-                    // Check all possible keys for both scanned and uploaded documents
                     const rawImage =
                       (doc as any).thumbnailUri ||
                       (doc as any).thumbnailPath ||
@@ -513,7 +532,6 @@ export default function HomeScreen() {
                       (doc as any).filePath ||
                       (doc as any).uri;
 
-                    // Ensure local file paths have proper 'file://' or formatting if needed
                     const docImage = rawImage
                       ? rawImage.startsWith("file://") ||
                         rawImage.startsWith("http") ||
