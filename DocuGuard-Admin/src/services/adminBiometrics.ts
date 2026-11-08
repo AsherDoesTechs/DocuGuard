@@ -119,7 +119,9 @@ export async function prepareAdminSigningKey(): Promise<AdminBiometricKey> {
 
   if (!result.publicKey || result.error || result.code !== "success") {
     const rawDebugInfo = `[Code: ${result.code ?? "none"}, Error: ${result.error ?? "none"}]`;
-    throw new Error(`${getBiometricErrorMessage(result.code, result.error)} ${rawDebugInfo}`);
+    throw new Error(
+      `${getBiometricErrorMessage(result.code, result.error)} ${rawDebugInfo}`,
+    );
   }
 
   if (!isExpectedAdminKeyAlgorithm(result.algorithm)) {
@@ -165,7 +167,9 @@ export async function signAdminChallenge(challenge: string): Promise<string> {
 
   if (!result.signature || result.error || result.code !== "success") {
     const rawDebugInfo = `[Code: ${result.code ?? "none"}, Error: ${result.error ?? "none"}]`;
-    throw new Error(`${getBiometricErrorMessage(result.code, result.error)} ${rawDebugInfo}`);
+    throw new Error(
+      `${getBiometricErrorMessage(result.code, result.error)} ${rawDebugInfo}`,
+    );
   }
 
   if (result.authenticationType !== "biometric") {

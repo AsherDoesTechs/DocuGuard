@@ -116,14 +116,17 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
       body,
     );
 
-    const error = new Error(
-      body.error || `Request failed (${response.status}).`,
-    );
+    const errorMessage = body.error || `Request failed (${response.status}).`;
+    const error: any = new Error(errorMessage);
 
-    Object.assign(error, {
+    // Attach response context so screens can read error.response.data
+    error.status = response.status;
+    error.code = body.code;
+    error.response = {
       status: response.status,
-      code: body.code,
-    });
+      data: body,
+    };
+    error.data = body;
 
     throw error;
   }
