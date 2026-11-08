@@ -59,6 +59,9 @@ type ApiErrorBody = {
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   let response: Response;
+  const method = options.method || "GET";
+
+  console.log(`[AdminApi Request] ${method} ${path}`);
 
   try {
     response = await fetch(`${API_BASE_URL}${path}`, {
@@ -69,34 +72,50 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
         ...options.headers,
       },
     });
-  } catch {
+    console.log(
+      `[AdminApi Response] ${method} ${path} -> Status: ${response.status}`,
+    );
+  } catch (netError) {
+    console.error(`[AdminApi Network Error] ${method} ${path}:`, netError);
     throw new Error(
       "Unable to connect to DocuGuard. Check your internet connection and try again.",
     );
   }
 
-  // Check if this is an authentication or enrollment endpoint where 401 means bad credentials, not an expired session
+  let data: unknown;
+  try {
+    const responseText = await response.text();
+    data = responseText ? JSON.parse(responseText) : {};
+  } catch (parseError) {
+    console.error(
+      `[AdminApi Parse Error] Failed to parse JSON for ${path}:`,
+      parseError,
+    );
+    throw new Error("The server returned an invalid response.");
+  }
+
+  // Exempt authentication, login, challenge, and enrollment paths from global session wipe
   const isAuthOrEnrollmentPath = path.startsWith("/admin-auth/");
 
-  // Handle server-side session expiration or device revocation globally (skip for login/enrollment flows)
   if (response.status === 401 && !isAuthOrEnrollmentPath) {
+    console.warn(
+      `[AdminApi Session Expired] 401 Unauthorized caught on protected path: ${path}`,
+      data,
+    );
     await clearAdminToken();
     router.replace("/");
     throw new Error(
-      "Your session has expired or been revoked. Please sign in again.",
+      `Your session has expired or been revoked. [Triggered by: ${path}] Please sign in again.`,
     );
-  }
-
-  let data: unknown;
-
-  try {
-    data = await response.json();
-  } catch {
-    throw new Error("The server returned an invalid response.");
   }
 
   if (!response.ok) {
     const body = data as ApiErrorBody;
+    console.warn(
+      `[AdminApi Error Body] ${method} ${path} (${response.status}):`,
+      body,
+    );
+
     const error = new Error(
       body.error || `Request failed (${response.status}).`,
     );
