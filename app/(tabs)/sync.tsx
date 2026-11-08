@@ -90,7 +90,12 @@ export default function SyncScreen() {
         getUnsyncedReminders(),
       ]);
 
-      setPendingDocs(docs);
+      // Only include documents that have been verified
+      const verifiedDocs = docs.filter(
+        (doc) => doc.status?.toLowerCase() === "verified",
+      );
+
+      setPendingDocs(verifiedDocs);
       setPendingReminders(reminders);
     } catch (err) {
       console.error("Failed to load pending sync items:", err);
@@ -190,7 +195,9 @@ export default function SyncScreen() {
 
                   return `• ${conflict.title} (server version: ${changed})`;
                 })
-                .join("\n")}\n\nYour copy was kept and was not uploaded. Open the document and check it against the version in your cloud vault.`
+                .join(
+                  "\n",
+                )}\n\nYour copy was kept and was not uploaded. Open the document and check it against the version in your cloud vault.`
             : "";
 
           await feedbackService.alert({

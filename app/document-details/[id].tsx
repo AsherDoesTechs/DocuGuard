@@ -211,41 +211,26 @@ export default function DocumentDetailsScreen() {
   const handleExport = async () => {
     if (!document) return;
     try {
-      if (document.fileUrl) {
-        const cleanTitle = document.title
-          .replace(/[^a-z0-9]/gi, "_")
-          .toLowerCase();
-        const ext = document.fileType?.includes("image") ? "jpg" : "pdf";
-        const fileName = `${cleanTitle}_${document.id}.${ext}`;
-        const fileUri = `${FileSystem.cacheDirectory}${fileName}`;
+      const content = [
+        `${document.title}`,
+        `Issuing Agency: ${document.issuer || "N/A"}`,
+        `Document Number: ${document.documentNumber || "N/A"}`,
+        `Issue Date: ${formatShortDate(document.issueDate || "")}`,
+        `Expiry Date: ${formatShortDate(document.expiryDate || "")}`,
+        `Status: ${document.status}`,
+        document.notes ? `\nNotes: ${document.notes}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
 
-        await FileSystem.downloadAsync(document.fileUrl, fileUri);
-        await Sharing.shareAsync(fileUri, {
-          mimeType: document.fileType || "application/pdf",
-          dialogTitle: "Export Document",
-        });
-      } else {
-        const content = [
-          `${document.title}`,
-          `Issuing Agency: ${document.issuer || "N/A"}`,
-          `Document Number: ${document.documentNumber || "N/A"}`,
-          `Issue Date: ${formatShortDate(document.issueDate || "")}`,
-          `Expiry Date: ${formatShortDate(document.expiryDate || "")}`,
-          `Status: ${document.status}`,
-          document.notes ? `\nNotes: ${document.notes}` : "",
-        ]
-          .filter(Boolean)
-          .join("\n");
+      const fileName = `${document.title.replace(/[^a-z0-9]/gi, "_").toLowerCase()}_${document.id}.txt`;
+      const fileUri = `${FileSystem.documentDirectory}${fileName}`;
 
-        const fileName = `${document.title.replace(/[^a-z0-9]/gi, "_").toLowerCase()}_${document.id}.txt`;
-        const fileUri = `${FileSystem.documentDirectory}${fileName}`;
-
-        await FileSystem.writeAsStringAsync(fileUri, content);
-        await Sharing.shareAsync(fileUri, {
-          mimeType: "text/plain",
-          dialogTitle: "Export Document Details",
-        });
-      }
+      await FileSystem.writeAsStringAsync(fileUri, content);
+      await Sharing.shareAsync(fileUri, {
+        mimeType: "text/plain",
+        dialogTitle: "Export Document Details",
+      });
     } catch (err: any) {
       feedbackService.error(err.message || "Could not export document.");
     }
@@ -549,7 +534,7 @@ export default function DocumentDetailsScreen() {
           <TouchableOpacity
             style={[styles.actionButton, styles.actionPrimary]}
             onPress={() => router.push(`/edit-document/${document.id}` as any)}
-            disabled={isDownloading || isDeleting}
+            disabled={isDownloading || isVerifying || isDeleting}
           >
             <Ionicons name="create" size={20} color="#fff" />
             <Text style={[styles.actionButtonText, { color: "#fff" }]}>
@@ -559,7 +544,7 @@ export default function DocumentDetailsScreen() {
           <TouchableOpacity
             style={[styles.actionButton, styles.actionSecondary]}
             onPress={handleDownload}
-            disabled={isDownloading || isDeleting}
+            disabled={isDownloading || isVerifying || isDeleting}
           >
             {isDownloading ? (
               <ActivityIndicator size="small" color={COLORS.primary} />
@@ -577,7 +562,7 @@ export default function DocumentDetailsScreen() {
           <TouchableOpacity
             style={[styles.actionButton, styles.actionSecondary]}
             onPress={handleExport}
-            disabled={isDeleting}
+            disabled={isDownloading || isVerifying || isDeleting}
           >
             <Ionicons
               name="document-text-outline"
@@ -591,7 +576,7 @@ export default function DocumentDetailsScreen() {
           <TouchableOpacity
             style={[styles.actionButton, styles.actionDanger]}
             onPress={handleDelete}
-            disabled={isDownloading || isDeleting}
+            disabled={isDownloading || isVerifying || isDeleting}
           >
             {isDeleting ? (
               <ActivityIndicator size="small" color={COLORS.danger} />

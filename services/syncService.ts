@@ -245,6 +245,14 @@ async function performSync(options: SyncToCloudOptions): Promise<SyncResult> {
         continue;
       }
 
+      // Skip unverified documents (unless they are marked for deletion)
+      if (
+        doc.status !== "deleted" &&
+        doc.status?.toLowerCase() !== "verified"
+      ) {
+        continue;
+      }
+
       /*
        * The account changed while this pass was running. Pushing now would
        * put the document in the wrong account, so the pass stops and the
