@@ -106,9 +106,9 @@ export async function prepareAdminSigningKey(): Promise<AdminBiometricKey> {
     ADMIN_KEY_ALIAS,
     {
       signatureType: "ecdsa",
-      enforceBiometric: true,
-      setInvalidatedByBiometricEnrollment: false, // Prevents Keystore crash on certain Android security patch levels
-      useDeviceCredentials: true,
+      enforceBiometric: false,
+      setInvalidatedByBiometricEnrollment: false,
+      useDeviceCredentials: false,
       failIfExists: false,
     },
     "pem",
