@@ -144,12 +144,36 @@ export default function DocumentDetailsScreen() {
 
   const handleDownload = async () => {
     if (!document) return;
-    if (!document.fileUrl) {
-      feedbackService.error("No file attachment available for this document.");
-      return;
-    }
     setIsDownloading(true);
     try {
+      let downloadUrl = document.fileUrl;
+
+      // If there's no direct fileUrl or it's a local URI, request a fresh signed URL from the server
+      if (
+        !downloadUrl ||
+        downloadUrl.startsWith("file://") ||
+        downloadUrl.startsWith("content://")
+      ) {
+        if (document.cloudId) {
+          const res = await api.client.get(
+            `/documents/${document.cloudId}/file-url`,
+          );
+          downloadUrl = res.data?.fileUrl;
+        } else if (document.id) {
+          const res = await api.client.get(
+            `/documents/${document.id}/file-url`,
+          );
+          downloadUrl = res.data?.fileUrl;
+        }
+      }
+
+      if (!downloadUrl) {
+        feedbackService.error(
+          "No valid file attachment available for download.",
+        );
+        return;
+      }
+
       const cleanTitle = document.title
         .replace(/[^a-z0-9]/gi, "_")
         .toLowerCase();
@@ -158,7 +182,7 @@ export default function DocumentDetailsScreen() {
       const fileUri = `${FileSystem.documentDirectory}${filename}`;
 
       const downloadResult = await FileSystem.downloadAsync(
-        document.fileUrl,
+        downloadUrl,
         fileUri,
       );
 
@@ -189,8 +213,14 @@ export default function DocumentDetailsScreen() {
     const localId = document.id;
     setIsVerifying(true);
     try {
-      await updateDocument(localId, { status: "verified", needsSync: true });
-      setDocument({ ...document, status: "verified" });
+      await updateDocument(localId, {
+        status: "verified",
+        needsSync: true,
+      });
+      setDocument((prev) =>
+        prev ? { ...prev, status: "verified", needsSync: true } : null,
+      );
+
       const token = await SecureStore.getItemAsync("userToken");
       if (token && document.cloudId) {
         try {
