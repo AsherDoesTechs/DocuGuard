@@ -187,13 +187,19 @@ apiClient.interceptors.response.use(
     const requestPath = (error.config?.url || "")
       .split("?")[0]
       .replace(/\/+$/, "");
+
     const isAuthEndpoint = PUBLIC_AUTH_PATHS.some(
       (path) => requestPath === path || requestPath.endsWith(path),
     );
 
+    // Allow certain background/admin routes to fail gracefully without wiping the session
+    const skipGlobalLogoutPaths = ["/auth/logout", "/health", "/sync"];
+    const shouldSkipLogout =
+      skipGlobalLogoutPaths.some((path) => requestPath.includes(path)) ||
+      error.config?.skipGlobalLogout === true;
+
     // 2. Handle Global 401 Unauthorized (Expired or Revoked Sessions)
-    // Avoid triggering on login/register endpoints themselves if credentials were bad
-    if (status === 401 && !isAuthEndpoint) {
+    if (status === 401 && !isAuthEndpoint && !shouldSkipLogout) {
       try {
         const token = await getStoredToken();
         const { getLocalDataOwnerIdForSessionExpiration } =
