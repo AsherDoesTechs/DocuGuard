@@ -187,14 +187,7 @@ export default function DocumentDetailsScreen() {
       );
 
       if (downloadResult.status === 200) {
-        if (await Sharing.isAvailableAsync()) {
-          await Sharing.shareAsync(downloadResult.uri, {
-            mimeType: document.fileType || "application/pdf",
-            dialogTitle: "Download Document",
-          });
-        } else {
-          feedbackService.success(`Document saved to: ${downloadResult.uri}`);
-        }
+        feedbackService.success(`Downloaded successfully to device storage.`);
       } else {
         throw new Error("Failed to download file from server.");
       }
