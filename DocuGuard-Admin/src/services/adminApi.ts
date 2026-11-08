@@ -75,8 +75,11 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     );
   }
 
-  // Handle server-side session expiration or device revocation globally
-  if (response.status === 401) {
+  // Check if this is an authentication or enrollment endpoint where 401 means bad credentials, not an expired session
+  const isAuthOrEnrollmentPath = path.startsWith("/admin-auth/");
+
+  // Handle server-side session expiration or device revocation globally (skip for login/enrollment flows)
+  if (response.status === 401 && !isAuthOrEnrollmentPath) {
     await clearAdminToken();
     router.replace("/");
     throw new Error(

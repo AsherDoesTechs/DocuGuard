@@ -221,25 +221,22 @@ export default function AdminLoginScreen() {
         "Device enrolled",
         "This device is registered. You can now sign in using your Admin ID, password, and biometric verification.",
       );
-    } catch (error) {
+    } catch (error: any) {
       // Detailed console debug logging for enrollment failures
       console.error("[Device Enrollment Debug Error]", {
         message:
           error instanceof Error ? error.message : "Unknown enrollment error",
-        status:
-          error && typeof error === "object" && "status" in error
-            ? error.status
-            : undefined,
-        code:
-          error && typeof error === "object" && "code" in error
-            ? error.code
-            : undefined,
+        status: error?.response?.status || error?.status,
+        code: error?.response?.data?.code || error?.code,
+        serverError: error?.response?.data, // <-- This will show what the server actually rejected
       });
 
       const detailedErrorMessage =
-        error instanceof Error
+        error?.response?.data?.error ||
+        error?.response?.data?.message ||
+        (error instanceof Error
           ? `${error.message}${error.stack ? `\n\nStack: ${error.stack}` : ""}`
-          : JSON.stringify(error);
+          : JSON.stringify(error));
 
       Alert.alert("Enrollment failed", detailedErrorMessage);
     } finally {
