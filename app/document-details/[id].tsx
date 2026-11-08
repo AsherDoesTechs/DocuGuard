@@ -187,7 +187,20 @@ export default function DocumentDetailsScreen() {
       );
 
       if (downloadResult.status === 200) {
-        feedbackService.success(`Downloaded successfully to device storage.`);
+        // This opens the system dialog allowing you to select "Save to Files" / device storage
+        if (await Sharing.isAvailableAsync()) {
+          await Sharing.shareAsync(downloadResult.uri, {
+            mimeType: document.fileType || "application/pdf",
+            dialogTitle: "Save Document to Storage",
+            UTI: document.fileType?.includes("image")
+              ? "public.jpeg"
+              : "com.adobe.pdf",
+          });
+        } else {
+          feedbackService.success(
+            `Downloaded to app storage: ${downloadResult.uri}`,
+          );
+        }
       } else {
         throw new Error("Failed to download file from server.");
       }

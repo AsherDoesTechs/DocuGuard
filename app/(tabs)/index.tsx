@@ -28,6 +28,7 @@ import {
   feedbackService,
   useFeedbackService,
 } from "@/services/feedbackService";
+import { api } from "@/services/api";
 
 interface DashboardSummary {
   safetyScore: number;
@@ -89,9 +90,70 @@ export default function HomeScreen() {
   });
 
   const [recentDocs, setRecentDocs] = useState<LocalDocument[]>([]);
+  const [recentPreviewUris, setRecentPreviewUris] = useState<
+    Record<string, string | null>
+  >({});
   const [expiringDocs, setExpiringDocs] = useState<LocalDocument[]>([]);
   const [urgentReminders, setUrgentReminders] = useState<Reminder[]>([]);
   const [userName, setUserName] = useState("User");
+
+  const getRecentDocKey = useCallback(
+    (doc: LocalDocument, index: number) =>
+      String(doc.id ?? doc.cloudId ?? doc.documentNumber ?? `recent-${index}`),
+    [],
+  );
+
+  const isImageDocument = useCallback((doc: LocalDocument, uri?: string | null) => {
+    const fileType = String(
+      (doc as any).fileType || (doc as any).file_type || "",
+    ).toLowerCase();
+    if (fileType.includes("image")) return true;
+    const candidate = String(uri || (doc as any).fileUrl || (doc as any).file_url || "");
+    return /\.(jpg|jpeg|png|webp|heic|heif)(\?|$)/i.test(candidate);
+  }, []);
+
+  const resolveRecentPreviewUri = useCallback(
+    async (doc: LocalDocument): Promise<string | null> => {
+      const rawImage =
+        (doc as any).thumbnailUri ||
+        (doc as any).thumbnailPath ||
+        (doc as any).imageUri ||
+        (doc as any).imagePath ||
+        (doc as any).fileUrl ||
+        (doc as any).file_url ||
+        (doc as any).filePath ||
+        (doc as any).uri;
+
+      if (typeof rawImage === "string" && rawImage.trim()) {
+        const trimmed = rawImage.trim();
+        if (
+          trimmed.startsWith("file://") ||
+          trimmed.startsWith("content://") ||
+          trimmed.startsWith("data:")
+        ) {
+          return trimmed;
+        }
+        if (/^https?:\/\//i.test(trimmed)) {
+          return trimmed;
+        }
+        return `file://${trimmed}`;
+      }
+
+      if (!isImageDocument(doc, null)) return null;
+
+      const remoteId = doc.cloudId ?? doc.id;
+      if (!remoteId) return null;
+
+      try {
+        const res = await api.client.get(`/documents/${remoteId}/file-url`);
+        const url = res?.data?.fileUrl || res?.data?.file_url;
+        return typeof url === "string" && url.trim() ? url.trim() : null;
+      } catch {
+        return null;
+      }
+    },
+    [isImageDocument],
+  );
 
   const fetchDashboardData = useCallback(async () => {
     try {
@@ -129,6 +191,15 @@ export default function HomeScreen() {
 
       setRecentDocs(sortedRecent);
       setExpiringDocs(expiringList.slice(0, 3));
+
+      const previewEntries = await Promise.all(
+        sortedRecent.map(async (doc, index) => {
+          const key = getRecentDocKey(doc, index);
+          const uri = await resolveRecentPreviewUri(doc);
+          return [key, uri] as const;
+        }),
+      );
+      setRecentPreviewUris(Object.fromEntries(previewEntries));
 
       const docCount = localDocs.length;
       const expiringCount = expiringList.length;
@@ -523,22 +594,40 @@ export default function HomeScreen() {
                     </TouchableOpacity>
                   </Card>
                 ) : (
-                  recentDocs.map((doc) => {
+                  recentDocs.map((doc, index) => {
+                    const recentKey = getRecentDocKey(doc, index);
                     const rawImage =
                       (doc as any).thumbnailUri ||
                       (doc as any).thumbnailPath ||
                       (doc as any).imageUri ||
                       (doc as any).imagePath ||
+                      (doc as any).fileUrl ||
+                      (doc as any).file_url ||
                       (doc as any).filePath ||
                       (doc as any).uri;
 
-                    const docImage = rawImage
+                    const normalizedLocalImage = rawImage
                       ? rawImage.startsWith("file://") ||
-                        rawImage.startsWith("http") ||
+                        rawImage.startsWith("content://") ||
                         rawImage.startsWith("data:")
                         ? rawImage
-                        : `file://${rawImage}`
+                        : /^https?:\/\//i.test(rawImage)
+                          ? rawImage
+                          : `file://${rawImage}`
                       : null;
+
+                    const resolvedPreviewUri =
+                      recentPreviewUris[recentKey] ?? normalizedLocalImage;
+
+                    const fileType = String(
+                      (doc as any).fileType || (doc as any).file_type || "",
+                    ).toLowerCase();
+                    const isImagePreview =
+                      !!resolvedPreviewUri &&
+                      (fileType.includes("image") ||
+                        /\.(jpg|jpeg|png|webp|heic|heif)(\?|$)/i.test(
+                          resolvedPreviewUri,
+                        ));
 
                     const documentType =
                       (doc as any).documentType ||
@@ -586,27 +675,34 @@ export default function HomeScreen() {
                         <Card style={styles.recentDocumentCard}>
                           <View style={styles.recentDocumentRow}>
                             <View style={styles.recentPreviewFrame}>
-                              {docImage ? (
+                              {isImagePreview ? (
                                 <Image
-                                  source={{ uri: docImage }}
+                                  source={{ uri: resolvedPreviewUri as string }}
                                   style={styles.recentPreviewImage}
                                   resizeMode="cover"
                                   onError={() =>
-                                    console.warn(
-                                      "Recent document preview failed to load for doc ID:",
-                                      doc.id,
-                                    )
+                                    setRecentPreviewUris((prev) => ({
+                                      ...prev,
+                                      [recentKey]: null,
+                                    }))
                                   }
                                 />
                               ) : (
                                 <View style={styles.recentPreviewFallback}>
                                   <Ionicons
-                                    name="document-text-outline"
+                                    name={
+                                      fileType.includes("pdf") ||
+                                      /\.pdf(\?|$)/i.test(
+                                        resolvedPreviewUri || "",
+                                      )
+                                        ? "document-text-outline"
+                                        : "image-outline"
+                                    }
                                     size={30}
                                     color={COLORS.primary}
                                   />
                                   <Text style={styles.previewFallbackText}>
-                                    Preview
+                                    {resolvedPreviewUri ? "File" : "Preview"}
                                   </Text>
                                 </View>
                               )}

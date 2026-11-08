@@ -15,6 +15,7 @@ import {
   ActivityIndicator,
   AppState,
   AppStateStatus,
+  DeviceEventEmitter,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useFocusEffect } from "expo-router";
@@ -42,7 +43,7 @@ import {
 import {
   feedbackService,
   useFeedbackService,
-} from "../../services/feedbackService";
+} from "@/services/feedbackService";
 
 type FilterType = "all" | "unread" | "expired" | "expiring";
 type ReminderSeverity = "Expired" | "Expiring Soon" | "Valid";
@@ -111,6 +112,92 @@ export default function RemindersScreen() {
   const mountedRef = useRef(true);
   const fetchInProgressRef = useRef(false);
 
+  const getDaysUntil = useCallback(
+    (dateStr: string) => {
+      const due = parseLocalDate(dateStr);
+      if (!due || Number.isNaN(due.getTime())) {
+        return Number.NaN;
+      }
+      due.setHours(0, 0, 0, 0);
+      const today = new Date(now);
+      today.setHours(0, 0, 0, 0);
+      return Math.round((due.getTime() - today.getTime()) / 86400000);
+    },
+    [now],
+  );
+
+  const calculateSeverity = useCallback(
+    (dueDate: string): ReminderSeverity => {
+      const days = getDaysUntil(dueDate);
+
+      if (!Number.isFinite(days)) return "Valid";
+      if (days < 0) return "Expired";
+      if (days <= 30) return "Expiring Soon";
+
+      return "Valid";
+    },
+    [getDaysUntil],
+  );
+
+  const fetchReminders = useCallback(async () => {
+    if (!mountedRef.current || fetchInProgressRef.current) {
+      return false;
+    }
+
+    fetchInProgressRef.current = true;
+
+    try {
+      setError(null);
+
+      const localReminders: LocalReminder[] = await getAllReminders();
+
+      const mappedReminders: Reminder[] = localReminders
+        .filter((reminder) => reminder.id != null && reminder.dueDate)
+        .map((reminder) => ({
+          id: reminder.id!,
+          documentId: (reminder as any).documentId,
+          title: reminder.title,
+          description: reminder.description || "",
+          dueDate: reminder.dueDate,
+          severity: calculateSeverity(reminder.dueDate),
+          read: !!reminder.read,
+        }));
+
+      if (mountedRef.current) {
+        setReminders(mappedReminders);
+        setLastFetch(Date.now());
+      }
+
+      return true;
+    } catch (err) {
+      console.error("Failed to load reminders:", err);
+
+      if (mountedRef.current) {
+        setError("Unable to load reminders.");
+      }
+
+      return false;
+    } finally {
+      fetchInProgressRef.current = false;
+
+      if (mountedRef.current) {
+        setLoading(false);
+      }
+    }
+  }, [calculateSeverity]);
+
+  useEffect(() => {
+    const subscription = DeviceEventEmitter.addListener(
+      "documentVaultChanged",
+      () => {
+        void fetchReminders();
+      },
+    );
+    return () => {
+      subscription.remove();
+    };
+  }, [fetchReminders]);
+
   useEffect(() => {
     const interval = setInterval(() => {
       if (mountedRef.current) {
@@ -171,81 +258,6 @@ export default function RemindersScreen() {
       console.error("Failed to schedule alerts:", err);
     }
   }, []);
-
-  const getDaysUntil = useCallback(
-    (dateStr: string) => {
-      const due = parseLocalDate(dateStr);
-      if (!due || Number.isNaN(due.getTime())) {
-        return Number.NaN;
-      }
-      due.setHours(0, 0, 0, 0);
-      const today = new Date(now);
-      today.setHours(0, 0, 0, 0);
-      return Math.round((due.getTime() - today.getTime()) / 86400000);
-    },
-    [now],
-  );
-
-  const calculateSeverity = useCallback(
-    (dueDate: string): ReminderSeverity => {
-      const days = getDaysUntil(dueDate);
-
-      // Invalid dates are excluded during mapping; keep severity safe if called elsewhere.
-      if (!Number.isFinite(days)) return "Valid";
-      if (days < 0) return "Expired";
-      if (days <= 30) return "Expiring Soon";
-
-      return "Valid";
-    },
-    [getDaysUntil],
-  );
-
-  const fetchReminders = useCallback(async () => {
-    if (!mountedRef.current || fetchInProgressRef.current) {
-      return false;
-    }
-
-    fetchInProgressRef.current = true;
-
-    try {
-      setError(null);
-
-      const localReminders: LocalReminder[] = await getAllReminders();
-
-      const mappedReminders: Reminder[] = localReminders
-        .filter((reminder) => reminder.id != null && reminder.dueDate)
-        .map((reminder) => ({
-          id: reminder.id!,
-          documentId: (reminder as any).documentId,
-          title: reminder.title,
-          description: reminder.description || "",
-          dueDate: reminder.dueDate,
-          severity: calculateSeverity(reminder.dueDate),
-          read: !!reminder.read,
-        }));
-
-      if (mountedRef.current) {
-        setReminders(mappedReminders);
-        setLastFetch(Date.now());
-      }
-
-      return true;
-    } catch (err) {
-      console.error("Failed to load reminders:", err);
-
-      if (mountedRef.current) {
-        setError("Unable to load reminders.");
-      }
-
-      return false;
-    } finally {
-      fetchInProgressRef.current = false;
-
-      if (mountedRef.current) {
-        setLoading(false);
-      }
-    }
-  }, [calculateSeverity]);
 
   useFocusEffect(
     useCallback(() => {
