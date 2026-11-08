@@ -125,23 +125,30 @@ export default function AdminLoginScreen() {
       setTotpCode("");
 
       router.replace("/dashboard");
-    } catch (error) {
+    } catch (error: any) {
       // Detailed console debug logging for sign-in failures
-      console.error("[Sign-In Debug Error]:", error);
+      console.error("[Sign-In Debug Error Detailed]:", {
+        message: error?.message,
+        status: error?.status || error?.response?.status,
+        code: error?.code || error?.response?.data?.code,
+        serverErrorData: error?.response?.data,
+        stack: error?.stack,
+      });
 
-      const errorMessage =
-        error instanceof Error
-          ? `${error.message}${error.stack ? `\n\nStack: ${error.stack}` : ""}`
-          : JSON.stringify(error);
+      const exactServerMessage =
+        error?.response?.data?.error ||
+        error?.response?.data?.message ||
+        error?.message;
 
-      const message =
-        error instanceof Error
-          ? error.message
-          : "Unable to sign in. Please try again.";
+      const errorMessage = exactServerMessage
+        ? `Server Error: ${exactServerMessage}`
+        : "Unable to sign in. Please check your network connection and try again.";
 
       if (
         requiresTwoFactor &&
-        /verification code|invalid code|invalid verification/i.test(message)
+        /verification code|invalid code|invalid verification/i.test(
+          errorMessage,
+        )
       ) {
         setTotpCode("");
       }
@@ -178,7 +185,6 @@ export default function AdminLoginScreen() {
       const key = await prepareAdminSigningKey();
 
       // Safely validate the enrollment token locally.
-      // Never log or display the actual token.
       const tokenForValidation = enrollmentToken.trim();
 
       const tokenDiagnostic = {
@@ -228,7 +234,7 @@ export default function AdminLoginScreen() {
           error instanceof Error ? error.message : "Unknown enrollment error",
         status: error?.response?.status || error?.status,
         code: error?.response?.data?.code || error?.code,
-        serverError: error?.response?.data, // <-- This will show what the server actually rejected
+        serverError: error?.response?.data,
       });
 
       const detailedErrorMessage =
