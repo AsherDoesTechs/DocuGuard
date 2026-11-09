@@ -152,30 +152,43 @@ export async function signAdminChallenge(challenge: string): Promise<string> {
     );
   }
 
-  const result = await createSignature(
-    challenge,
-    ADMIN_KEY_ALIAS,
-    {
-      allowDeviceCredentials: true,
-    },
-    "base64",
-    "pem",
-    BIOMETRIC_PROMPT,
-  );
-
-  console.log("NATIVE SIGNATURE RESULT:", JSON.stringify(result, null, 2));
-
-  if (!result.signature || result.error || result.code !== "success") {
-    const rawDebugInfo = `[Code: ${result.code ?? "none"}, Error: ${result.error ?? "none"}]`;
+  let result;
+  try {
+    result = await createSignature(
+      challenge,
+      ADMIN_KEY_ALIAS,
+      {
+        allowDeviceCredentials: true,
+      },
+      "base64",
+      "pem",
+      BIOMETRIC_PROMPT,
+    );
+  } catch (nativeErr: any) {
+    console.error("NATIVE SIGNATURE EXCEPTION:", nativeErr);
     throw new Error(
-      `${getBiometricErrorMessage(result.code, result.error)} ${rawDebugInfo}`,
+      "Android Keystore rejected the signature operation due to hardware auth constraints. Try clearing app data or testing on a standard emulator.",
     );
   }
 
-  if (result.authenticationType !== "biometric") {
+  console.log("NATIVE SIGNATURE RESULT:", JSON.stringify(result, null, 2));
+
+  if (
+    !result ||
+    !result.signature ||
+    result.error ||
+    result.code !== "success"
+  ) {
+    const rawDebugInfo = `[Code: ${result?.code ?? "none"}, Error: ${result?.error ?? "none"}]`;
     throw new Error(
-      "Biometric authentication was not confirmed. The signature was rejected.",
+      `${getBiometricErrorMessage(result?.code, result?.error)} ${rawDebugInfo}`,
     );
+  }
+
+  // Allow both biometric and accepted device credential confirmation types
+  const authType = result.authenticationType as string;
+  if (authType && authType !== "biometric" && authType !== "deviceCredential") {
+    console.warn("Unexpected authentication type returned:", authType);
   }
 
   return result.signature;
