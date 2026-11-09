@@ -4,7 +4,7 @@
     "slug": "docuguard-admin",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/favicon.png",
+    "icon": "./assets/images/Icon.png",
     "scheme": "docuguardadmin",
     "userInterfaceStyle": "automatic",
     "updates": {
@@ -18,19 +18,16 @@
       "package": "com.docuguard.admin",
       "adaptiveIcon": {
         "backgroundColor": "#142D4E",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
+        "foregroundImage": "./assets/images/Icon.png",
         "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "monochromeImage": "./assets/images/Icon.png"
       },
       "predictiveBackGestureEnabled": false,
-      "permissions": [
-        "NOTIFICATIONS",
-        "VIBRATE"
-      ]
+      "permissions": ["NOTIFICATIONS", "VIBRATE"]
     },
     "web": {
       "output": "server",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/Icon.png"
     },
     "plugins": [
       "expo-router",
@@ -50,7 +47,7 @@
       [
         "expo-notifications",
         {
-          "icon": "./assets/images/favicon.png",
+"icon": "./assets/images/Icon.png",
           "color": "#142D4E",
           "sounds": []
         }
