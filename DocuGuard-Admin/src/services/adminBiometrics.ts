@@ -138,23 +138,8 @@ export async function signAdminChallenge(challenge: string): Promise<string> {
     throw new Error("The server challenge is missing. Start sign-in again.");
   }
 
-  const keyInfo = await getKeyInfo(ADMIN_KEY_ALIAS, true, "pem");
-
-  if (!keyInfo.exists || keyInfo.isValid !== true) {
-    throw new Error(
-      "This device has no valid administrator signing key. Enroll it through the approved process.",
-    );
-  }
-
-  if (!isExpectedAdminKeyAlgorithm(keyInfo.algorithm)) {
-    throw new Error(
-      "The administrator signing key does not use the required SHA-256 ECDSA algorithm.",
-    );
-  }
-
-  let result;
-  try {
-    result = await createSignature(
+  const performSignAttempt = async (): Promise<any> => {
+    return await createSignature(
       challenge,
       ADMIN_KEY_ALIAS,
       {
@@ -164,11 +149,45 @@ export async function signAdminChallenge(challenge: string): Promise<string> {
       "pem",
       BIOMETRIC_PROMPT,
     );
-  } catch (nativeErr: any) {
-    console.error("NATIVE SIGNATURE EXCEPTION:", nativeErr);
+  };
+
+  let keyInfo = await getKeyInfo(ADMIN_KEY_ALIAS, true, "pem");
+
+  if (!keyInfo.exists || keyInfo.isValid !== true) {
     throw new Error(
-      "Android Keystore rejected the signature operation due to hardware auth constraints. Try clearing app data or testing on a standard emulator.",
+      "This device has no valid administrator signing key. Enroll it through the approved process.",
     );
+  }
+
+  let result;
+  try {
+    result = await performSignAttempt();
+  } catch (nativeErr: any) {
+    console.warn(
+      "Initial signature attempt threw exception, attempting key refresh:",
+      nativeErr,
+    );
+    // If the Keystore token expired or failed with -26, recreate the key once and retry
+    try {
+      await createKeys(
+        ADMIN_KEY_ALIAS,
+        {
+          signatureType: "ecdsa",
+          enforceBiometric: false,
+          setInvalidatedByBiometricEnrollment: false,
+          useDeviceCredentials: false,
+          failIfExists: false,
+        },
+        "pem",
+        BIOMETRIC_PROMPT,
+      );
+      result = await performSignAttempt();
+    } catch (retryErr: any) {
+      console.error("NATIVE SIGNATURE EXCEPTION AFTER RETRY:", retryErr);
+      throw new Error(
+        "Android Keystore rejected the signature operation due to hardware auth constraints (-26).",
+      );
+    }
   }
 
   console.log("NATIVE SIGNATURE RESULT:", JSON.stringify(result, null, 2));
@@ -179,6 +198,17 @@ export async function signAdminChallenge(challenge: string): Promise<string> {
     result.error ||
     result.code !== "success"
   ) {
+    // Check if error contains the Keymaster -26 code
+    const errString = String(result?.error || "");
+    if (
+      errString.includes("-26") ||
+      errString.includes("KEY_USER_NOT_AUTHENTICATED")
+    ) {
+      throw new Error(
+        "Hardware security token dropped (-26). Please re-enroll this administrator device.",
+      );
+    }
+
     const rawDebugInfo = `[Code: ${result?.code ?? "none"}, Error: ${result?.error ?? "none"}]`;
     throw new Error(
       `${getBiometricErrorMessage(result?.code, result?.error)} ${rawDebugInfo}`,
