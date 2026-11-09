@@ -191,15 +191,14 @@ export async function signAdminChallenge(challenge: string): Promise<string> {
 
   console.log("NATIVE SIGNATURE RESULT:", JSON.stringify(result, null, 2));
 
-  // Check for Keystore error code -26 immediately in the result object
+  // Check for Keystore error code -26 immediately in the result object error string
   const errString = String(result?.error || "");
   if (
     errString.includes("-26") ||
     errString.includes("KEY_USER_NOT_AUTHENTICATED")
   ) {
-    // Automatically purge the broken key so the next attempt can re-enroll cleanly
     throw new Error(
-      "Hardware security token dropped (-26). Please re-enroll this administrator device.",
+      "Hardware security token expired due to device prompt animation delay (-26). Please tap sign-in and try scanning your fingerprint again.",
     );
   }
 
