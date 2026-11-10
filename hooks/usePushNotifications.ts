@@ -27,7 +27,7 @@ if (!isExpoGo) {
   });
 }
 
-export function usePushNotifications() {
+export function usePushNotifications(enabled = true) {
   const [expoPushToken, setExpoPushToken] = useState<string | null>(null);
   const [notification, setNotification] =
     useState<Notifications.Notification | null>(null);
@@ -37,38 +37,48 @@ export function usePushNotifications() {
   const responseListener = useRef<Notifications.EventSubscription | null>(null);
 
   useEffect(() => {
-    if (isExpoGo) {
+    if (!enabled || isExpoGo) {
       return;
     }
 
+    let cancelled = false;
+
     registerForPushNotificationsAsync().then((token) => {
+      if (cancelled) {
+        return;
+      }
+
       if (token) {
         setExpoPushToken(token.expoToken || null);
-        syncTokenToBackend(token);
+        void syncTokenToBackend(token);
       }
     });
 
     // Capture incoming notifications while app is open
     notificationListener.current =
-      Notifications.addNotificationReceivedListener((notification) => {
-        setNotification(notification);
+      Notifications.addNotificationReceivedListener((incoming) => {
+        setNotification(incoming);
       });
 
     // Capture user tapping on a notification
     responseListener.current =
-      Notifications.addNotificationResponseReceivedListener((response) => {
+      Notifications.addNotificationResponseReceivedListener(() => {
         // Notification tap handled by app logic
       });
 
     return () => {
+      cancelled = true;
+
       if (notificationListener.current) {
         notificationListener.current.remove();
+        notificationListener.current = null;
       }
       if (responseListener.current) {
         responseListener.current.remove();
+        responseListener.current = null;
       }
     };
-  }, []);
+  }, [enabled]);
 
   return {
     expoPushToken,

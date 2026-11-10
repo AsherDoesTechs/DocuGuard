@@ -22,8 +22,8 @@ const BANNER_DURATION = 6500;
 export default function PushNotificationToastBridge({
   enabled = true,
 }: PushNotificationToastBridgeProps) {
-  // Keep the push hook mounted so token registration and listeners remain active.
-  const { notification } = usePushNotifications();
+  // Defer push registration, token sync, and listeners until startup is ready.
+  const { notification } = usePushNotifications(enabled);
   const colors = useColors();
   const insets = useSafeAreaInsets();
 
