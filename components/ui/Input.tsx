@@ -8,12 +8,13 @@ import {
   StyleProp,
   TextStyle,
   Pressable,
+  type TextInputProps,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useColors } from "@/context/ThemeContext";
 import { Spacing } from "@/constants/spacing";
 
-interface InputProps {
+interface InputProps extends Omit<TextInputProps, "style" | "onChangeText" | "onBlur" | "value" | "placeholder"> {
   label?: string | React.ReactNode;
   placeholder: string;
   value: string;
@@ -51,6 +52,8 @@ export default function Input({
   editable = true,
   rightIcon,
   onRightIconPress,
+  onFocus,
+  ...rest
 }: InputProps) {
   const colors = useColors();
   const [isFocused, setIsFocused] = useState(false);
@@ -110,11 +113,12 @@ export default function Input({
     [colors, error, isFocused, editable],
   );
 
-  const handleFocus = () => {
+  const handleFocus = (e: any) => {
     setIsFocused(true);
+    onFocus?.(e);
   };
 
-  const handleBlur = () => {
+  const handleBlur = (e: any) => {
     setIsFocused(false);
     onBlur?.();
   };
@@ -149,6 +153,7 @@ export default function Input({
           editable={editable}
           accessibilityLabel={typeof label === "string" ? label : placeholder}
           accessibilityHint={error ? `Error: ${error}` : undefined}
+          {...rest}
         />
 
         {rightIcon && onRightIconPress && (

@@ -39,7 +39,7 @@ export function AuthScreen({
           alignSelf: "center",
           paddingHorizontal: 20,
           paddingTop: Spacing.lg,
-          paddingBottom: 36,
+          paddingBottom: 180,
         },
         header: {
           alignItems: "center",
@@ -80,16 +80,16 @@ export function AuthScreen({
     <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
       <KeyboardAvoidingView
         style={styles.keyboard}
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        keyboardVerticalOffset={0}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 24 : 0}
       >
         <ScrollView
           style={styles.scroll}
           contentContainerStyle={styles.content}
           keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="on-drag"
+          keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
           showsVerticalScrollIndicator={false}
-          automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
+          automaticallyAdjustKeyboardInsets
         >
           <View style={styles.header}>
             <View style={styles.iconContainer}>

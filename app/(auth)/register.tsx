@@ -416,6 +416,9 @@ export default function RegisterScreen() {
           secureTextEntry={!showConfirmPassword}
           rightIcon={showConfirmPassword ? "eye-off-outline" : "eye-outline"}
           onRightIconPress={() => setShowConfirmPassword((prev) => !prev)}
+          returnKeyType="done"
+          blurOnSubmit
+          onSubmitEditing={handleRegisterPress}
         />
 
         <View style={{ marginTop: Spacing.sm }}>
