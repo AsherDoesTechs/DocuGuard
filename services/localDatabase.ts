@@ -843,6 +843,7 @@ export async function initDatabase() {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT DEFAULT 'User',
         email TEXT,
+        occupation TEXT DEFAULT '',
         document_count INTEGER DEFAULT 0,
         expiring_count INTEGER DEFAULT 0,
         expired_count INTEGER DEFAULT 0,
@@ -868,8 +869,14 @@ export async function initDatabase() {
         await database.getAllAsync<{ name: string }>(
           `PRAGMA table_info(user_profile)`,
         )
-      ).map((col) => col.name),
+      ).map((column) => column.name),
     );
+
+    if (!profileColumns.has("occupation")) {
+      await database.execAsync(
+        `ALTER TABLE user_profile ADD COLUMN occupation TEXT DEFAULT ''`,
+      );
+    }
 
     if (!profileColumns.has("preferences_dirty")) {
       await database.execAsync(
@@ -3387,5 +3394,93 @@ export async function createReminder(
       new Date().toISOString(),
     ],
   );
+  return result.lastInsertRowId as number;
+}
+
+/**
+ * Creates or updates the reminder for an expired document.
+ *
+ * Repeated scheduler runs will not create duplicate reminders
+ * for the same document title and expiry date.
+ */
+export async function upsertExpiredDocumentReminder(
+  documentTitle: string,
+  expiryDate: string,
+): Promise<number | null> {
+  const userId = await getLocalUserId();
+
+  // Never create reminders while signed out.
+  if (userId === null) {
+    DebugLogger.warn(
+      "LocalDatabase",
+      "Expired document reminder skipped: signed out",
+    );
+    return null;
+  }
+
+  const title = documentTitle.trim();
+
+  if (!title || !expiryDate) {
+    DebugLogger.warn(
+      "LocalDatabase",
+      "Expired document reminder skipped: missing title or expiry date",
+    );
+    return null;
+  }
+
+  const reminderTitle = `Document Expired: ${title}`;
+  const description = `${title} expired on ${expiryDate}. Please review.`;
+
+  const existing = await querySingle<{
+    id: number;
+    read: number;
+  }>(
+    `
+    SELECT id, is_read AS "read"
+    FROM reminders
+    WHERE user_id = ?
+      AND title = ?
+      AND due_date = ?
+    ORDER BY id ASC
+    LIMIT 1
+    `,
+    [userId, reminderTitle, expiryDate],
+  );
+
+  if (existing) {
+    // Update the existing reminder without resetting its read state.
+    await run(
+      `
+      UPDATE reminders
+      SET description = ?,
+          severity = 'Expired',
+          needs_sync = 1
+      WHERE id = ?
+        AND user_id = ?
+      `,
+      [description, existing.id, userId],
+    );
+
+    return existing.id;
+  }
+
+  const result = await run(
+    `
+    INSERT INTO reminders
+      (
+        user_id,
+        title,
+        description,
+        due_date,
+        severity,
+        is_read,
+        needs_sync,
+        created_at
+      )
+    VALUES (?, ?, ?, ?, 'Expired', 0, 1, ?)
+    `,
+    [userId, reminderTitle, description, expiryDate, new Date().toISOString()],
+  );
+
   return result.lastInsertRowId as number;
 }

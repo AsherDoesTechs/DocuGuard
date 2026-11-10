@@ -5,7 +5,8 @@ import {
   getExpiredDocuments,
   getAllReminders,
   getAllDocuments,
-  LocalDocument,
+  upsertExpiredDocumentReminder,
+  type LocalDocument,
 } from "./localDatabase";
 import { isNotificationsEnabled } from "./notificationPreferences";
 import { getDaysUntilExpiry, parseLocalDate } from "@/utils";
@@ -48,6 +49,11 @@ export async function checkAndScheduleAlerts() {
 
     if (daysUntil < 0) {
       await cancelExpiringSoonNotifications(doc.id);
+
+      // Create/update the SQLite reminder so it appears
+      // in reminders.tsx as well as the OS notification.
+      await upsertExpiredDocumentReminder(doc.title, doc.expiryDate || "");
+
       await scheduleExpirationNotification(doc);
     } else {
       await scheduleExpiringSoonNotification(doc);
