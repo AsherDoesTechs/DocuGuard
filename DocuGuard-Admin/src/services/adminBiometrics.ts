@@ -134,13 +134,74 @@ export async function prepareAdminSigningKey(): Promise<AdminBiometricKey> {
 }
 
 export async function signAdminChallenge(challenge: string): Promise<string> {
+  const logPrefix = "[AdminBiometric][signAdminChallenge]";
+
+  const logErrorDetails = (label: string, error: unknown) => {
+    if (error instanceof Error) {
+      console.error(`${logPrefix} ${label}:`, {
+        name: error.name,
+        message: error.message,
+        stack: error.stack,
+      });
+      return;
+    }
+
+    console.error(`${logPrefix} ${label}:`, error);
+
+    try {
+      console.error(
+        `${logPrefix} ${label} serialized:`,
+        JSON.stringify(error, null, 2),
+      );
+    } catch {
+      console.error(`${logPrefix} ${label}: Could not serialize error.`);
+    }
+  };
+
+  const startedAt = Date.now();
+
+  console.log(`${logPrefix} START`, {
+    timestamp: new Date().toISOString(),
+    challengeProvided: typeof challenge === "string",
+    challengeLength: typeof challenge === "string" ? challenge.length : 0,
+    keyAlias: ADMIN_KEY_ALIAS,
+  });
+
   if (!challenge || !challenge.trim()) {
+    console.error(`${logPrefix} VALIDATION FAILED: Missing challenge`);
+
     throw new Error("The server challenge is missing. Start sign-in again.");
   }
 
-  const keyInfo = await getKeyInfo(ADMIN_KEY_ALIAS, true, "pem");
+  let keyInfo;
+
+  try {
+    console.log(`${logPrefix} Checking signing key...`);
+
+    keyInfo = await getKeyInfo(ADMIN_KEY_ALIAS, true, "pem");
+
+    console.log(`${logPrefix} KEY INFO RESULT`, {
+      exists: keyInfo?.exists,
+      isValid: keyInfo?.isValid,
+      algorithm: keyInfo?.algorithm,
+      publicKeyAvailable: Boolean(keyInfo?.publicKey),
+      keyAlias: ADMIN_KEY_ALIAS,
+    });
+  } catch (keyError: unknown) {
+    logErrorDetails("KEY INFO ERROR", keyError);
+
+    throw new Error(
+      "Unable to inspect the administrator signing key. Check device logs.",
+    );
+  }
 
   if (!keyInfo.exists || keyInfo.isValid !== true) {
+    console.error(`${logPrefix} KEY VALIDATION FAILED`, {
+      exists: keyInfo.exists,
+      isValid: keyInfo.isValid,
+      algorithm: keyInfo.algorithm,
+    });
+
     throw new Error(
       "This device has no valid administrator signing key. Enroll it through the approved process.",
     );
@@ -149,6 +210,14 @@ export async function signAdminChallenge(challenge: string): Promise<string> {
   let result;
 
   try {
+    console.log(`${logPrefix} SIGNATURE OPERATION START`, {
+      timestamp: new Date().toISOString(),
+      keyAlias: ADMIN_KEY_ALIAS,
+      allowDeviceCredentials: true,
+      outputFormat: "base64",
+      keyFormat: "pem",
+    });
+
     result = await createSignature(
       challenge,
       ADMIN_KEY_ALIAS,
@@ -159,18 +228,48 @@ export async function signAdminChallenge(challenge: string): Promise<string> {
       "pem",
       BIOMETRIC_PROMPT,
     );
+
+    console.log(`${logPrefix} SIGNATURE OPERATION COMPLETED`, {
+      durationMs: Date.now() - startedAt,
+      timestamp: new Date().toISOString(),
+    });
   } catch (nativeErr: unknown) {
-    console.error(
-      "[AdminBiometric] Native signature operation failed:",
-      nativeErr,
-    );
+    console.error(`${logPrefix} NATIVE SIGNATURE EXCEPTION`, {
+      durationMs: Date.now() - startedAt,
+      timestamp: new Date().toISOString(),
+    });
+
+    logErrorDetails("NATIVE SIGNATURE ERROR", nativeErr);
+
+    const errorText =
+      nativeErr instanceof Error
+        ? `${nativeErr.name}: ${nativeErr.message}`
+        : String(nativeErr);
+
+    console.error(`${logPrefix} KEYSTORE ERROR CLASSIFICATION`, {
+      keyUserNotAuthenticated: errorText.includes("KEY_USER_NOT_AUTHENTICATED"),
+      keystoreErrorMinus26: errorText.includes("-26"),
+      keyInvalidated:
+        errorText.includes("KEY_INVALIDATED") ||
+        errorText.includes("Key permanently invalidated"),
+      userCanceled: errorText.toLowerCase().includes("cancel"),
+      rawError: errorText,
+    });
 
     throw new Error(
-      "Biometric authentication completed, but the device could not sign the challenge. Please try again.",
+      "Biometric authentication completed, but the device could not sign the challenge. Check Android logs for the exact native error.",
     );
   }
 
-  console.log("NATIVE SIGNATURE RESULT:", JSON.stringify(result, null, 2));
+  console.log(`${logPrefix} NATIVE SIGNATURE RESULT`, {
+    code: result?.code,
+    error: result?.error,
+    signaturePresent: Boolean(result?.signature),
+    signatureLength: result?.signature?.length ?? 0,
+    algorithm: result?.algorithm,
+    durationMs: Date.now() - startedAt,
+    timestamp: new Date().toISOString(),
+  });
 
   if (
     !result ||
@@ -178,13 +277,36 @@ export async function signAdminChallenge(challenge: string): Promise<string> {
     result.error ||
     result.code !== "success"
   ) {
-    console.error("[AdminBiometric] Signature operation unsuccessful:", {
+    console.error(`${logPrefix} SIGNATURE VALIDATION FAILED`, {
+      resultExists: Boolean(result),
       code: result?.code,
       error: result?.error,
+      signaturePresent: Boolean(result?.signature),
+      signatureLength: result?.signature?.length ?? 0,
+      durationMs: Date.now() - startedAt,
+    });
+
+    const errorText = String(result?.error || "");
+
+    console.error(`${logPrefix} RESULT ERROR CLASSIFICATION`, {
+      keyUserNotAuthenticated: errorText.includes("KEY_USER_NOT_AUTHENTICATED"),
+      keystoreErrorMinus26: errorText.includes("-26"),
+      keyInvalidated:
+        errorText.includes("KEY_INVALIDATED") ||
+        errorText.includes("Key permanently invalidated"),
+      errorCode: result?.code,
+      rawError: errorText,
     });
 
     throw new Error(getBiometricErrorMessage(result?.code, result?.error));
   }
+
+  console.log(`${logPrefix} SUCCESS`, {
+    signaturePresent: true,
+    signatureLength: result.signature.length,
+    durationMs: Date.now() - startedAt,
+    timestamp: new Date().toISOString(),
+  });
 
   return result.signature;
 }
