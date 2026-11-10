@@ -20,8 +20,13 @@ exports.getProfile = async (req, res) => {
   const userId = req.user.userId;
   try {
     const userRes = await db.query(
-      `SELECT name, email, occupation, security_level AS "securityLevel", notifications_enabled AS "notifyPush", 
-       email_alerts AS "notifyEmail", expiry_alerts AS "notifyExpiry", two_factor AS "twoFactor" 
+      `SELECT name, email, occupation, security_level AS "securityLevel", notifications_enabled AS "notifyPush",
+       email_alerts AS "notifyEmail", expiry_alerts AS "notifyExpiry", two_factor AS "twoFactor",
+       two_factor_secret AS "twoFactorSecret",
+       two_factor_enabled_at AS "twoFactorEnabledAt",
+       two_factor_setup_started_at AS "twoFactorSetupStartedAt",
+       verification_token AS "verificationToken",
+       verification_expires_at AS "verificationExpiresAt"
        FROM users WHERE id = $1`,
       [userId],
     );
