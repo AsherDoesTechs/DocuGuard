@@ -28,7 +28,7 @@ const COLORS = {
 };
 
 type Props = {
-  onComplete: () => void;
+  onComplete: () => void | Promise<void>;
 };
 
 export default function PrivacyConsentScreen({ onComplete }: Props) {
@@ -47,19 +47,23 @@ export default function PrivacyConsentScreen({ onComplete }: Props) {
     setError("");
 
     try {
-      await AsyncStorage.setItem(
-        PRIVACY_CONSENT_STORAGE_KEY,
-        JSON.stringify({
-          noticeVersion: PRIVACY_NOTICE_VERSION,
-          noticeAcknowledged: true,
-          processingAgreed: true,
-          acceptedAt: new Date().toISOString(),
-        }),
-      );
+      const consentRecord = JSON.stringify({
+        noticeVersion: PRIVACY_NOTICE_VERSION,
+        noticeAcknowledged: true,
+        processingAgreed: true,
+        acceptedAt: new Date().toISOString(),
+      });
 
-      onComplete();
-    } catch (error) {
-      console.error("Failed to save privacy acknowledgment:", error);
+      await AsyncStorage.setItem(PRIVACY_CONSENT_STORAGE_KEY, consentRecord);
+
+      const saved = await AsyncStorage.getItem(PRIVACY_CONSENT_STORAGE_KEY);
+      if (saved !== consentRecord) {
+        throw new Error("Privacy consent could not be verified after saving.");
+      }
+
+      await onComplete();
+    } catch (saveError) {
+      console.error("Failed to save privacy acknowledgment:", saveError);
       setError("We couldn't save your privacy decision. Please try again.");
     } finally {
       setIsSaving(false);

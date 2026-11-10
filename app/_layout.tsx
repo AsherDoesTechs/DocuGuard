@@ -53,27 +53,32 @@ export default function RootLayout() {
   useEffect(() => {
     let cancelled = false;
 
+    const isPrivacyConsentAccepted = (storedPrivacy: string | null): boolean => {
+      if (!storedPrivacy) {
+        return false;
+      }
+
+      try {
+        const record = JSON.parse(storedPrivacy);
+        return (
+          record?.noticeVersion === PRIVACY_NOTICE_VERSION &&
+          record?.noticeAcknowledged === true &&
+          record?.processingAgreed === true &&
+          typeof record?.acceptedAt === "string" &&
+          !Number.isNaN(Date.parse(record.acceptedAt))
+        );
+      } catch {
+        return false;
+      }
+    };
+
     const checkStartupSequence = async () => {
       try {
         // --- Step 1: Check Privacy Consent ---
         const storedPrivacy = await AsyncStorage.getItem(
           PRIVACY_CONSENT_STORAGE_KEY,
         );
-        let privacyAccepted = false;
-
-        if (storedPrivacy) {
-          try {
-            const record = JSON.parse(storedPrivacy);
-            privacyAccepted =
-              record?.noticeVersion === PRIVACY_NOTICE_VERSION &&
-              record?.noticeAcknowledged === true &&
-              record?.processingAgreed === true &&
-              typeof record?.acceptedAt === "string" &&
-              !Number.isNaN(Date.parse(record.acceptedAt));
-          } catch {
-            privacyAccepted = false;
-          }
-        }
+        const privacyAccepted = isPrivacyConsentAccepted(storedPrivacy);
 
         if (!privacyAccepted) {
           if (!cancelled) setStartupStep("privacy");
@@ -222,18 +227,21 @@ export default function RootLayout() {
     !databaseReady ||
     (startupStep === "ready" && (!sessionCheckComplete || !authChecked));
 
-  const handlePrivacyComplete = useCallback(() => {
+  const handlePrivacyComplete = useCallback(async () => {
     setAuthChecked(false);
     setShowSplash(true);
 
-    // Verify if Onboarding is required immediately after Privacy Consent
-    AsyncStorage.getItem(ONBOARDING_STORAGE_KEY).then((completed) => {
-      if (ENABLE_ONBOARDING && completed !== "true") {
-        setStartupStep("onboarding");
-      } else {
-        setStartupStep("ready");
+    try {
+      if (ENABLE_ONBOARDING) {
+        const completed = await AsyncStorage.getItem(ONBOARDING_STORAGE_KEY);
+        setStartupStep(completed === "true" ? "ready" : "onboarding");
+        return;
       }
-    });
+    } catch (error) {
+      console.warn("Failed to check onboarding status after privacy consent:", error);
+    }
+
+    setStartupStep("ready");
   }, []);
 
   const handleOnboardingComplete = useCallback(() => {
