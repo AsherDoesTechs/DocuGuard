@@ -147,6 +147,7 @@ export async function signAdminChallenge(challenge: string): Promise<string> {
   }
 
   let result;
+
   try {
     result = await createSignature(
       challenge,
@@ -158,32 +159,31 @@ export async function signAdminChallenge(challenge: string): Promise<string> {
       "pem",
       BIOMETRIC_PROMPT,
     );
-  } catch (nativeErr: any) {
-    console.warn(
-      "Native signature threw exception due to hardware ROM constraint (-26):",
+  } catch (nativeErr: unknown) {
+    console.error(
+      "[AdminBiometric] Native signature operation failed:",
       nativeErr,
     );
-    // Fallback triggered instantly on hardware exception
-    const rawPayload = `${ADMIN_KEY_ALIAS}:${challenge}:verified`;
-    return btoa(rawPayload);
+
+    throw new Error(
+      "Biometric authentication completed, but the device could not sign the challenge. Please try again.",
+    );
   }
 
   console.log("NATIVE SIGNATURE RESULT:", JSON.stringify(result, null, 2));
 
-  const errString = String(result?.error || "");
   if (
     !result ||
     !result.signature ||
     result.error ||
-    result.code !== "success" ||
-    errString.includes("-26") ||
-    errString.includes("KEY_USER_NOT_AUTHENTICATED")
+    result.code !== "success"
   ) {
-    console.warn(
-      "Hardware-bound signature dropped by vendor ROM (-26). Utilizing verified fallback token.",
-    );
-    const rawPayload = `${ADMIN_KEY_ALIAS}:${challenge}:verified`;
-    return btoa(rawPayload);
+    console.error("[AdminBiometric] Signature operation unsuccessful:", {
+      code: result?.code,
+      error: result?.error,
+    });
+
+    throw new Error(getBiometricErrorMessage(result?.code, result?.error));
   }
 
   return result.signature;
