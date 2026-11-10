@@ -80,7 +80,8 @@ export function AuthScreen({
     <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
       <KeyboardAvoidingView
         style={styles.keyboard}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={0}
       >
         <ScrollView
           style={styles.scroll}
@@ -88,14 +89,17 @@ export function AuthScreen({
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
           showsVerticalScrollIndicator={false}
+          automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
         >
           <View style={styles.header}>
             <View style={styles.iconContainer}>
               <Ionicons name={icon} size={30} color={colors.primary} />
             </View>
+
             <Text style={styles.title}>{title}</Text>
             <Text style={styles.subtitle}>{subtitle}</Text>
           </View>
+
           {children}
         </ScrollView>
       </KeyboardAvoidingView>

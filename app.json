@@ -19,7 +19,9 @@
       }
     },
     "android": {
+      "ndkVersion": "27.1.12297006",
       "predictiveBackGestureEnabled": false,
+      "softwareKeyboardLayoutMode": "resize",
       "package": "com.anonymous.DocuGuard",
       "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
