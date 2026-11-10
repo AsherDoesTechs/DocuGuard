@@ -75,7 +75,8 @@ export async function checkAdminBiometrics(): Promise<BiometricAvailability> {
 
 /**
  * Retrieves or creates the device's ECDSA signing key.
- * Compatible with Android KeyStore and iOS Secure Enclave constraints.
+ * The key requires biometric user authentication for each signature so the
+ * Android Keystore can authorize signing after BiometricPrompt success.
  */
 export async function prepareAdminSigningKey(): Promise<AdminBiometricKey> {
   await checkAdminBiometrics();
@@ -101,13 +102,12 @@ export async function prepareAdminSigningKey(): Promise<AdminBiometricKey> {
     return { publicKeyPem: existing.publicKey };
   }
 
-  // Relaxed options for robust Android Keystore compatibility
   const result = await createKeys(
     ADMIN_KEY_ALIAS,
     {
       signatureType: "ecdsa",
-      enforceBiometric: false,
-      setInvalidatedByBiometricEnrollment: false,
+      enforceBiometric: true,
+      setInvalidatedByBiometricEnrollment: true,
       useDeviceCredentials: false,
       failIfExists: false,
     },
@@ -213,7 +213,7 @@ export async function signAdminChallenge(challenge: string): Promise<string> {
     console.log(`${logPrefix} SIGNATURE OPERATION START`, {
       timestamp: new Date().toISOString(),
       keyAlias: ADMIN_KEY_ALIAS,
-      allowDeviceCredentials: true,
+      allowDeviceCredentials: false,
       outputFormat: "base64",
       keyFormat: "pem",
     });
@@ -222,7 +222,7 @@ export async function signAdminChallenge(challenge: string): Promise<string> {
       challenge,
       ADMIN_KEY_ALIAS,
       {
-        allowDeviceCredentials: true,
+        allowDeviceCredentials: false,
       },
       "base64",
       "pem",
@@ -255,6 +255,25 @@ export async function signAdminChallenge(challenge: string): Promise<string> {
       userCanceled: errorText.toLowerCase().includes("cancel"),
       rawError: errorText,
     });
+
+    if (
+      errorText.includes("KEY_USER_NOT_AUTHENTICATED") ||
+      errorText.includes("-26") ||
+      errorText.toLowerCase().includes("user not authenticated")
+    ) {
+      throw new Error(
+        "Biometric authentication was not accepted by the device signing key. Re-enroll this device with a new enrollment token, then sign in again.",
+      );
+    }
+
+    if (
+      errorText.includes("KEY_INVALIDATED") ||
+      errorText.includes("Key permanently invalidated")
+    ) {
+      throw new Error(
+        "The administrator signing key is no longer valid. Re-enroll this device with a new enrollment token.",
+      );
+    }
 
     throw new Error(
       "Biometric authentication completed, but the device could not sign the challenge. Check Android logs for the exact native error.",
@@ -297,6 +316,25 @@ export async function signAdminChallenge(challenge: string): Promise<string> {
       errorCode: result?.code,
       rawError: errorText,
     });
+
+    if (
+      errorText.includes("KEY_USER_NOT_AUTHENTICATED") ||
+      errorText.includes("-26") ||
+      errorText.toLowerCase().includes("user not authenticated")
+    ) {
+      throw new Error(
+        "Biometric authentication was not accepted by the device signing key. Re-enroll this device with a new enrollment token, then sign in again.",
+      );
+    }
+
+    if (
+      errorText.includes("KEY_INVALIDATED") ||
+      errorText.includes("Key permanently invalidated")
+    ) {
+      throw new Error(
+        "The administrator signing key is no longer valid. Re-enroll this device with a new enrollment token.",
+      );
+    }
 
     throw new Error(getBiometricErrorMessage(result?.code, result?.error));
   }

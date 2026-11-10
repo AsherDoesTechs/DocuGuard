@@ -176,7 +176,7 @@ export default function AdminLoginScreen() {
       if (existingDeviceId) {
         Alert.alert(
           "Device already enrolled",
-          "This app already has a saved administrator device ID. Do not enroll it again unless you are following an approved recovery procedure.",
+          "This app already has a saved administrator device ID. Clear the app's secure storage or reinstall it only as part of an approved recovery, then enroll again with a new one-time token.",
         );
         return;
       }
