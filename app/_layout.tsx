@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { InteractionManager } from "react-native";
 import { Stack, useRouter } from "expo-router";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -142,10 +143,25 @@ export default function RootLayout() {
     };
   }, []);
 
-  // Hide system splash screen once checks settle
+  // Hide system splash after the first post-startup screen has had a chance to paint
   useEffect(() => {
     if (databaseReady && startupStep !== "checking") {
-      SplashScreenModule.hideAsync().catch(() => {});
+      let cancelled = false;
+
+      const hide = () => {
+        if (!cancelled) {
+          SplashScreenModule.hideAsync().catch(() => {});
+        }
+      };
+
+      const task = InteractionManager.runAfterInteractions(() => {
+        requestAnimationFrame(hide);
+      });
+
+      return () => {
+        cancelled = true;
+        task.cancel();
+      };
     }
   }, [databaseReady, startupStep]);
 
