@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo, useEffect } from "react";
+﻿import React, { useState, useCallback, useMemo, useEffect } from "react";
 import {
   View,
   Text,
@@ -22,8 +22,10 @@ import {
   getUserProfile,
   getExpiringDocuments,
   getExpiredDocuments,
+  saveUserProfile,
   LocalDocument,
 } from "../../services/localDatabase";
+import { syncDocumentRemindersToDb } from "../../services/notificationScheduler";
 import {
   feedbackService,
   useFeedbackService,
@@ -40,6 +42,7 @@ interface DashboardSummary {
 
 interface Reminder {
   id: number;
+  documentId?: number | string;
   title: string;
   description: string;
   dueDate: string;
@@ -162,14 +165,16 @@ export default function HomeScreen() {
 
   const fetchDashboardData = useCallback(async () => {
     try {
+      await syncDocumentRemindersToDb();
+
       const [localProfile, localDocs, localReminders] = await Promise.all([
         getUserProfile(),
         getAllDocuments(),
         getAllReminders(),
       ]);
 
-      if (localProfile) {
-        setUserName(localProfile.name);
+      if (localProfile?.name?.trim()) {
+        setUserName(localProfile.name.trim());
       }
 
       // 1. Exclude deleted/draft documents
@@ -220,14 +225,74 @@ export default function HomeScreen() {
           ? 100
           : Math.round((validCount / totalActiveDocs) * 100);
 
+      const reminderDocumentIds = new Set<string>();
+      const dynamicReminderCount = activeDocs.reduce(
+        (count: number, doc: any) => {
+          if (!doc.expiryDate) return count;
+          const expDate = new Date(doc.expiryDate);
+          if (isNaN(expDate.getTime())) return count;
+          expDate.setHours(0, 0, 0, 0);
+          const daysUntil = Math.round(
+            (expDate.getTime() - today.getTime()) / 86400000,
+          );
+          if (daysUntil < 0 || daysUntil <= 30) {
+            if (doc.id != null) reminderDocumentIds.add(String(doc.id));
+            return count + 1;
+          }
+          return count;
+        },
+        0,
+      );
+
+      const customReminderCount = localReminders.reduce(
+        (count: number, r: any) => {
+          const docId = r.documentId ?? r.document_id;
+          if (!docId && r.id != null && r.dueDate) {
+            return count + 1;
+          }
+          return count;
+        },
+        0,
+      );
+
       // 3. Update summary state
       setSummary({
         safetyScore: score,
         validDocuments: validCount,
         expiringDocuments: expiringCount,
         expiredDocuments: expiredCount,
-        totalReminders: localReminders.length,
+        totalReminders: dynamicReminderCount + customReminderCount,
       });
+
+      if (!localProfile?.name?.trim()) {
+        try {
+          const res = await api.profile.getProfile();
+          const remoteName =
+            typeof res?.name === "string" ? res.name.trim() : "";
+          const remoteEmail =
+            typeof res?.email === "string"
+              ? res.email
+              : localProfile?.email || "";
+          if (remoteName) {
+            setUserName(remoteName);
+            await saveUserProfile({
+              ...(localProfile || {}),
+              name: remoteName,
+              email: remoteEmail,
+              documentCount: totalActiveDocs,
+              expiringCount,
+              expiredCount,
+              notificationsEnabled: localProfile?.notificationsEnabled ?? true,
+              notifyEmail: localProfile?.notifyEmail ?? true,
+              notifyExpiry: localProfile?.notifyExpiry ?? true,
+              twoFactor: localProfile?.twoFactor ?? false,
+              preferencesDirty: localProfile?.preferencesDirty,
+            } as any);
+          }
+        } catch {
+          // keep fallback when offline or profile unavailable
+        }
+      }
 
       // 4. Update Recent Docs list
       const sortedRecent = [...activeDocs]
@@ -240,20 +305,62 @@ export default function HomeScreen() {
 
       setRecentDocs(sortedRecent);
 
-      const urgent = localReminders
-        .filter((r: any) => r.severity === "urgent" && r.id != null)
-        .slice(0, 2);
+      // ðŸ”” Directly evaluate active documents to guarantee action items appear for expired or expiring docs
+      const dynamicUrgentReminders: Reminder[] = [];
 
-      setUrgentReminders(
-        urgent.map((r: any) => ({
-          id: r.id || 0,
-          title: r.title,
-          description: r.description || "",
-          dueDate: r.dueDate,
-          severity: (r.severity || "info") as "info" | "warning" | "urgent",
-          read: r.read,
-        })),
-      );
+      activeDocs.forEach((doc: any) => {
+        if (!doc.expiryDate) return;
+        const expDate = new Date(doc.expiryDate);
+        if (isNaN(expDate.getTime())) return;
+        expDate.setHours(0, 0, 0, 0);
+
+        const daysUntil = Math.round(
+          (expDate.getTime() - today.getTime()) / 86400000,
+        );
+
+        if (daysUntil < 0) {
+          dynamicUrgentReminders.push({
+            id: Number(doc.id) || Math.random(),
+            documentId: doc.id,
+            title: `Expired: ${doc.title || "Document"}`,
+            description: `Issued by ${doc.issuer || "Unknown"}. Expired ${Math.abs(daysUntil)} days ago.`,
+            dueDate: doc.expiryDate,
+            severity: "urgent",
+            read: false,
+          });
+        } else if (daysUntil <= 30) {
+          dynamicUrgentReminders.push({
+            id: Number(doc.id) || Math.random(),
+            documentId: doc.id,
+            title: `Expiring Soon: ${doc.title || "Document"}`,
+            description: `Issued by ${doc.issuer || "Unknown"}. Due in ${daysUntil} day${daysUntil === 1 ? "" : "s"}.`,
+            dueDate: doc.expiryDate,
+            severity: "warning",
+            read: false,
+          });
+        }
+      });
+
+      // Also merge any custom text reminders from the database if they are unread/urgent
+      localReminders.forEach((r: any) => {
+        const severity = String(r.severity || "").toLowerCase();
+        if (severity === "urgent" || severity === "expired" || !r.read) {
+          dynamicUrgentReminders.push({
+            id: r.id || Math.random(),
+            documentId: r.documentId || r.document_id,
+            title: r.title,
+            description: r.description || "",
+            dueDate: r.dueDate,
+            severity:
+              severity === "urgent" || severity === "expired"
+                ? "urgent"
+                : "warning",
+            read: !!r.read,
+          });
+        }
+      });
+
+      setUrgentReminders(dynamicUrgentReminders.slice(0, 3));
     } catch (err: any) {
       console.error("Failed to load dashboard data:", err);
     } finally {
@@ -465,114 +572,58 @@ export default function HomeScreen() {
                     </Text>
                   </Card>
                 ) : (
-                  urgentReminders.map((reminder) => (
-                    <Card key={reminder.id} style={styles.reminderItem}>
-                      <View style={styles.reminderContent}>
-                        <View style={styles.reminderIcon}>
-                          <Ionicons
-                            name="alert-circle"
-                            size={24}
-                            color={
-                              reminder.severity === "urgent"
-                                ? COLORS.danger
-                                : COLORS.warning
-                            }
-                          />
-                        </View>
-
-                        <View style={styles.reminderInfo}>
-                          <Text style={styles.reminderTitle}>
-                            {reminder.title}
-                          </Text>
-                          <Text style={styles.reminderDesc}>
-                            {reminder.description}
-                          </Text>
-                          <Text style={styles.reminderDate}>
-                            Due: {formatShortDate(reminder.dueDate)}
-                          </Text>
-                        </View>
-                      </View>
-                    </Card>
-                  ))
-                )}
-              </View>
-
-              {/* Expiring Soon */}
-              {expiringDocs.length > 0 && (
-                <View style={styles.section}>
-                  <View style={styles.sectionHeaderRow}>
-                    <View>
-                      <Text style={styles.sectionTitle}>Expiring Soon</Text>
-                      <Text style={styles.sectionSubtitle}>
-                        Requires upcoming renewal
-                      </Text>
-                    </View>
-
+                  urgentReminders.map((reminder: any) => (
                     <TouchableOpacity
+                      key={reminder.id}
                       accessibilityRole="button"
-                      onPress={() => router.push("/(tabs)/documents" as any)}
+                      onPress={() => {
+                        if (reminder.documentId) {
+                          router.push(
+                            `/document-details/${reminder.documentId}` as any,
+                          );
+                        } else {
+                          router.push("/(tabs)/reminders" as any);
+                        }
+                      }}
+                      activeOpacity={0.8}
                     >
-                      <Text style={styles.seeAllText}>View All</Text>
-                    </TouchableOpacity>
-                  </View>
-
-                  {expiringDocs.map((doc) => (
-                    <TouchableOpacity
-                      key={doc.id || doc.documentNumber}
-                      accessibilityRole="button"
-                      onPress={() =>
-                        router.push(`/document-details/${doc.id}` as any)
-                      }
-                    >
-                      <Card style={styles.docCard}>
-                        <View style={styles.docRow}>
-                          <View
-                            style={[
-                              styles.docImage,
-                              styles.docImagePlaceholder,
-                              { backgroundColor: COLORS.warningLight },
-                            ]}
-                          >
+                      <Card style={styles.reminderItem}>
+                        <View style={styles.reminderContent}>
+                          <View style={styles.reminderIcon}>
                             <Ionicons
-                              name="time-outline"
+                              name="alert-circle"
                               size={24}
-                              color={COLORS.warning}
+                              color={
+                                reminder.severity === "urgent"
+                                  ? COLORS.danger
+                                  : COLORS.warning
+                              }
                             />
                           </View>
 
-                          <View style={styles.docInfo}>
-                            <Text style={styles.docTitle} numberOfLines={1}>
-                              {doc.title || "Untitled Document"}
+                          <View style={styles.reminderInfo}>
+                            <Text style={styles.reminderTitle}>
+                              {reminder.title}
                             </Text>
-
-                            <Text style={styles.docSubtitle} numberOfLines={1}>
-                              Issuer: {doc.issuer || "Unknown"}
+                            <Text style={styles.reminderDesc}>
+                              {reminder.description}
                             </Text>
-
-                            <Text
-                              style={[
-                                styles.docDate,
-                                { color: COLORS.warning },
-                              ]}
-                            >
-                              Expires:{" "}
-                              {doc.expiryDate
-                                ? formatShortDate(doc.expiryDate)
-                                : "N/A"}
+                            <Text style={styles.reminderDate}>
+                              Due: {formatShortDate(reminder.dueDate)}
                             </Text>
                           </View>
 
                           <Ionicons
                             name="chevron-forward"
-                            size={20}
+                            size={18}
                             color={COLORS.textSecondary}
                           />
                         </View>
                       </Card>
                     </TouchableOpacity>
-                  ))}
-                </View>
-              )}
+                  ))
+                )}
+              </View>
 
               {/* Recent Documents */}
               <View style={styles.section}>
