@@ -1,8 +1,6 @@
 import * as Notifications from "expo-notifications";
 import { SchedulableTriggerInputTypes } from "expo-notifications";
 import {
-  getDocumentsEligibleForAlerts,
-  getExpiredDocuments,
   getAllReminders,
   getAllDocuments,
   upsertExpiredDocumentReminder,
@@ -19,20 +17,42 @@ import {
   resolveDocumentAlertAction,
 } from "@/shared/dates/localDate";
 
+/**
+ * Ensures document-derived reminder rows exist in the local database so the
+ * Reminders screen can display expired/expiring information even when OS
+ * notification scheduling is unavailable or disabled.
+ */
+export async function syncDocumentRemindersToDb() {
+  const allDocs = await getAllDocuments();
+
+  for (const doc of allDocs) {
+    if (doc.id == null) {
+      continue;
+    }
+
+    const daysUntil = getDaysUntilExpiry(doc.expiryDate || "");
+    const action = resolveDocumentAlertAction(doc, daysUntil);
+
+    if (action === ALERT_ACTION.WITHDRAW) {
+      continue;
+    }
+
+    if (daysUntil < 0) {
+      await upsertExpiredDocumentReminder(doc.title, doc.expiryDate || "");
+    }
+  }
+}
+
 export async function checkAndScheduleAlerts() {
+  await syncDocumentRemindersToDb();
+
   if (!(await isNotificationsEnabled())) {
     // Alerts are off, so anything already scheduled must be withdrawn too.
     await cancelAllNotifications();
     return;
   }
 
-  /*
-   * Pull all documents so that active/valid documents and reminders
-   * are always actively tracked and fetched, not just expiring ones.
-   */
   const allDocs = await getAllDocuments();
-  const eligibleDocs = await getDocumentsEligibleForAlerts();
-  const expiredDocs = await getExpiredDocuments();
 
   for (const doc of allDocs) {
     if (doc.id == null) {
@@ -49,11 +69,6 @@ export async function checkAndScheduleAlerts() {
 
     if (daysUntil < 0) {
       await cancelExpiringSoonNotifications(doc.id);
-
-      // Create/update the SQLite reminder so it appears
-      // in reminders.tsx as well as the OS notification.
-      await upsertExpiredDocumentReminder(doc.title, doc.expiryDate || "");
-
       await scheduleExpirationNotification(doc);
     } else {
       await scheduleExpiringSoonNotification(doc);
