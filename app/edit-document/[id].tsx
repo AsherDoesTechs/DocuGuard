@@ -1159,6 +1159,7 @@ export default function EditDocumentScreen() {
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.content}
         >
+          {/* LOCKED DOCUMENT TYPE SECTION (VIEW ONLY) */}
           <Card>
             <View style={styles.sectionHeader}>
               <View style={styles.sectionIcon}>
@@ -1172,200 +1173,12 @@ export default function EditDocumentScreen() {
               <View style={styles.sectionHeaderText}>
                 <Text style={styles.sectionTitle}>Document Type</Text>
                 <Text style={styles.sectionSubtitle}>
-                  Select the type that best matches this document.
+                  Document category and type cannot be changed.
                 </Text>
               </View>
             </View>
 
-            <Text style={styles.fieldLabel}>
-              Document Group
-              <Text style={styles.required}> *</Text>
-            </Text>
-
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.groupList}
-            >
-              {groups.map((group) => {
-                const active = selectedGroup === group;
-
-                return (
-                  <TouchableOpacity
-                    key={group}
-                    onPress={() => {
-                      setSelectedGroup(group);
-                      setTypeSearch("");
-                      setShowAllTypes(false);
-                    }}
-                    style={[styles.groupChip, active && styles.groupChipActive]}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected: active }}
-                  >
-                    <Ionicons
-                      name={GROUP_ICONS[group]}
-                      size={17}
-                      color={active ? "#FFFFFF" : COLORS.textSecondary}
-                    />
-
-                    <Text
-                      style={[
-                        styles.groupChipText,
-                        active && styles.groupChipTextActive,
-                      ]}
-                    >
-                      {GROUP_LABELS[group]}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-
-            <View style={styles.searchContainer}>
-              <Ionicons
-                name="search-outline"
-                size={19}
-                color={COLORS.textSecondary}
-              />
-
-              <TextInput
-                value={typeSearch}
-                onChangeText={setTypeSearch}
-                placeholder="Search document types..."
-                placeholderTextColor={COLORS.textSecondary}
-                style={styles.searchInput}
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
-
-              {typeSearch.length > 0 && (
-                <TouchableOpacity
-                  onPress={() => setTypeSearch("")}
-                  accessibilityRole="button"
-                  accessibilityLabel="Clear search"
-                >
-                  <Ionicons
-                    name="close-circle"
-                    size={19}
-                    color={COLORS.textSecondary}
-                  />
-                </TouchableOpacity>
-              )}
-            </View>
-
-            <Text style={styles.fieldLabel}>
-              Specific Document Type
-              <Text style={styles.required}> *</Text>
-            </Text>
-
-            <View style={styles.documentTypeList}>
-              {availableTypes.length === 0 ? (
-                <View style={styles.emptyTypes}>
-                  <Ionicons
-                    name="search-outline"
-                    size={28}
-                    color={COLORS.textSecondary}
-                  />
-                  <Text style={styles.emptyTypesText}>
-                    No document types found.
-                  </Text>
-                </View>
-              ) : (
-                availableTypes.map((item: SpecificDocumentItem) => {
-                  const active = values.documentTypeId === item.id;
-
-                  return (
-                    <TouchableOpacity
-                      key={item.id}
-                      onPress={() =>
-                        handleSelectDocumentType(selectedGroup, item)
-                      }
-                      style={[
-                        styles.documentTypeCard,
-                        active && styles.documentTypeCardActive,
-                      ]}
-                      accessibilityRole="button"
-                      accessibilityState={{ selected: active }}
-                    >
-                      <View
-                        style={[
-                          styles.documentTypeIcon,
-                          active && styles.documentTypeIconActive,
-                        ]}
-                      >
-                        <Ionicons
-                          name={item.icon}
-                          size={22}
-                          color={active ? "#FFFFFF" : COLORS.primary}
-                        />
-                      </View>
-
-                      <View style={styles.documentTypeContent}>
-                        <Text
-                          style={[
-                            styles.documentTypeTitle,
-                            active && styles.documentTypeTitleActive,
-                          ]}
-                        >
-                          {item.title}
-                        </Text>
-
-                        <Text
-                          style={styles.documentTypeDescription}
-                          numberOfLines={2}
-                        >
-                          {item.description}
-                        </Text>
-                      </View>
-
-                      <Ionicons
-                        name={active ? "checkmark-circle" : "chevron-forward"}
-                        size={active ? 23 : 20}
-                        color={active ? COLORS.primary : COLORS.textSecondary}
-                      />
-                    </TouchableOpacity>
-                  );
-                })
-              )}
-            </View>
-
-            {!typeSearch &&
-              (
-                (DOCUMENTS_BY_CATEGORY[
-                  selectedGroup
-                ] as SpecificDocumentItem[]) || []
-              ).length > 8 && (
-                <TouchableOpacity
-                  onPress={() => setShowAllTypes((current) => !current)}
-                  style={styles.showMoreButton}
-                >
-                  <Text style={styles.showMoreText}>
-                    {showAllTypes
-                      ? "Show Less"
-                      : `Show All ${
-                          (
-                            (DOCUMENTS_BY_CATEGORY[
-                              selectedGroup
-                            ] as SpecificDocumentItem[]) || []
-                          ).length
-                        } Types`}
-                  </Text>
-
-                  <Ionicons
-                    name={showAllTypes ? "chevron-up" : "chevron-down"}
-                    size={17}
-                    color={COLORS.primary}
-                  />
-                </TouchableOpacity>
-              )}
-
-            {touched.category && errors.category && (
-              <Text style={styles.errorText}>{errors.category}</Text>
-            )}
-          </Card>
-
-          {selectedDocumentType && (
-            <Card>
+            {selectedDocumentType ? (
               <View style={styles.selectedSummary}>
                 <View style={styles.selectedSummaryIcon}>
                   <Ionicons
@@ -1377,7 +1190,7 @@ export default function EditDocumentScreen() {
 
                 <View style={styles.selectedSummaryContent}>
                   <Text style={styles.selectedSummaryLabel}>
-                    SELECTED DOCUMENT TYPE
+                    ASSIGNED DOCUMENT TYPE
                   </Text>
                   <Text style={styles.selectedSummaryTitle}>
                     {selectedDocumentType.item.title}
@@ -1387,22 +1200,28 @@ export default function EditDocumentScreen() {
                   </Text>
                 </View>
               </View>
-
-              <View style={styles.metadataRow}>
-                <View style={styles.metadataItem}>
-                  <Text style={styles.metadataLabel}>GROUP</Text>
-                  <Text style={styles.metadataValue}>
-                    {GROUP_LABELS[selectedDocumentType.group]}
-                  </Text>
-                </View>
-
-                <View style={styles.metadataItem}>
-                  <Text style={styles.metadataLabel}>CATEGORY</Text>
-                  <Text style={styles.metadataValue}>{values.category}</Text>
-                </View>
+            ) : (
+              <View style={styles.emptyTypes}>
+                <Text style={styles.emptyTypesText}>
+                  {GROUP_LABELS[selectedGroup] || selectedGroup}
+                </Text>
               </View>
-            </Card>
-          )}
+            )}
+
+            <View style={styles.metadataRow}>
+              <View style={styles.metadataItem}>
+                <Text style={styles.metadataLabel}>GROUP</Text>
+                <Text style={styles.metadataValue}>
+                  {GROUP_LABELS[selectedGroup] || selectedGroup}
+                </Text>
+              </View>
+
+              <View style={styles.metadataItem}>
+                <Text style={styles.metadataLabel}>CATEGORY</Text>
+                <Text style={styles.metadataValue}>{values.category}</Text>
+              </View>
+            </View>
+          </Card>
 
           <Card>
             <View style={styles.sectionHeader}>
