@@ -7,6 +7,7 @@ import React, {
 } from "react";
 import {
   ActivityIndicator,
+  DeviceEventEmitter,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -949,6 +950,9 @@ export default function EditDocumentScreen() {
       setNoExpirationDate(!savedValues.expiryDate);
       setErrors({});
       setTouched({});
+
+      // 🔔 EMIT THE EVENT HERE SO HOMESCREEN REFRESHES STATS IN REAL TIME
+      DeviceEventEmitter.emit("documentVaultChanged");
 
       console.log("=== [EditDocument: SAVE SUCCESSFUL] ===");
 

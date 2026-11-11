@@ -5,6 +5,7 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
+  DeviceEventEmitter,
   ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -127,6 +128,9 @@ export default function DocumentDetailsScreen() {
             }
           }
 
+          // 🔔 Emit event to update dashboard & lists in real time
+          DeviceEventEmitter.emit("documentVaultChanged");
+
           feedbackService.success("Document permanently deleted.");
           router.back();
         } catch (err: any) {
@@ -236,6 +240,10 @@ export default function DocumentDetailsScreen() {
           console.warn("Could not sync verification:", syncErr);
         }
       }
+
+      // 🔔 Emit event to update dashboard stats/counters in real time
+      DeviceEventEmitter.emit("documentVaultChanged");
+
       feedbackService.success("Document has been marked as verified.");
     } catch (err: any) {
       feedbackService.error("Could not verify document locally.");

@@ -103,14 +103,19 @@ export default function HomeScreen() {
     [],
   );
 
-  const isImageDocument = useCallback((doc: LocalDocument, uri?: string | null) => {
-    const fileType = String(
-      (doc as any).fileType || (doc as any).file_type || "",
-    ).toLowerCase();
-    if (fileType.includes("image")) return true;
-    const candidate = String(uri || (doc as any).fileUrl || (doc as any).file_url || "");
-    return /\.(jpg|jpeg|png|webp|heic|heif)(\?|$)/i.test(candidate);
-  }, []);
+  const isImageDocument = useCallback(
+    (doc: LocalDocument, uri?: string | null) => {
+      const fileType = String(
+        (doc as any).fileType || (doc as any).file_type || "",
+      ).toLowerCase();
+      if (fileType.includes("image")) return true;
+      const candidate = String(
+        uri || (doc as any).fileUrl || (doc as any).file_url || "",
+      );
+      return /\.(jpg|jpeg|png|webp|heic|heif)(\?|$)/i.test(candidate);
+    },
+    [],
+  );
 
   const resolveRecentPreviewUri = useCallback(
     async (doc: LocalDocument): Promise<string | null> => {
@@ -157,17 +162,9 @@ export default function HomeScreen() {
 
   const fetchDashboardData = useCallback(async () => {
     try {
-      const [
-        localProfile,
-        localDocs,
-        expiringList,
-        expiredDocsList,
-        localReminders,
-      ] = await Promise.all([
+      const [localProfile, localDocs, localReminders] = await Promise.all([
         getUserProfile(),
         getAllDocuments(),
-        getExpiringDocuments(30),
-        getExpiredDocuments(),
         getAllReminders(),
       ]);
 
@@ -175,41 +172,55 @@ export default function HomeScreen() {
         setUserName(localProfile.name);
       }
 
-      // Sort newest documents first.
-      const sortedRecent = [...localDocs]
-        .sort((a, b) => {
-          const aTime = new Date((a as any).createdAt || 0).getTime();
-          const bTime = new Date((b as any).createdAt || 0).getTime();
-
-          if (aTime !== bTime) {
-            return bTime - aTime;
-          }
-
-          return (b.id || 0) - (a.id || 0);
-        })
-        .slice(0, 3);
-
-      setRecentDocs(sortedRecent);
-      setExpiringDocs(expiringList.slice(0, 3));
-
-      const previewEntries = await Promise.all(
-        sortedRecent.map(async (doc, index) => {
-          const key = getRecentDocKey(doc, index);
-          const uri = await resolveRecentPreviewUri(doc);
-          return [key, uri] as const;
-        }),
+      // 1. Exclude deleted/draft documents
+      const activeDocs = localDocs.filter(
+        (doc: any) =>
+          doc.status !== "deleted" && doc.processingStatus !== "failed",
       );
-      setRecentPreviewUris(Object.fromEntries(previewEntries));
 
-      const docCount = localDocs.length;
-      const expiringCount = expiringList.length;
-      const expiredCount = expiredDocsList.length;
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
 
-      const validCount = Math.max(0, docCount - expiringCount - expiredCount);
+      const thirtyDaysFromNow = new Date();
+      thirtyDaysFromNow.setDate(today.getDate() + 30);
+      thirtyDaysFromNow.setHours(23, 59, 59, 999);
 
+      let expiredCount = 0;
+      let expiringCount = 0;
+      let validCount = 0;
+
+      // 2. Tally states accurately by checking every active document's expiryDate
+      activeDocs.forEach((doc: any) => {
+        if (!doc.expiryDate) {
+          // Documents without an expiration date are considered Valid
+          validCount++;
+          return;
+        }
+
+        const expDate = new Date(doc.expiryDate);
+        if (isNaN(expDate.getTime())) {
+          validCount++;
+          return;
+        }
+
+        expDate.setHours(0, 0, 0, 0);
+
+        if (expDate < today) {
+          expiredCount++;
+        } else if (expDate >= today && expDate <= thirtyDaysFromNow) {
+          expiringCount++;
+        } else {
+          validCount++;
+        }
+      });
+
+      const totalActiveDocs = activeDocs.length;
       const score =
-        docCount === 0 ? 0 : Math.round((validCount / docCount) * 100);
+        totalActiveDocs === 0
+          ? 100
+          : Math.round((validCount / totalActiveDocs) * 100);
 
+      // 3. Update summary state
       setSummary({
         safetyScore: score,
         validDocuments: validCount,
@@ -218,12 +229,23 @@ export default function HomeScreen() {
         totalReminders: localReminders.length,
       });
 
+      // 4. Update Recent Docs list
+      const sortedRecent = [...activeDocs]
+        .sort(
+          (a: any, b: any) =>
+            new Date(b.createdAt || 0).getTime() -
+            new Date(a.createdAt || 0).getTime(),
+        )
+        .slice(0, 3);
+
+      setRecentDocs(sortedRecent);
+
       const urgent = localReminders
-        .filter((r) => r.severity === "urgent" && r.id != null)
+        .filter((r: any) => r.severity === "urgent" && r.id != null)
         .slice(0, 2);
 
       setUrgentReminders(
-        urgent.map((r) => ({
+        urgent.map((r: any) => ({
           id: r.id || 0,
           title: r.title,
           description: r.description || "",
@@ -234,7 +256,6 @@ export default function HomeScreen() {
       );
     } catch (err: any) {
       console.error("Failed to load dashboard data:", err);
-      throw err;
     } finally {
       setLoading(false);
     }

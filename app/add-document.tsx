@@ -11,6 +11,7 @@ import {
   Image,
   ActivityIndicator,
   Modal,
+  DeviceEventEmitter,
 } from "react-native";
 import DateTimePicker, {
   DateTimePickerEvent,
@@ -1558,6 +1559,10 @@ export default function AddDocumentScreen() {
        * document.
        */
       const result = await saveDocumentToVault(payload);
+
+      // 🔔 EMIT EVENT HERE TO UPDATE DASHBOARD STATS INSTANTLY
+      DeviceEventEmitter.emit("documentVaultChanged");
+
       // Ensure a new key for next save
       generateNewSaveKey();
 
