@@ -35,7 +35,7 @@ import {
   LocalReminder,
 } from "../../services/localDatabase";
 
-import { checkAndScheduleAlerts } from "../../services/notificationScheduler";
+import { checkAndScheduleAlerts, syncDocumentRemindersToDb } from "../../services/notificationScheduler";
 import {
   isNotificationsEnabled,
   setNotificationsEnabled as persistNotificationsEnabled,
@@ -149,6 +149,14 @@ export default function RemindersScreen() {
     try {
       setError(null);
 
+      // Sync document-derived reminders (e.g. expired documents) into the DB so
+      // totals/unread/expired/expiring counts reflect current documents.
+      try {
+        await syncDocumentRemindersToDb();
+      } catch (syncErr) {
+        console.error("Failed to sync document reminders:", syncErr);
+      }
+
       const localReminders: LocalReminder[] = await getAllReminders();
 
       const mappedReminders: Reminder[] = localReminders
@@ -259,11 +267,15 @@ export default function RemindersScreen() {
     }
   }, []);
 
+  const refreshReminders = useCallback(async () => {
+    await fetchReminders();
+    await scheduleAlertsIfEnabled();
+  }, [fetchReminders, scheduleAlertsIfEnabled]);
+
   useFocusEffect(
     useCallback(() => {
-      void fetchReminders();
-      void scheduleAlertsIfEnabled();
-    }, [fetchReminders, scheduleAlertsIfEnabled]),
+      void refreshReminders();
+    }, [refreshReminders]),
   );
 
   useEffect(() => {
@@ -272,17 +284,15 @@ export default function RemindersScreen() {
     const initialize = async () => {
       await loadNotificationPreference();
       await checkNotificationPermission();
-      await fetchReminders();
-      await scheduleAlertsIfEnabled();
+      await refreshReminders();
     };
 
     void initialize();
 
     const handleAppStateChange = (nextAppState: AppStateStatus) => {
       if (nextAppState === "active") {
-        void fetchReminders();
+        void refreshReminders();
         void checkNotificationPermission();
-        void scheduleAlertsIfEnabled();
       }
     };
 
@@ -296,10 +306,9 @@ export default function RemindersScreen() {
       subscription.remove();
     };
   }, [
-    fetchReminders,
+    refreshReminders,
     loadNotificationPreference,
     checkNotificationPermission,
-    scheduleAlertsIfEnabled,
   ]);
 
   useEffect(() => {
@@ -373,8 +382,7 @@ export default function RemindersScreen() {
 
   const handleDataReload = async () => {
     await checkNotificationPermission();
-    await fetchReminders();
-    await scheduleAlertsIfEnabled();
+    await refreshReminders();
   };
 
   const handleMarkAsRead = async (id: number) => {
