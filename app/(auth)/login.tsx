@@ -187,8 +187,7 @@ export default function LoginScreen() {
           pathname: "/(auth)/verify-2fa" as any,
           params: {
             email: pendingTwoFactor.email,
-            tempToken:
-              (response as any).tempToken || (response as any).token || "",
+            password: pendingTwoFactor.password,
           },
         });
         return;
@@ -400,8 +399,7 @@ export default function LoginScreen() {
           pathname: "/(auth)/verify-2fa" as any,
           params: {
             email: email.trim().toLowerCase(),
-            tempToken:
-              (response as any).tempToken || (response as any).token || "",
+            password,
           },
         });
         return;

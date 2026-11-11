@@ -24,7 +24,10 @@ import {
 
 export default function Verify2FAScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ email?: string; tempToken?: string }>();
+  const params = useLocalSearchParams<{
+    email?: string;
+    password?: string;
+  }>();
   useFeedbackService();
 
   const colors = useColors();
@@ -49,7 +52,12 @@ export default function Verify2FAScreen() {
   const [error, setError] = useState("");
 
   const handleVerify = useCallback(async () => {
-    if (!code.trim()) {
+    const rawCode = code.trim();
+    const normalizedCode = isRecoveryMode
+      ? rawCode.replace(/[\s-]/g, "").toUpperCase()
+      : rawCode.replace(/\s/g, "");
+
+    if (!normalizedCode) {
       setError(
         isRecoveryMode
           ? "Please enter a recovery code."
@@ -58,20 +66,46 @@ export default function Verify2FAScreen() {
       return;
     }
 
+    if (!isRecoveryMode && !/^\d{6}$/.test(normalizedCode)) {
+      setError("Enter the 6-digit authentication code.");
+      return;
+    }
+
+    if (isRecoveryMode && !/^[A-F0-9]{32}$/.test(normalizedCode)) {
+      setError("Enter a valid recovery code.");
+      return;
+    }
+
+    if (!params.email || !params.password) {
+      const message =
+        "Your sign-in session is missing. Please sign in again to verify.";
+      setError(message);
+      await feedbackService.alert({
+        title: "Verification Failed",
+        message,
+        type: "error",
+      });
+      return;
+    }
+
     setIsLoading(true);
     setError("");
 
     try {
-      // Re-use your authenticated API client contract matching backend logic
-      const payload: any = {
-        email: params.email,
-        tempToken: params.tempToken,
+      const payload: {
+        email: string;
+        password: string;
+        totpCode?: string;
+        recoveryCode?: string;
+      } = {
+        email: String(params.email).trim().toLowerCase(),
+        password: String(params.password),
       };
 
       if (isRecoveryMode) {
-        payload.recoveryCode = code.trim();
+        payload.recoveryCode = normalizedCode;
       } else {
-        payload.totpCode = code.trim();
+        payload.totpCode = normalizedCode;
       }
 
       const response = await api.auth.login(payload);
@@ -84,24 +118,22 @@ export default function Verify2FAScreen() {
         throw new Error("Failed to establish session after 2FA verification.");
       }
 
-      // Securely establish session and bootstrap app state
       await establishAuthenticatedSession(response.token, response.user.id);
 
-      // Register push notifications token
       try {
         await registerPushTokenWithBackend();
       } catch (pushErr) {
         console.warn("Push token registration skipped/failed:", pushErr);
       }
 
-      // Navigate securely to the main tabs dashboard
       router.replace("/(tabs)" as any);
-    } catch (err: unknown) {
+    } catch (err: any) {
       console.error("2FA verification failed:", err);
       const message =
-        err instanceof Error
+        err?.response?.data?.error ||
+        (err instanceof Error
           ? err.message
-          : "Verification failed. Please try again.";
+          : "Verification failed. Please try again.");
       setError(message);
       await feedbackService.alert({
         title: "Verification Failed",
@@ -111,7 +143,7 @@ export default function Verify2FAScreen() {
     } finally {
       setIsLoading(false);
     }
-  }, [code, isRecoveryMode, params.email, params.tempToken, router]);
+  }, [code, isRecoveryMode, params.email, params.password, router]);
 
   return (
     <SafeAreaView style={styles.container} edges={["top", "left", "right"]}>
@@ -147,13 +179,14 @@ export default function Verify2FAScreen() {
               onChangeText={(text: string) => {
                 setCode(
                   isRecoveryMode
-                    ? text
+                    ? text.replace(/[^A-Fa-f0-9\s-]/g, "").toUpperCase()
                     : text.replace(/[^0-9]/g, "").slice(0, 6),
                 );
                 if (error) setError("");
               }}
+              autoCapitalize={isRecoveryMode ? "characters" : "none"}
               keyboardType={isRecoveryMode ? "default" : "number-pad"}
-              maxLength={isRecoveryMode ? 32 : 6}
+              maxLength={isRecoveryMode ? 64 : 6}
               error={error}
             />
 

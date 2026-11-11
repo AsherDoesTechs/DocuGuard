@@ -185,14 +185,13 @@ export default function BiometricLoginScreen() {
 
         // Never establish a session before completing the required 2FA challenge.
         if (response?.requiresTwoFactor) {
-          feedbackService.alert({
-            title: "Two-factor authentication required",
-            message:
-              "Complete verification with your authenticator or recovery code to sign in.",
-            type: "warning",
+          router.push({
+            pathname: "/(auth)/verify-2fa" as any,
+            params: {
+              email: normalizedValues.email,
+              password: values.password,
+            },
           });
-
-          router.replace("/(auth)/login" as any);
           return;
         }
 
