@@ -12,6 +12,7 @@ const exportRoutes = require("./routes/export");
 const subscriptionRoutes = require("./routes/subscription");
 const searchRoutes = require("./routes/search");
 const backupRoutes = require("./routes/backup");
+const auditLogRoutes = require("./routes/auditLogs");
 const db = require("./config/db");
 const http = require("http");
 const {
@@ -54,6 +55,8 @@ app.set("trust proxy", 1);
 app.use(helmet());
 app.use(cors(corsOptions()));
 app.use(express.json({ limit: "1mb" }));
+
+app.use("/admin-auth", adminAuthRoutes);
 
 // 2. Rate Limiters
 // The previous `app.use("/api/", apiLimiter)` only matched the two routes
@@ -140,6 +143,8 @@ app.use("/api/export", exportRoutes);
 app.use("/subscription", subscriptionRoutes);
 app.use("/api/search", searchRoutes);
 app.use("/api/backup", backupRoutes);
+app.use("/audit-logs", auditLogRoutes);
+app.use("/api/audit-logs", auditLogRoutes);
 
 // 6. Unmatched paths should be JSON, not Express's default HTML 404.
 app.use((req, res) => {
