@@ -31,19 +31,28 @@ function normalizeDetails(details) {
   return { value: String(details) };
 }
 
+function toDbUserId(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value === "number" && Number.isInteger(value)) return value;
+  const str = String(value).trim();
+  if (/^\d+$/.test(str)) return parseInt(str, 10);
+  return str;
+}
+
 exports.getAuditLogs = async (req, res) => {
-  const userId = String(req.user.userId);
+  const userIdRaw = req.user.userId;
+  const userIdText = String(userIdRaw);
 
   try {
     const result = await db.query(
       `SELECT id, event_type, resource_id AS document_id, details, created_at
        FROM public.audit_log
-       WHERE (user_id::text = $1 OR actor_user_id::text = $1)
+       WHERE (CAST(user_id AS TEXT) = $1 OR CAST(actor_user_id AS TEXT) = $1)
          AND resource_type = 'document'
          AND event_type = ANY($2::text[])
        ORDER BY created_at DESC
        LIMIT 200`,
-      [userId, Object.keys(EVENT_TO_ACTION)],
+      [userIdText, Object.keys(EVENT_TO_ACTION)],
     );
 
     const logs = result.rows.map((row) => ({
@@ -65,7 +74,7 @@ exports.getAuditLogs = async (req, res) => {
 };
 
 exports.createAuditLog = async (req, res) => {
-  const userId = String(req.user.userId);
+  const userId = toDbUserId(req.user.userId);
   const { document_id: documentId, action, details } = req.body || {};
 
   if (documentId == null || String(documentId).trim() === "") {
@@ -90,10 +99,9 @@ exports.createAuditLog = async (req, res) => {
       `INSERT INTO public.audit_log
          (user_id, actor_user_id, event_type, event_category, resource_type,
           resource_id, ip_address, user_agent, outcome, details)
-       VALUES ($1::text, $2::text, $3, $4, 'document', $5, $6, $7, 'success', $8::jsonb)
+       VALUES ($1, $1, $2, $3, 'document', $4, $5, $6, 'success', $7::jsonb)
        RETURNING id, event_type, resource_id AS document_id, details, created_at`,
       [
-        userId,
         userId,
         mapped.eventType,
         mapped.category,
