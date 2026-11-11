@@ -30,12 +30,16 @@ import * as Notifications from "expo-notifications";
 
 import {
   getAllReminders,
+  getAllDocuments,
   markReminderAsRead,
   markAllRemindersAsRead,
   LocalReminder,
 } from "../../services/localDatabase";
 
-import { checkAndScheduleAlerts, syncDocumentRemindersToDb } from "../../services/notificationScheduler";
+import {
+  checkAndScheduleAlerts,
+  syncDocumentRemindersToDb,
+} from "../../services/notificationScheduler";
 import {
   isNotificationsEnabled,
   setNotificationsEnabled as persistNotificationsEnabled,
@@ -149,8 +153,7 @@ export default function RemindersScreen() {
     try {
       setError(null);
 
-      // Sync document-derived reminders (e.g. expired documents) into the DB so
-      // totals/unread/expired/expiring counts reflect current documents.
+      // Sync document-derived reminders into the database
       try {
         await syncDocumentRemindersToDb();
       } catch (syncErr) {
@@ -163,7 +166,8 @@ export default function RemindersScreen() {
         .filter((reminder) => reminder.id != null && reminder.dueDate)
         .map((reminder) => ({
           id: reminder.id!,
-          documentId: (reminder as any).documentId,
+          documentId:
+            (reminder as any).documentId ?? (reminder as any).document_id,
           title: reminder.title,
           description: reminder.description || "",
           dueDate: reminder.dueDate,
