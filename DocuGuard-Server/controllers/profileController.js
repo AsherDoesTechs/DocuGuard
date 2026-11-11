@@ -160,7 +160,7 @@ exports.updateSecurity = async (req, res) => {
         }
 
         if (authenticatorCode) {
-          if (!totp.verifyTOTP(user.two_factor_secret, authenticatorCode)) {
+          if (!totp.verifyTOTP(user.two_factor_secret, authenticatorCode, 1)) {
             return { status: 400, error: "Invalid verification code." };
           }
         } else {

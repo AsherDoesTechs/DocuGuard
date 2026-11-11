@@ -205,7 +205,7 @@ const createLoginHandler =
         }
 
         if (totpCode) {
-          const isValidCode = verifyTOTP(user.two_factor_secret, totpCode);
+          const isValidCode = verifyTOTP(user.two_factor_secret, totpCode, 1);
 
           if (!isValidCode) {
             warn("Auth", "Login failed - invalid 2FA code", {
