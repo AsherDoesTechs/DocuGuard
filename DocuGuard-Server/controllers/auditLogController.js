@@ -39,6 +39,33 @@ function toDbUserId(value) {
   return str;
 }
 
+function isUserIdTypeError(err) {
+  const msg = String(err?.message || "");
+  return /invalid input syntax for type uuid|inconsistent types|operator does not exist|invalid input syntax for type integer/i.test(
+    msg,
+  );
+}
+
+async function insertAuditLog({ userId, eventType, category, documentId, ipAddress, userAgent, details }) {
+  return db.query(
+    `INSERT INTO public.audit_log
+       (user_id, actor_user_id, event_type, event_category, resource_type,
+        resource_id, ip_address, user_agent, outcome, details)
+     VALUES ($1, $2, $3, $4, 'document', $5, $6, $7, 'success', $8::jsonb)
+     RETURNING id, event_type, resource_id AS document_id, details, created_at`,
+    [
+      userId,
+      userId,
+      eventType,
+      category,
+      String(documentId),
+      ipAddress,
+      userAgent,
+      JSON.stringify(details),
+    ],
+  );
+}
+
 exports.getAuditLogs = async (req, res) => {
   const userIdRaw = req.user.userId;
   const userIdText = String(userIdRaw);
@@ -47,7 +74,11 @@ exports.getAuditLogs = async (req, res) => {
     const result = await db.query(
       `SELECT id, event_type, resource_id AS document_id, details, created_at
        FROM public.audit_log
-       WHERE (CAST(user_id AS TEXT) = $1 OR CAST(actor_user_id AS TEXT) = $1)
+       WHERE (
+           CAST(user_id AS TEXT) = $1
+           OR CAST(actor_user_id AS TEXT) = $1
+           OR COALESCE(details->>'appUserId', '') = $1
+         )
          AND resource_type = 'document'
          AND event_type = ANY($2::text[])
        ORDER BY created_at DESC
@@ -74,7 +105,8 @@ exports.getAuditLogs = async (req, res) => {
 };
 
 exports.createAuditLog = async (req, res) => {
-  const userId = toDbUserId(req.user.userId);
+  const rawUserId = req.user.userId;
+  const userId = toDbUserId(rawUserId);
   const { document_id: documentId, action, details } = req.body || {};
 
   if (documentId == null || String(documentId).trim() === "") {
@@ -88,30 +120,36 @@ exports.createAuditLog = async (req, res) => {
 
   const ipAddress = req.ip || req.connection?.remoteAddress || null;
   const userAgent = req.headers["user-agent"] || null;
-  const payloadDetails = {
+  const baseDetails = {
     ...normalizeDetails(details),
     source: "client_document_activity",
     clientAction: action,
   };
 
   try {
-    const result = await db.query(
-      `INSERT INTO public.audit_log
-         (user_id, actor_user_id, event_type, event_category, resource_type,
-          resource_id, ip_address, user_agent, outcome, details)
-       VALUES ($1, $2, $3, $4, 'document', $5, $6, $7, 'success', $8::jsonb)
-       RETURNING id, event_type, resource_id AS document_id, details, created_at`,
-      [
+    let result;
+    try {
+      result = await insertAuditLog({
         userId,
-        userId,
-        mapped.eventType,
-        mapped.category,
-        String(documentId),
+        eventType: mapped.eventType,
+        category: mapped.category,
+        documentId,
         ipAddress,
         userAgent,
-        JSON.stringify(payloadDetails),
-      ],
-    );
+        details: baseDetails,
+      });
+    } catch (err) {
+      if (!isUserIdTypeError(err)) throw err;
+      result = await insertAuditLog({
+        userId: null,
+        eventType: mapped.eventType,
+        category: mapped.category,
+        documentId,
+        ipAddress,
+        userAgent,
+        details: { ...baseDetails, appUserId: String(rawUserId) },
+      });
+    }
 
     const row = result.rows[0];
     return res.status(201).json({
