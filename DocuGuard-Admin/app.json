@@ -23,7 +23,10 @@
         "monochromeImage": "./assets/images/Icon.png"
       },
       "predictiveBackGestureEnabled": false,
-      "permissions": ["NOTIFICATIONS", "VIBRATE"]
+      "permissions": [
+        "NOTIFICATIONS",
+        "VIBRATE"
+      ]
     },
     "web": {
       "output": "server",
@@ -47,13 +50,14 @@
       [
         "expo-notifications",
         {
-"icon": "./assets/images/Icon.png",
+          "icon": "./assets/images/Icon.png",
           "color": "#142D4E",
           "sounds": []
         }
       ],
       "expo-image",
-      "expo-web-browser"
+      "expo-web-browser",
+      "expo-status-bar"
     ],
     "experiments": {
       "typedRoutes": true,
