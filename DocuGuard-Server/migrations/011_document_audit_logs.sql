@@ -1,0 +1,4 @@
+﻿-- LOCAL MIGRATION PROPOSAL ONLY.
+-- Document activity history is stored in public.audit_log (see 002_add_audit_log_and_retention.sql).
+-- No additional table required for /audit-logs document activity endpoints.
+-- DO NOT apply to live Supabase without explicit approval.
