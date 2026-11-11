@@ -538,14 +538,14 @@ exports.processDocument = async (req, res) => {
         });
       }
 
-    return res.status(422).json({
-  status: "error",
-  code: "DOCUMENT_TYPE_MISMATCH",
-  errorCode: "DOCUMENT_TYPE_MISMATCH",
-  error:
-    documentTypeValidation.message ||
-    "Verification halted. The uploaded document does not match the required ID layout or type.",
-});
+      return res.status(422).json({
+        status: "error",
+        code: "DOCUMENT_TYPE_MISMATCH",
+        errorCode: "DOCUMENT_TYPE_MISMATCH",
+        error:
+          documentTypeValidation.message ||
+          "Verification halted. The uploaded document does not match the required ID layout or type.",
+      });
     }
 
     if (documentTypeValidation.status === "processing_error") {
@@ -1373,12 +1373,16 @@ exports.updateDocument = async (req, res) => {
   }
 
   try {
-    // Encrypt PII fields before persisting (document_number, issuer).
-    const encryptedIssuer = issuer !== undefined ? encryptFields({ issuer }, PII_FIELDS).issuer : undefined;
-    const encryptedDocumentNumber = documentNumber !== undefined ? encryptFields(
-      { document_number: documentNumber },
-      PII_FIELDS,
-    ).document_number : undefined;
+    // Encrypt PII fields before persisting (document_number, issuer) and fallback to null instead of undefined
+    const encryptedIssuer =
+      issuer !== undefined && issuer !== null
+        ? encryptFields({ issuer }, PII_FIELDS).issuer
+        : null;
+    const encryptedDocumentNumber =
+      documentNumber !== undefined && documentNumber !== null
+        ? encryptFields({ document_number: documentNumber }, PII_FIELDS)
+            .document_number
+        : null;
 
     const updates = [];
     const values = [];
@@ -1394,11 +1398,13 @@ exports.updateDocument = async (req, res) => {
     }
     if (issuer !== undefined) {
       updates.push(`issuer = $${idx++}`);
-      values.push(encryptedIssuer);
+      values.push(encryptedIssuer !== undefined ? encryptedIssuer : null);
     }
     if (documentNumber !== undefined) {
       updates.push(`document_number = $${idx++}`);
-      values.push(encryptedDocumentNumber);
+      values.push(
+        encryptedDocumentNumber !== undefined ? encryptedDocumentNumber : null,
+      );
     }
     if (issueDate !== undefined) {
       updates.push(`issue_date = $${idx++}::date`);
