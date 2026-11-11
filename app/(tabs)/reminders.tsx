@@ -153,30 +153,67 @@ export default function RemindersScreen() {
     try {
       setError(null);
 
-      // Sync document-derived reminders into the database
-      try {
-        await syncDocumentRemindersToDb();
-      } catch (syncErr) {
-        console.error("Failed to sync document reminders:", syncErr);
-      }
+      // 1. Fetch all documents and local reminders concurrently
+      const [localDocs, localReminders] = await Promise.all([
+        getAllDocuments(),
+        getAllReminders(),
+      ]);
 
-      const localReminders: LocalReminder[] = await getAllReminders();
+      // 2. Map existing reminders safely using `any` cast
+      const reminderMap = new Map<string, any>();
+      localReminders.forEach((r: any) => {
+        const docId = r.documentId ?? r.document_id;
+        if (docId) {
+          reminderMap.set(String(docId), r);
+        }
+      });
 
-      const mappedReminders: Reminder[] = localReminders
-        .filter((reminder) => reminder.id != null && reminder.dueDate)
-        .map((reminder) => ({
-          id: reminder.id!,
-          documentId:
-            (reminder as any).documentId ?? (reminder as any).document_id,
-          title: reminder.title,
-          description: reminder.description || "",
-          dueDate: reminder.dueDate,
-          severity: calculateSeverity(reminder.dueDate),
-          read: !!reminder.read,
-        }));
+      const dynamicReminders: Reminder[] = [];
+      let nextId = 1000;
+
+      // 3. Dynamically evaluate all documents to build real-time reminders
+      localDocs.forEach((doc: any) => {
+        if (!doc.expiryDate || doc.status === "deleted") return;
+
+        const severity = calculateSeverity(doc.expiryDate);
+
+        // Include any document that is Expired or Expiring Soon (within 30 days)
+        if (severity === "Expired" || severity === "Expiring Soon") {
+          const existing = reminderMap.get(String(doc.id));
+
+          dynamicReminders.push({
+            id: doc.id ? Number(doc.id) : nextId++,
+            documentId: doc.id,
+            title:
+              severity === "Expired"
+                ? `Document Expired: ${doc.title}`
+                : `Document Expiring: ${doc.title}`,
+            description: `Your document "${doc.title}" issued by ${doc.issuer || "Unknown"} is due on ${doc.expiryDate}.`,
+            dueDate: doc.expiryDate,
+            severity: severity,
+            read: existing ? !!existing.read : false,
+          });
+        }
+      });
+
+      // Also append any non-document custom reminders if they exist
+      localReminders.forEach((r: any) => {
+        const docId = r.documentId ?? r.document_id;
+        if (!docId && r.id != null && r.dueDate) {
+          dynamicReminders.push({
+            id: r.id,
+            documentId: undefined,
+            title: r.title,
+            description: r.description || "",
+            dueDate: r.dueDate,
+            severity: calculateSeverity(r.dueDate),
+            read: !!r.read,
+          });
+        }
+      });
 
       if (mountedRef.current) {
-        setReminders(mappedReminders);
+        setReminders(dynamicReminders);
         setLastFetch(Date.now());
       }
 
