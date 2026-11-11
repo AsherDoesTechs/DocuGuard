@@ -32,13 +32,13 @@ function normalizeDetails(details) {
 }
 
 exports.getAuditLogs = async (req, res) => {
-  const userId = req.user.userId;
+  const userId = String(req.user.userId);
 
   try {
     const result = await db.query(
       `SELECT id, event_type, resource_id AS document_id, details, created_at
        FROM public.audit_log
-       WHERE (user_id = $1 OR actor_user_id = $1)
+       WHERE (user_id::text = $1 OR actor_user_id::text = $1)
          AND resource_type = 'document'
          AND event_type = ANY($2::text[])
        ORDER BY created_at DESC
@@ -65,7 +65,7 @@ exports.getAuditLogs = async (req, res) => {
 };
 
 exports.createAuditLog = async (req, res) => {
-  const userId = req.user.userId;
+  const userId = String(req.user.userId);
   const { document_id: documentId, action, details } = req.body || {};
 
   if (documentId == null || String(documentId).trim() === "") {
@@ -90,9 +90,10 @@ exports.createAuditLog = async (req, res) => {
       `INSERT INTO public.audit_log
          (user_id, actor_user_id, event_type, event_category, resource_type,
           resource_id, ip_address, user_agent, outcome, details)
-       VALUES ($1, $1, $2, $3, 'document', $4, $5, $6, 'success', $7::jsonb)
+       VALUES ($1::text, $2::text, $3, $4, 'document', $5, $6, $7, 'success', $8::jsonb)
        RETURNING id, event_type, resource_id AS document_id, details, created_at`,
       [
+        userId,
         userId,
         mapped.eventType,
         mapped.category,
