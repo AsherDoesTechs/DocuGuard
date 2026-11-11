@@ -1316,6 +1316,7 @@ exports.createDocument = async (req, res) => {
   }
 };
 // Update an existing document with strict validation & automations
+// Update an existing document with strict validation & automations
 exports.updateDocument = async (req, res) => {
   const validation = validateSchema(documentUpdateSchema, {
     ...req.body,
@@ -1343,18 +1344,6 @@ exports.updateDocument = async (req, res) => {
     baseUpdatedAt,
   } = validation.data;
 
-  /*
-   * The revision this device last saw, when it sent one.
-   *
-   * The guard is optional. A client that does not know the revision keeps the
-   * previous behaviour and the update is applied unconditionally, which is
-   * what every client that predates revision tracking expects.
-   *
-   * A client that does send the revision gets the update refused with a 409
-   * when the server copy has moved on. Without this the edit screen was a
-   * lost update: it overwrote whatever the server held, including a change
-   * that had been made on the web app or on another device.
-   */
   let baseRevision = null;
   let exactRevision = true;
 
@@ -1373,7 +1362,6 @@ exports.updateDocument = async (req, res) => {
   }
 
   try {
-    // Encrypt PII fields before persisting (document_number, issuer) and fallback to null instead of undefined
     const encryptedIssuer =
       issuer !== undefined && issuer !== null
         ? encryptFields({ issuer }, PII_FIELDS).issuer
@@ -1389,22 +1377,20 @@ exports.updateDocument = async (req, res) => {
     let idx = 1;
 
     if (title !== undefined && title !== null) {
-      updates.push(`title = $${idx++}`);
+      updates.push(`title = $${idx++}::text`);
       values.push(title);
     }
     if (category !== undefined && category !== null) {
-      updates.push(`category = $${idx++}`);
+      updates.push(`category = $${idx++}::text`);
       values.push(category);
     }
     if (issuer !== undefined) {
-      updates.push(`issuer = $${idx++}`);
-      values.push(encryptedIssuer !== undefined ? encryptedIssuer : null);
+      updates.push(`issuer = $${idx++}::text`);
+      values.push(encryptedIssuer);
     }
     if (documentNumber !== undefined) {
-      updates.push(`document_number = $${idx++}`);
-      values.push(
-        encryptedDocumentNumber !== undefined ? encryptedDocumentNumber : null,
-      );
+      updates.push(`document_number = $${idx++}::text`);
+      values.push(encryptedDocumentNumber);
     }
     if (issueDate !== undefined) {
       updates.push(`issue_date = $${idx++}::date`);
@@ -1415,7 +1401,7 @@ exports.updateDocument = async (req, res) => {
       values.push(expiryDate === null ? null : expiryDate);
     }
     if (notes !== undefined) {
-      updates.push(`notes = $${idx++}`);
+      updates.push(`notes = $${idx++}::text`);
       values.push(typeof notes === "string" ? notes.trim() : notes);
     }
     if (enableAlerts !== undefined && enableAlerts !== null) {
@@ -1435,16 +1421,28 @@ exports.updateDocument = async (req, res) => {
 
     updates.push(`updated_at = clock_timestamp()`);
 
+    // Capture exact dynamic parameter indices for WHERE clause clauses
+    const docIdParam = idx++;
+    const userIdParam = idx++;
+    const baseRevParam = idx++;
+    const exactRevParam = idx++;
+
     values.push(Number(docId));
     values.push(Number(userId));
     values.push(baseRevision || null);
     values.push(exactRevision === true);
 
+    // Build revision match SQL dynamically matching the exact runtime parameter slots
+    const dynamicRevisionMatchSql = buildRevisionMatchSql(
+      baseRevParam,
+      exactRevParam,
+    );
+
     const updated = await db.query(
       `UPDATE documents
        SET ${updates.join(", ")}
-       WHERE id = $${idx++} AND user_id = $${idx++}
-         AND ($${idx++}::timestamptz IS NULL OR ${REVISION_MATCH_SQL_UPDATE})
+       WHERE id = $${docIdParam} AND user_id = $${userIdParam}
+         AND ($${baseRevParam}::timestamptz IS NULL OR ${dynamicRevisionMatchSql})
        RETURNING id, title, category, issuer, document_number AS "documentNumber",
                   issue_date AS "issueDate", expiry_date AS "expiryDate", notes, status, enable_alerts AS "enableAlerts",
                   s3_key AS "s3Key", file_url AS "fileUrl", file_type AS "fileType",
@@ -1454,14 +1452,6 @@ exports.updateDocument = async (req, res) => {
     );
 
     if (updated.rows.length === 0) {
-      /*
-       * Either the document is not there, or it is there but it has moved on.
-       *
-       * The two cases are told apart by asking for the row: a document that
-       * does not exist, or is not owned by this account, must not be reported
-       * as a conflict, because a conflict would tell the user that their copy
-       * was changed on another device when in fact there is no such document.
-       */
       const current = await db.query(
         `SELECT ${UPDATED_AT_ISO_SQL} AS "updatedAt"
           FROM documents WHERE id = $1 AND user_id = $2 AND status <> 'deleted'`,
@@ -1485,13 +1475,6 @@ exports.updateDocument = async (req, res) => {
     }
 
     info("Documents", "Document updated", { userId, docId });
-    /*
-     * The update above did not touch the risk columns, so the returned row
-     * does not carry them. The mirror is written from the stored row, and a
-     * column the payload does not carry is not written at all - so the risk
-     * score and the risk level of the document survive the edit instead of
-     * being cleared.
-     */
     await syncDocument(userId, updated.rows[0], "UPDATE");
 
     res.json({
