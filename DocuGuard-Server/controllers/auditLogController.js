@@ -99,9 +99,10 @@ exports.createAuditLog = async (req, res) => {
       `INSERT INTO public.audit_log
          (user_id, actor_user_id, event_type, event_category, resource_type,
           resource_id, ip_address, user_agent, outcome, details)
-       VALUES ($1, $1, $2, $3, 'document', $4, $5, $6, 'success', $7::jsonb)
+       VALUES ($1, $2, $3, $4, 'document', $5, $6, $7, 'success', $8::jsonb)
        RETURNING id, event_type, resource_id AS document_id, details, created_at`,
       [
+        userId,
         userId,
         mapped.eventType,
         mapped.category,
