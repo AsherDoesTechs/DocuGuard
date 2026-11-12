@@ -1,375 +1,161 @@
-# 📄 DocuGuard
+﻿# DocuGuard
 
-> **An Intelligent E-Document Lifecycle Management System for Secure Storage, Organization, Tracking, Protection, and Expiration Monitoring**
+> Intelligent e-document lifecycle management for secure storage, organization, tracking, protection, and expiration monitoring.
 
----
+DocuGuard is a BSIT capstone project consisting of a React Native (Expo) mobile app, a Node.js/Express API, and a separate admin mobile app. It helps users store and manage important documents, track validity/expiry, receive reminders, and maintain auditable document activity.
 
-postgresql://postgres.ysxeobillupncexfkfvu:Root%402132%21%40%23@aws-0-ap-south-1.pooler.supabase.com:5432/postgres
+## Repository Components
 
-## 📌 Overview
+| Component | Path | Purpose |
+| --- | --- | --- |
+| Mobile app | `/` | Main Expo Router app for end users (documents, reminders, profile, scan/OCR, auth, backup, subscription flow). |
+| Backend API | `DocuGuard-Server/` | Express/Node API, PostgreSQL/Supabase data access, auth, document processing, notifications, audit logs, subscription/demo activation. |
+| Admin app | `DocuGuard-Admin/` | Expo app for admin/device enrollment and trusted admin flows (biometric/device trust). |
+| Shared modules | `shared/` | Shared schemas/utilities used by app and/or server (e.g. backup schema). |
 
-DocuGuard is a mobile application developed to help individuals securely manage important digital documents in one centralized location. The application allows users to upload, organize, monitor, and receive reminders about document expiration dates, reducing the risk of losing access to critical documents due to missed renewals.
+## Core Features (Main App)
 
-Rather than simply acting as a cloud storage application, DocuGuard provides intelligent document lifecycle management by automatically tracking document validity, classifying expiration status, and sending timely notifications before documents expire.
+- **Authentication & security:** registration/login, email verification flow, password reset, 2FA (TOTP + recovery codes), biometric login/preferences, app-lock preferences, secure token storage.
+- **Document management:** add/edit/view/delete documents, categories/tags/metadata, document details, file handling and download/share flows, cloud sync/local vault behavior.
+- **OCR & scanning:** camera/document scan and OCR-assisted capture (Azure Document Intelligence integration on server side where configured).
+- **Expiration & reminders:** validity/expiry tracking, reminder scheduling/sync, reminders dashboard/counts, push/local notification support.
+- **Activity & audit:** document activity history with search/action filters, audit log capture for upload/access/modify/delete events (server-backed).
+- **Backup & restore:** export/import local backup (document/reminder metadata; attachments not included in backup payload as indicated in UI).
+- **Profile & settings:** personal/profile settings, notification/preferences, appearance/theme support (System/Light/Dark), subscription/plan view.
+- **Subscription (demo):** in-app demo Pro activation flow (`POST /subscription`, demo payment payload) that persists subscription data when backend/DB are configured.
+- **Privacy/startup:** privacy consent/onboarding/startup flow before app access.
 
----
-
-# 🎯 Project Objectives
-
-The primary objectives of DocuGuard are to:
-
-- Provide a secure repository for storing important digital documents.
-- Organize documents into user-friendly categories.
-- Track document expiration dates automatically.
-- Notify users before documents expire.
-- Help users quickly search and retrieve stored documents.
-- Reduce document loss through secure cloud storage.
-- Improve personal document management using an intuitive mobile interface.
-
----
-
-# ❗ Problem Statement
-
-Many individuals store important documents across multiple locations, including physical folders, email attachments, messaging applications, and various cloud storage services. As a result, documents become difficult to locate when needed, and expiration dates are often forgotten.
-
-Examples include:
-
-- Driver's Licenses
-- Passports
-- Government IDs
-- School Documents
-- Insurance Policies
-- Business Permits
-- Professional Certifications
-
-Missing renewal deadlines may lead to penalties, delays, or interrupted access to essential services.
-
-DocuGuard addresses these issues by providing an intelligent document management system with automated expiration monitoring and reminder notifications.
-
----
-
-# 💡 Proposed Solution
-
-DocuGuard centralizes document storage into a secure mobile application that enables users to:
-
-- Upload digital documents
-- Categorize documents
-- View document details
-- Monitor document validity
-- Receive expiration reminders
-- Access documents anytime
-
-The application continuously evaluates each document's expiration date and classifies it according to its current status.
-
----
-
-# ⭐ Core Features
-
-## 🔐 User Authentication
-
-- User Registration
-- Secure Login
-- Password Encryption
-- Session Management
-
----
-
-## 📂 Document Management
-
-- Upload Documents
-- View Documents
-- Edit Document Information
-- Delete Documents
-- Categorize Documents
-- Search Documents
-- Filter Documents
-
----
-
-## 📅 Expiration Monitoring
-
-The application automatically determines document status based on expiration dates.
-
-### Status Indicators
-
-🟢 Valid
-
-Document remains active.
-
-🟡 Expiring Soon
-
-Document expires within the configured reminder period.
-
-🔴 Expired
-
-Document has already expired.
-
----
-
-## 🔔 Reminder Notifications
-
-Users receive notifications:
-
-- 30 Days Before Expiration
-- 7 Days Before Expiration
-- 1 Day Before Expiration
-- On Expiration Day
-
----
-
-## 📊 Dashboard
-
-The dashboard provides a quick overview of the user's document collection.
-
-Displayed information includes:
-
-- Total Documents
-- Valid Documents
-- Expiring Soon
-- Expired Documents
-- Recently Added Documents
-
----
-
-## 👤 User Profile
-
-Users can:
-
-- Update Profile Information
-- Change Password
-- Manage Notification Preferences
-- View Account Details
-
----
-
-# 🏗️ System Architecture
+## Architecture
 
 ```text
-React Native (Expo)
-
-↓
-
-Express.js REST API
-
-↓
-
-MongoDB Database
-
-↓
-
-Cloud Storage
-
-↓
-
-Push Notification Service
+Mobile App (React Native + Expo Router)
+            |
+            v
+Express REST API (DocuGuard-Server)
+            |
+   +--------+---------+------------------+
+   |                  |                  |
+PostgreSQL/Supabase  Supabase/Storage   External services
+(data, migrations)   (files/config)     Azure OCR, Firebase push,
+                                        Resend email
 ```
 
----
+## Technology Stack
 
-# 🛠️ Technology Stack
+### Mobile (`/`)
+- React Native 0.86, React 19, Expo SDK ~57, Expo Router
+- TypeScript, NativeWind/Tailwind (configured), Reanimated/Gesture Handler
+- Expo modules: Camera, Image Picker/Manipulator, Document Scanner, SQLite, Secure Store, Local Authentication, Notifications, File System, Sharing, Document Picker, etc.
+- Axios/Zod/React Hook Form
 
-## Mobile Development
+### Backend (`DocuGuard-Server/`)
+- Node.js, Express 5
+- PostgreSQL (`pg`), Supabase client
+- Auth/security: JWT, bcrypt/bcryptjs, helmet, cors, express-rate-limit
+- Integrations: Azure AI Form Recognizer, Firebase Admin (push), Resend (email), multer, ws, node-cron
+- Validation/utilities: Zod
 
-- React Native
-- Expo
-- Expo Router
-- TypeScript
-- NativeWind
+### Admin (`DocuGuard-Admin/`)
+- Expo SDK ~58, Expo Router
+- `react-native-biometric-signature`, Secure Store, notifications/device integrations
 
-## Backend
-
-- Node.js
-- Express.js
-
-## Database
-
-- PostgreSQL
-
-## Authentication
-
-- JSON Web Token (JWT)
-- bcrypt
-
-## Storage
-
-- Cloudinary
-- Firebase Storage (optional)
-
-## Notifications
-
-- Expo Notifications
-- Firebase Cloud Messaging
-
----
-
-# 📂 Project Structure
+## Project Structure
 
 ```text
-DocuGuard
-
-├── app/
-├── components/
-├── constants/
-├── hooks/
-├── services/
-├── utils/
-├── assets/
-├── backend/
-└── README.md
+DocuGuard/
+├─ app/                    # Expo Router screens (auth, tabs, document flows, etc.)
+├─ components/             # Shared UI components
+├─ context/                # Theme/app context providers
+├─ hooks/                  # App hooks
+├─ services/               # API, local DB, sync, notifications, backup, audit, etc.
+├─ constants/              # Theme/colors/config constants
+├─ utils/                  # Helpers
+├─ types/                  # TypeScript types
+├─ shared/                 # Shared schemas/utilities
+├─ assets/                 # App assets
+├─ DocuGuard-Server/       # Express API, routes, controllers, services, migrations
+├─ DocuGuard-Admin/        # Admin Expo app
+├─ app.json                # Expo config (scheme, plugins, EAS project, apiBaseUrl extra)
+├─ eas.json                # EAS build/update profiles
+└─ package.json            # Mobile app scripts/dependencies
 ```
 
----
+### Key Backend Areas (`DocuGuard-Server/`)
+- `routes/`: `auth`, `documents`, `dashboard`, `reminder`, `notification`, `admin`, `adminAuth`, `search`, `export`, `backup`, `subscription`, `profile`, `auditLogs`
+- `controllers/`, `services/`, `middleware/`, `jobs/`, `utils/`, `config/`
+- `migrations/001`–`012`: settings, audit log/retention, search vector, user roles, admin identity/device trust, privacy consent history, session revocation, idempotency, 2FA recovery codes, 2FA setup expiration, document audit logs, users 2FA/verification columns
 
-# 🚀 Development Roadmap
+## Getting Started
 
-## Phase 1
+### Prerequisites
+- Node.js (LTS recommended) and npm
+- Expo tooling / Android/iOS environment as needed for React Native development
+- PostgreSQL or Supabase project for backend data
+- API keys/credentials for enabled integrations (see server env)
 
-- Project Setup
-- Navigation
-- UI Design System
+### 1) Install dependencies
 
-## Phase 2
+```powershell
+# Mobile app (root)
+npm install
 
-- Authentication
-- Backend Integration
+# Backend
+cd DocuGuard-Server
+npm install
 
-## Phase 3
+# Admin app (optional)
+cd ..\DocuGuard-Admin
+npm install
+```
 
-- Dashboard
+### 2) Configure environment
 
-## Phase 4
+- **Mobile:** `app.json` → `expo.extra.apiBaseUrl` points to the deployed/local API base URL (update for your environment/build profile).
+- **Backend:** create `DocuGuard-Server/.env` from `DocuGuard-Server/.env.example` and set required values (database/Supabase, JWT, CORS, encryption, email, OCR/push as needed).
+  - `NODE_ENV=production` requires `CORS_ALLOWED_ORIGINS` and proper secrets per server config.
+  - `DISABLE_DEMO_SUBSCRIPTION_PAYMENTS=true` disables demo subscription activation route behavior.
+- **Never commit real secrets** (`.env`, service keys, database credentials).
 
-- Document Management
+### 3) Database migrations
 
-## Phase 5
+Apply SQL migrations in `DocuGuard-Server/migrations/` to your target database in order (review before production use). Recent additions include 2FA/recovery/setup and user verification/2FA columns (`012_users_2fa_verification_columns.sql`).
 
-- Smart Expiration Monitoring
+### 4) Run
 
-## Phase 6
+```powershell
+# Mobile app
+npm start
+npm run android
+npm run ios
 
-- Notification System
+# Backend
+cd DocuGuard-Server
+npm run dev   # or: npm start
+```
 
-## Phase 7
+## Scripts
 
-- User Profile & Settings
+### Mobile (`package.json`)
+- `npm start` — Expo dev server
+- `npm run android` / `npm run ios` — native runs
+- `npm run typecheck` — TypeScript check
+- `npm test` — Node tests in `tests/*.test.js`
+- `npm run check:server` — server checks from root context
+- `npm run check` — typecheck + tests + server checks
 
-## Phase 8
+### Backend (`DocuGuard-Server/package.json`)
+- `npm run dev` — nodemon
+- `npm start` — start server
+- `npm run check:syntax` / `npm run check` — syntax/tests checks
+- `npm test` — server tests
 
-- Testing
-- Optimization
-- Deployment
+## Notes
 
----
+- Some features depend on backend availability and correct environment/configuration (OCR, push notifications, email delivery, cloud storage/sync, subscription persistence).
+- Native changes (plugins, permissions, splash/icon config, dev client requirements) may require a rebuild/prebuild/EAS build.
+- 2FA recovery codes are stored hashed in `public.user_two_factor_recovery_codes`; verification/2FA fields are maintained on `users` per migrations/controllers.
+- Demo subscription activation is not real payment processing; it updates subscription records for the authenticated user when enabled.
 
-# 🎓 Academic Purpose
+## License
 
-DocuGuard is being developed as a Bachelor of Science in Information Technology (BSIT) Capstone Project. The system demonstrates the practical application of mobile development, cloud technologies, secure authentication, database management, and intelligent reminder automation to solve real-world document management challenges.
-
----
-
-# 👨‍💻 Development Team
-
-**Project Name:** DocuGuard
-
-**Developed by:** BSIT Capstone Researchers
-
-**Platform:** Android (React Native + Expo)
-
-**Version:** 1.0.0
-
----
-
-eas build --platform android --profile preview
-.\gradlew.bat app:assembleRelease -x lint -x test --configure-on-demand --build-cache
-npx eas-cli update --channel preview --message "Debug login authentication flow" --platform android --environment preview
-npx expo run:android
-npx expo start --dev-client
-npx expo run:android --variant release
-
-# 📄 License
-
-This project is intended for academic and educational purposes. Future versions may be expanded for public or commercial use.
-
-# CHATGPT Prompt:
-
-Give me things to improve and add in here [Code]
-Then Pass it to Gemini For Code Generation.
-
-[Title]
-[Description]..
-
-- Implement Critical Detail Debugging Logs
-- Implement Number Codes for Every error ex (Code: #54321 Contact your Administrator!)
-- Implement Essential Supporting details along to this feature.
-- Create detailed schema for this so that we can later integrate it.
-- if additional files are needed create me the file tree that i need to do in order to integrate the new changes in this system.
-
-[Title]
-
-- implement the validation input and make sure that this can only accept valid inputs and eliminate invalid and unexpected inputs.
-- implement success toast or modal along with this feature
-
-Sep 11, 2026 (Nex Export Application)
-
-- Created the 80% offline features of it
-- Created the 20% online feature of it. (Some of it works.)
-  Need Fixing to the Back-end of the Application.
-  - Deploy the Back-end to the Supabase or Cloud (Possibly render or Supabase)
-  - Test it if it works
-    Yes it Works Schedule a consultation meeting with Sir M.
-    No Make it work so you can schedule a consultation meeting with the Adviser.
-
-Sep 11, 2026 (Production 1.0)
-
-- Document Creation works
-- OCR works
-- Profile works
-
-Sep 15, 2026 (Production 1.1)
-
-- Notification Works
-- many errors and bugs still known
-
-Sep 20, 2026 (Production 1.3)
-
-- Register Fields Removes invalid inputs
-- Datas are being sent to Cloud Supabase through Render
-- RemindersPage Do not Reflect Realtime Notify
-
-When i Press back on the phone it shows a duplication of Home Page but with another design thats causes a huge bug, because the realtime datas get lost and the vault access data are seen but it dissapeared also.
-
-could not load document details for editing.
-
-When reloaded the documents are not found.
-
-enable 2FA Authentication has no proper fields to input credentials.
-
-Sotrage used is not realistic a one document for 1gb???
-
-In profile page the Document Serial Number of the User must be shown under the type of tier logo like the standard. Or premium. Type.
-
-And also it must be autofilled in the renew subscription plan instsntly when filling up datas.
-
-Layer 1: Slide to Continue is not Promising it just looks like a simple UI It does not tells the user that security is really tight. Make the animation more clean and the design modern.
-
-After successful payment gateway done, it refreshes the whole app the documents have dissapeared some pages and fucntions do not work immediately
-
-Improve others that you can see
-
-Input autofill field datas or swipe to autofill the texts on the input fields for user datas efficiency
-
-Input proper lockup app to the docuguard when it leaves the app not always but frequent like the other functions on the app phone to ensure more security.
-
-Let's focus on the [FEATURE].
-
-- Make sure it works correctly.
-- Make sure all user actions work.
-- Handle valid and invalid input.
-- Validate required fields.
-- Handle empty input.
-- Handle loading, success, and error states.
-- Handle edge cases and unexpected input.
-- Make sure the data is handled correctly.
-- Make sure it doesn't crash.
-- Make sure it doesn't break existing features.
-- Test the complete user flow from start to finish.
+Intended for academic and educational purposes (BSIT Capstone). See `LICENSE`.
