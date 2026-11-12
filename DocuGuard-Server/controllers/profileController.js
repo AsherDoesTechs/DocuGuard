@@ -24,6 +24,7 @@ exports.getProfile = async (req, res) => {
        email_alerts AS "notifyEmail", expiry_alerts AS "notifyExpiry", two_factor AS "twoFactor",
        two_factor_secret AS "twoFactorSecret",
        two_factor_enabled_at AS "twoFactorEnabledAt",
+       two_factor_verified_at AS "twoFactorVerifiedAt",
        two_factor_setup_started_at AS "twoFactorSetupStartedAt",
        verification_token AS "verificationToken",
        verification_expires_at AS "verificationExpiresAt"
@@ -206,6 +207,7 @@ exports.updateSecurity = async (req, res) => {
            SET two_factor = FALSE,
                two_factor_secret = NULL,
                two_factor_enabled_at = NULL,
+               two_factor_verified_at = NULL,
                two_factor_setup_started_at = NULL
            WHERE id = $1`,
           [userId],
@@ -296,6 +298,7 @@ exports.setup2FA = async (req, res) => {
       `UPDATE users
        SET two_factor_secret = $1,
            two_factor_enabled_at = NULL,
+           two_factor_verified_at = NULL,
            two_factor_setup_started_at = NOW()
        WHERE id = $2
          AND COALESCE(two_factor, FALSE) = FALSE
@@ -408,6 +411,7 @@ exports.verify2FA = async (req, res) => {
         `UPDATE users
          SET two_factor = TRUE,
              two_factor_enabled_at = NOW(),
+             two_factor_verified_at = NOW(),
              two_factor_setup_started_at = NULL
          WHERE id = $1
            AND COALESCE(two_factor, FALSE) = FALSE
