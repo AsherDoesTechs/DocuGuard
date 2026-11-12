@@ -281,7 +281,7 @@ export default function DocuGuardCheckout() {
       }
 
       redirectTimerRef.current = setTimeout(() => {
-        router.replace("/(tabs)/index" as any);
+        router.replace("/(tabs)/profile" as any);
       }, 1800);
     } catch (err) {
       const message =
