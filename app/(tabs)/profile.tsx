@@ -521,6 +521,65 @@ export default function ProfileScreen() {
           setTwoFactor(res.data.twoFactor);
         }
 
+        // Sync notification preferences from server so they persist across reload/sign-out
+        const remoteNotifyEmail =
+          typeof res.data.notifyEmail === "boolean"
+            ? res.data.notifyEmail
+            : typeof res.data.email_alerts === "boolean"
+              ? res.data.email_alerts
+              : undefined;
+        const remoteNotifyPush =
+          typeof res.data.notifyPush === "boolean"
+            ? res.data.notifyPush
+            : typeof res.data.notifications_enabled === "boolean"
+              ? res.data.notifications_enabled
+              : typeof res.data.notificationsEnabled === "boolean"
+                ? res.data.notificationsEnabled
+                : undefined;
+        const remoteNotifyExpiry =
+          typeof res.data.notifyExpiry === "boolean"
+            ? res.data.notifyExpiry
+            : typeof res.data.expiry_alerts === "boolean"
+              ? res.data.expiry_alerts
+              : undefined;
+
+        if (
+          remoteNotifyEmail !== undefined ||
+          remoteNotifyPush !== undefined ||
+          remoteNotifyExpiry !== undefined
+        ) {
+          const resolvedEmail = remoteNotifyEmail ?? true;
+          const resolvedPush = remoteNotifyPush ?? false;
+          const resolvedExpiry = remoteNotifyExpiry ?? true;
+          setNotifyEmail(resolvedEmail);
+          setNotifyPush(resolvedPush);
+          setNotifyExpiry(resolvedExpiry);
+          setUser((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  notifyEmail: resolvedEmail,
+                  notifyPush: resolvedPush,
+                  notifyExpiry: resolvedExpiry,
+                }
+              : prev,
+          );
+          try {
+            const currentLocal = await getUserProfile();
+            if (currentLocal) {
+              await saveUserProfile({
+                ...currentLocal,
+                notifyEmail: resolvedEmail,
+                notificationsEnabled: resolvedPush,
+                notifyExpiry: resolvedExpiry,
+                preferencesDirty: false,
+              });
+            }
+          } catch (persistErr) {
+            console.warn("Failed to persist notification preferences locally:", persistErr);
+          }
+        }
+
         if (res.data.documentPreferences) {
           setDocPreferences(res.data.documentPreferences);
         }
@@ -932,6 +991,14 @@ export default function ProfileScreen() {
           { headers: { Authorization: `Bearer ${token}` } },
         );
       }
+
+      // Mark preferences as synced locally after successful server update
+      try {
+        const latest = await getUserProfile();
+        if (latest) {
+          await saveUserProfile({ ...latest, preferencesDirty: false });
+        }
+      } catch {}
 
       setUser((prev) =>
         prev
