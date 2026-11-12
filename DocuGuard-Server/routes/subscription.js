@@ -14,7 +14,8 @@ router.post(
 
     const { plan, payment_method, billing_cycle } = req.body;
 
-    if (process.env.NODE_ENV === "production") {
+    // Demo-only activation (no real payment processing). Disable explicitly if needed.
+    if (process.env.DISABLE_DEMO_SUBSCRIPTION_PAYMENTS === "true") {
       return res.status(503).json({
         error: "Subscription payments are not configured.",
         code: ErrorCodes.SYNC_BACKEND_UNAVAILABLE,
@@ -118,28 +119,38 @@ router.post(
       /*
        * -------------------------------------------------------
        * ACTIVITY LOG
+       * Non-fatal: keep subscription persisted even if logging fails.
        * -------------------------------------------------------
        */
 
-      const logQuery = `
-        INSERT INTO activity_logs
-          (
-            user_id,
-            action,
-            details
-          )
-        VALUES
-          (
-            $1,
-            'SUBSCRIPTION_UPGRADED',
-            $2
-          );
-      `;
+      try {
+        await client.query("SAVEPOINT subscription_activity_log");
 
-      await client.query(logQuery, [
-        userId,
-        "Upgraded to DocuGuard Pro using the capstone demo payment.",
-      ]);
+        const logQuery = `
+          INSERT INTO activity_logs
+            (
+              user_id,
+              action,
+              details
+            )
+          VALUES
+            (
+              $1,
+              'SUBSCRIPTION_UPGRADED',
+              $2
+            );
+        `;
+
+        await client.query(logQuery, [
+          userId,
+          "Upgraded to DocuGuard Pro using the capstone demo payment.",
+        ]);
+
+        await client.query("RELEASE SAVEPOINT subscription_activity_log");
+      } catch (logError) {
+        await client.query("ROLLBACK TO SAVEPOINT subscription_activity_log");
+        console.warn("Subscription activity log skipped:", logError.message);
+      }
 
       await client.query("COMMIT");
 

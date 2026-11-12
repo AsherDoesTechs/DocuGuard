@@ -55,12 +55,30 @@ exports.getProfile = async (req, res) => {
       storageUsedMB = null;
     }
 
+    let subscription = null;
+    try {
+      const subRes = await db.query(
+        `SELECT plan_name AS "planName",
+                renewal_date AS "renewalDate",
+                storage_used AS "storageUsed",
+                storage_total AS "storageTotal"
+         FROM subscriptions
+         WHERE user_id = $1`,
+        [userId],
+      );
+      subscription = subRes.rows[0] || null;
+    } catch (subErr) {
+      console.warn("Failed to fetch subscription:", subErr.message);
+      subscription = null;
+    }
+
     res.json({
       ...userRes.rows[0],
       documentCount: parseInt(statsRes.rows[0].documentCount || 0),
       expiringCount: parseInt(statsRes.rows[0].expiringCount || 0),
       expiredCount: parseInt(statsRes.rows[0].expiredCount || 0),
       storageUsedMB,
+      subscription,
     });
   } catch (err) {
     console.error("Error fetching profile:", err);
