@@ -64,6 +64,7 @@ function RootLayoutNav() {
           record?.noticeVersion === PRIVACY_NOTICE_VERSION &&
           record?.noticeAcknowledged === true &&
           record?.processingAgreed === true &&
+          record?.scopeAcknowledged === true &&
           typeof record?.acceptedAt === "string" &&
           !Number.isNaN(Date.parse(record.acceptedAt))
         );

@@ -115,6 +115,7 @@ interface SettingRowProps {
   isActive: boolean;
   onPress: () => void;
   isDestructive?: boolean;
+  isWarning?: boolean;
 }
 
 const OCCUPATION_LIST = [
@@ -150,7 +151,10 @@ const SettingRow = ({
   isActive,
   onPress,
   isDestructive = false,
-}: SettingRowProps) => (
+  isWarning = false,
+}: SettingRowProps) => {
+  const accentColor = isDestructive ? colors.error : isWarning ? colors.warning : colors.primary;
+  return (
   <TouchableOpacity
     onPress={onPress}
     accessibilityRole="button"
@@ -168,13 +172,13 @@ const SettingRow = ({
       <Ionicons
         name={icon}
         size={22}
-        color={isDestructive ? colors.error : colors.primary}
+        color={accentColor}
       />
       <View style={styles.settingInfo}>
         <Text
           style={[
             styles.settingTitle,
-            { color: isDestructive ? colors.error : colors.text },
+            { color: isDestructive || isWarning ? accentColor : colors.text },
           ]}
         >
           {title}
@@ -190,7 +194,8 @@ const SettingRow = ({
       />
     </View>
   </TouchableOpacity>
-);
+  );
+};
 
 const UniqueAvatar = ({
   name,
@@ -1022,11 +1027,9 @@ export default function ProfileScreen() {
     }
 
     try {
-      await api.client.post(
-        "/profile/delete-account",
-        { password },
-        { headers: { Authorization: `Bearer ${token}` } },
-      );
+      await api.client.delete("/profile", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
     } catch (err: any) {
       feedbackService.error(
         getApiErrorMessage(
@@ -2304,7 +2307,7 @@ export default function ProfileScreen() {
                     subtitle="Log out safely from your account session"
                     isActive={false}
                     onPress={handleSignOut}
-                    isDestructive={false}
+                    isWarning={true}
                   />
 
                   {/* Delete Account Row */}
