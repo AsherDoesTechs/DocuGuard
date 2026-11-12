@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -14,7 +14,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { Camera } from "expo-camera";
-import { COLORS } from "@/constants";
+import { useColors } from "@/context/ThemeContext";
 import { feedbackService } from "../../services/feedbackService";
 
 let ScannerPlugin: any = null;
@@ -116,6 +116,8 @@ export const DocumentScannerComponent = ({
   onClose,
   onScanSuccess,
 }: DocumentScannerProps) => {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [visibleState, setVisibleState] = useState(false);
   const [phase, setPhase] = useState<ScannerPhase>("preparing");
   const [scanning, setScanning] = useState(false);
@@ -222,7 +224,7 @@ export const DocumentScannerComponent = ({
             setPhase("error");
             feedbackService.showScanProgress({
               stage: "error",
-              message: `The captured document does not meet the minimum resolution requirement of ${MIN_WIDTH} × ${MIN_HEIGHT} pixels. Please hold the device steady and try again.`,
+              message: `The captured document does not meet the minimum resolution requirement of ${MIN_WIDTH} Ã— ${MIN_HEIGHT} pixels. Please hold the device steady and try again.`,
               onRetry: () => captureDocumentRef.current(),
             });
             resolve();
@@ -667,7 +669,7 @@ export const DocumentScannerComponent = ({
     if (!currentImage) {
       return (
         <View style={styles.emptyReview}>
-          <Ionicons name="document-outline" size={56} color="#CBD5E1" />
+          <Ionicons name="document-outline" size={56} color={colors.textMuted} />
           <Text style={styles.emptyTitle}>No pages scanned</Text>
           <Text style={styles.emptySubtitle}>Scan a document to continue.</Text>
           <TouchableOpacity
@@ -676,7 +678,7 @@ export const DocumentScannerComponent = ({
             accessibilityRole="button"
             accessibilityLabel="Scan document"
           >
-            <Ionicons name="scan-outline" size={22} color="#fff" />
+            <Ionicons name="scan-outline" size={22} color={colors.buttonPrimaryText} />
             <Text style={styles.primaryButtonText}>Scan Document</Text>
           </TouchableOpacity>
         </View>
@@ -702,7 +704,7 @@ export const DocumentScannerComponent = ({
             accessibilityRole="button"
             accessibilityLabel="Close scanner"
           >
-            <Ionicons name="close" size={25} color="#fff" />
+            <Ionicons name="close" size={25} color={colors.buttonPrimaryText} />
           </TouchableOpacity>
         </View>
 
@@ -728,7 +730,7 @@ export const DocumentScannerComponent = ({
                   : "checkmark-circle-outline"
               }
               size={17}
-              color={quality === "low-resolution" ? "#FBBF24" : "#86EFAC"}
+              color={quality === "low-resolution" ? colors.warning : colors.success}
             />
             <Text
               style={[
@@ -738,7 +740,7 @@ export const DocumentScannerComponent = ({
             >
               {quality === "low-resolution"
                 ? "Low resolution"
-                : `${currentImage.width} × ${currentImage.height}`}
+                : `${currentImage.width} Ã— ${currentImage.height}`}
             </Text>
           </View>
         </View>
@@ -781,7 +783,7 @@ export const DocumentScannerComponent = ({
                     accessibilityRole="button"
                     accessibilityLabel={`Delete page ${index + 1}`}
                   >
-                    <Ionicons name="close" size={14} color="#fff" />
+                    <Ionicons name="close" size={14} color={colors.buttonPrimaryText} />
                   </TouchableOpacity>
                 </TouchableOpacity>
               );
@@ -796,7 +798,7 @@ export const DocumentScannerComponent = ({
             accessibilityRole="button"
             accessibilityLabel="Retake current page"
           >
-            <Ionicons name="camera-reverse-outline" size={21} color="#fff" />
+            <Ionicons name="camera-reverse-outline" size={21} color={colors.buttonPrimaryText} />
             <Text style={styles.secondaryButtonText}>Retake</Text>
           </TouchableOpacity>
 
@@ -807,7 +809,7 @@ export const DocumentScannerComponent = ({
               accessibilityRole="button"
               accessibilityLabel="Move page left"
             >
-              <Ionicons name="chevron-back" size={22} color="#fff" />
+              <Ionicons name="chevron-back" size={22} color={colors.buttonPrimaryText} />
             </TouchableOpacity>
           )}
 
@@ -818,7 +820,7 @@ export const DocumentScannerComponent = ({
               accessibilityRole="button"
               accessibilityLabel="Move page right"
             >
-              <Ionicons name="chevron-forward" size={22} color="#fff" />
+              <Ionicons name="chevron-forward" size={22} color={colors.buttonPrimaryText} />
             </TouchableOpacity>
           )}
 
@@ -829,7 +831,7 @@ export const DocumentScannerComponent = ({
               accessibilityRole="button"
               accessibilityLabel="Add another page"
             >
-              <Ionicons name="add" size={21} color="#fff" />
+              <Ionicons name="add" size={21} color={colors.buttonPrimaryText} />
               <Text style={styles.secondaryButtonText}>Add Page</Text>
             </TouchableOpacity>
           )}
@@ -841,7 +843,7 @@ export const DocumentScannerComponent = ({
           accessibilityRole="button"
           accessibilityLabel="Use scanned document"
         >
-          <Ionicons name="checkmark-circle-outline" size={22} color="#fff" />
+          <Ionicons name="checkmark-circle-outline" size={22} color={colors.buttonPrimaryText} />
           <Text style={styles.primaryButtonText}>Use Scan</Text>
         </TouchableOpacity>
 
@@ -878,12 +880,12 @@ export const DocumentScannerComponent = ({
       <View style={styles.stabilizationContent}>
         <View style={styles.guidanceBox}>
           <View style={styles.scannerIconCircle}>
-            <Ionicons name={icon} size={40} color="#fff" />
+            <Ionicons name={icon} size={40} color={colors.buttonPrimaryText} />
           </View>
           <Text style={styles.instructionTitle}>{title}</Text>
           <Text style={styles.instructionSubtitle}>{subtitle}</Text>
           <ActivityIndicator
-            color="#fff"
+            color={colors.buttonPrimaryText}
             size="small"
             style={styles.activityIndicator}
           />
@@ -906,7 +908,7 @@ export const DocumentScannerComponent = ({
     <View style={styles.stabilizationContent}>
       <View style={styles.successBox}>
         <View style={styles.successIconCircle}>
-          <Ionicons name="checkmark" size={48} color="#fff" />
+          <Ionicons name="checkmark" size={48} color={colors.buttonPrimaryText} />
         </View>
         <Text style={styles.instructionTitle}>Scan Successful</Text>
         <Text style={styles.instructionSubtitle}>
@@ -914,7 +916,7 @@ export const DocumentScannerComponent = ({
           captured successfully
         </Text>
         <ActivityIndicator
-          color="#fff"
+          color={colors.buttonPrimaryText}
           size="small"
           style={styles.activityIndicator}
         />
@@ -968,7 +970,7 @@ export const DocumentScannerComponent = ({
                 scanning && styles.closeButtonDisabled,
               ]}
             >
-              <Ionicons name="close" size={28} color="#fff" />
+              <Ionicons name="close" size={28} color={colors.buttonPrimaryText} />
               <Text style={styles.closeLabel}>Cancel</Text>
             </View>
           </TouchableOpacity>
@@ -982,7 +984,7 @@ export const DocumentScannerComponent = ({
 /*                                   STYLES                                   */
 /* -------------------------------------------------------------------------- */
 
-const styles = StyleSheet.create({
+const createStyles = (colors: any) => StyleSheet.create({
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0, 0, 0, 0.94)",
@@ -1016,14 +1018,14 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255, 255, 255, 0.2)",
   },
   instructionTitle: {
-    color: "#fff",
+    color: colors.buttonPrimaryText,
     fontSize: 21,
     fontWeight: "700",
     marginTop: 16,
     textAlign: "center",
   },
   instructionSubtitle: {
-    color: "#CBD5E1",
+    color: colors.textMuted,
     fontSize: 15,
     fontWeight: "500",
     lineHeight: 22,
@@ -1040,7 +1042,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   scanProgressText: {
-    color: "#94A3B8",
+    color: colors.textSecondary,
     fontSize: 12,
     marginTop: 8,
   },
@@ -1057,12 +1059,12 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   reviewTitle: {
-    color: "#fff",
+    color: colors.buttonPrimaryText,
     fontSize: 24,
     fontWeight: "800",
   },
   reviewSubtitle: {
-    color: "#94A3B8",
+    color: colors.textSecondary,
     fontSize: 14,
     marginTop: 3,
   },
@@ -1080,7 +1082,7 @@ const styles = StyleSheet.create({
     maxHeight: SCREEN_WIDTH * 1.25,
     borderRadius: 20,
     overflow: "hidden",
-    backgroundColor: "#0F172A",
+    backgroundColor: colors.background,
     borderWidth: 1,
     borderColor: "rgba(255, 255, 255, 0.12)",
     position: "relative",
@@ -1101,7 +1103,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
   },
   pageIndicatorText: {
-    color: "#fff",
+    color: colors.buttonPrimaryText,
     fontSize: 12,
     fontWeight: "700",
   },
@@ -1118,12 +1120,12 @@ const styles = StyleSheet.create({
     borderRadius: 16,
   },
   qualityText: {
-    color: "#86EFAC",
+    color: colors.success,
     fontSize: 11,
     fontWeight: "700",
   },
   qualityWarningText: {
-    color: "#FBBF24",
+    color: colors.warning,
   },
   thumbnailSection: {
     marginTop: 14,
@@ -1135,12 +1137,12 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   thumbnailTitle: {
-    color: "#fff",
+    color: colors.buttonPrimaryText,
     fontSize: 15,
     fontWeight: "700",
   },
   thumbnailHint: {
-    color: "#64748B",
+    color: colors.textMuted,
     fontSize: 12,
   },
   thumbnailList: {
@@ -1154,11 +1156,11 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     borderWidth: 2,
     borderColor: "transparent",
-    backgroundColor: "#1E293B",
+    backgroundColor: colors.surfaceSecondary,
     position: "relative",
   },
   thumbnailSelected: {
-    borderColor: "#fff",
+    borderColor: colors.buttonPrimaryText,
   },
   thumbnailImage: {
     width: "100%",
@@ -1176,7 +1178,7 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0, 0, 0, 0.72)",
   },
   thumbnailNumberText: {
-    color: "#fff",
+    color: colors.buttonPrimaryText,
     fontSize: 11,
     fontWeight: "800",
   },
@@ -1211,7 +1213,7 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255, 255, 255, 0.16)",
   },
   secondaryButtonText: {
-    color: "#fff",
+    color: colors.buttonPrimaryText,
     fontSize: 13,
     fontWeight: "700",
   },
@@ -1233,16 +1235,16 @@ const styles = StyleSheet.create({
     minHeight: 52,
     marginTop: 12,
     borderRadius: 26,
-    backgroundColor: COLORS.primary || "#2563EB",
+    backgroundColor: colors.primary,
     paddingHorizontal: 20,
   },
   primaryButtonText: {
-    color: "#fff",
+    color: colors.buttonPrimaryText,
     fontSize: 16,
     fontWeight: "800",
   },
   reviewFooter: {
-    color: "#64748B",
+    color: colors.textMuted,
     fontSize: 11,
     lineHeight: 16,
     textAlign: "center",
@@ -1255,13 +1257,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 30,
   },
   emptyTitle: {
-    color: "#fff",
+    color: colors.buttonPrimaryText,
     fontSize: 20,
     fontWeight: "800",
     marginTop: 16,
   },
   emptySubtitle: {
-    color: "#94A3B8",
+    color: colors.textSecondary,
     fontSize: 14,
     textAlign: "center",
     marginTop: 8,
@@ -1284,7 +1286,7 @@ const styles = StyleSheet.create({
     borderRadius: 41,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: COLORS.success || "#16A34A",
+    backgroundColor: colors.success,
   },
   closeButton: {
     alignSelf: "center",
@@ -1306,8 +1308,11 @@ const styles = StyleSheet.create({
     opacity: 0.5,
   },
   closeLabel: {
-    color: "#fff",
+    color: colors.buttonPrimaryText,
     fontSize: 16,
     fontWeight: "600",
   },
 });
+
+
+

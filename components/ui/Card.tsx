@@ -34,7 +34,7 @@ export default function Card({
   const colors = useColors();
 
   const shadowStyle: ViewStyle =
-    colors.background === "#0B1220"
+    colors.cardShadow !== "rgba(73, 103, 145, 0.08)"
       ? {
           elevation: Platform.OS === "android" ? 0 : undefined,
           shadowColor: colors.shadow,

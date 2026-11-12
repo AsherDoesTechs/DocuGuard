@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useMemo, useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -14,7 +14,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Input, Button, Card } from "../../components/ui";
 import { AuthScreen } from "../../components/ui/AuthScreen";
 import { useForm } from "../../hooks/useForm";
-import { COLORS } from "../../constants";
+
 import { useColors } from "@/context/ThemeContext";
 import { api } from "../../services/api";
 import { establishAuthenticatedSession } from "../../services/authSession";
@@ -31,6 +31,7 @@ const WELCOME_VISIT_KEY = "docuguardWelcomeVisitCount";
 export default function BiometricLoginScreen() {
   const router = useRouter();
   const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
 
   const [isBiometricSupported, setIsBiometricSupported] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -450,7 +451,7 @@ export default function BiometricLoginScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: any) => StyleSheet.create({
   passwordWrapper: {
     position: "relative",
     width: "100%",
@@ -481,7 +482,7 @@ const styles = StyleSheet.create({
   },
 
   checkboxLabel: {
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     fontSize: 14,
   },
 
@@ -519,7 +520,7 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     justifyContent: "center",
     alignItems: "center",
-    shadowColor: COLORS.primary,
+    shadowColor: colors.primary,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.2,
     shadowRadius: 5,

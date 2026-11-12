@@ -21,7 +21,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { Card } from "../../components/ui";
-import { COLORS as BASE_COLORS } from "@/constants";
+
 import { formatShortDate, parseLocalDate } from "../../utils";
 import { RefreshableContainer } from "@/components/ui/RefreshableContainer";
 import { RemindersSkeleton } from "@/components/ui/Skeleton";
@@ -76,27 +76,10 @@ export default function RemindersScreen() {
   const { colors, isDark } = useTheme();
 
   const themeColors = useMemo(
-    () =>
-      ({
-        ...BASE_COLORS,
-        background: colors.background,
-        surface: colors.surface,
-        surfaceSecondary: colors.surfaceSecondary,
-        primary: colors.primary,
-        primaryDark: colors.primaryDark,
-        primaryLight: colors.primaryLight,
-        text: colors.text,
-        textSecondary: colors.textSecondary,
-        textMuted: colors.textMuted,
-        success: colors.success,
-        warning: colors.warning,
-        warningLight: colors.warningLight,
-        danger: colors.error,
-        border: colors.border,
-        inputBackground: colors.inputBackground,
-        inputBorder: colors.inputBorder,
-        modalOverlay: colors.modalOverlay,
-      }) as typeof BASE_COLORS,
+    () => ({
+      ...colors,
+      danger: colors.error,
+    }),
     [colors],
   );
 
@@ -993,7 +976,7 @@ export default function RemindersScreen() {
   );
 }
 
-const createStyles = (COLORS: typeof BASE_COLORS) =>
+const createStyles = (COLORS: any) =>
   StyleSheet.create({
     safeArea: {
       flex: 1,

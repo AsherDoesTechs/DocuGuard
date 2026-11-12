@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+﻿import React, { useMemo, useState } from "react";
 import {
   View,
   TextInput,
@@ -14,23 +14,15 @@ import { Ionicons } from "@expo/vector-icons";
 import { useColors } from "@/context/ThemeContext";
 import { Spacing } from "@/constants/spacing";
 
-interface InputProps extends Omit<TextInputProps, "style" | "onChangeText" | "onBlur" | "value" | "placeholder"> {
+interface InputProps extends Omit<TextInputProps, "style" | "onChangeText" | "onBlur" | "value" | "placeholder" | "onFocus"> {
   label?: string | React.ReactNode;
   placeholder: string;
   value: string;
   onChangeText: (text: string) => void;
   onBlur?: () => void;
-  secureTextEntry?: boolean;
+  onFocus?: TextInputProps["onFocus"];
   error?: string;
-  keyboardType?: KeyboardTypeOptions;
   style?: StyleProp<TextStyle>;
-  autoComplete?: string;
-  textContentType?: string;
-  maxLength?: number;
-  autoFocus?: boolean;
-  editable?: boolean;
-
-  // Optional trailing icon
   rightIcon?: keyof typeof Ionicons.glyphMap;
   onRightIconPress?: () => void;
 }
@@ -186,3 +178,5 @@ export default function Input({
     </View>
   );
 }
+
+

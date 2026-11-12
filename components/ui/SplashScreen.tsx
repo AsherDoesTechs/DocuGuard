@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useMemo, useRef } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import Animated, {
@@ -7,10 +7,10 @@ import Animated, {
   useAnimatedStyle,
   useSharedValue,
   withRepeat,
-  withSequence,
   withSpring,
   withTiming,
 } from "react-native-reanimated";
+import { useColors } from "@/context/ThemeContext";
 
 interface Props {
   isLoading: boolean;
@@ -20,6 +20,8 @@ interface Props {
 const FADE_DURATION = 280;
 
 export default function SplashScreen({ isLoading, onComplete }: Props) {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const opacity = useSharedValue(1);
   const logoOpacity = useSharedValue(0);
   const logoScale = useSharedValue(0.92);
@@ -129,7 +131,7 @@ export default function SplashScreen({ isLoading, onComplete }: Props) {
           <MaterialCommunityIcons
             name="shield-check"
             size={38}
-            color="#2563EB"
+            color={colors.primary}
           />
         </Animated.View>
 
@@ -168,80 +170,81 @@ export default function SplashScreen({ isLoading, onComplete }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    ...StyleSheet.absoluteFill,
-    backgroundColor: "#FFFFFF",
-    alignItems: "center",
-    justifyContent: "center",
-    zIndex: 10000,
-    elevation: 10000,
-  },
-  content: {
-    width: "100%",
-    alignItems: "center",
-    paddingHorizontal: 24,
-  },
-  logo: {
-    width: 72,
-    height: 72,
-    borderRadius: 22,
-    backgroundColor: "#EFF6FF",
-    borderWidth: 1,
-    borderColor: "#DBEAFE",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 22,
-  },
-  appName: {
-    color: "#172554",
-    fontSize: 29,
-    fontWeight: "700",
-    letterSpacing: -0.9,
-    textAlign: "center",
-  },
-  tagline: {
-    color: "#64748B",
-    fontSize: 13,
-    fontWeight: "400",
-    letterSpacing: 0.1,
-    textAlign: "center",
-    marginTop: 8,
-  },
-  loadingContainer: {
-    width: 136,
-    marginTop: 42,
-  },
-  progressTrack: {
-    height: 3,
-    width: "100%",
-    borderRadius: 3,
-    backgroundColor: "#EAF0F8",
-    overflow: "hidden",
-  },
-  progressIndicator: {
-    height: 3,
-    width: 54,
-    borderRadius: 3,
-    backgroundColor: "#2563EB",
-  },
-  progressComplete: {
-    height: 3,
-    width: "100%",
-    borderRadius: 3,
-    backgroundColor: "#2563EB",
-  },
-  footer: {
-    position: "absolute",
-    bottom: 30,
-    alignItems: "center",
-    paddingHorizontal: 16,
-  },
-  footerText: {
-    color: "#94A3B8",
-    fontSize: 9,
-    fontWeight: "600",
-    letterSpacing: 1.4,
-    textAlign: "center",
-  },
-});
+const createStyles = (colors: any) =>
+  StyleSheet.create({
+    container: {
+      ...StyleSheet.absoluteFill,
+      backgroundColor: colors.background,
+      alignItems: "center",
+      justifyContent: "center",
+      zIndex: 10000,
+      elevation: 10000,
+    },
+    content: {
+      width: "100%",
+      alignItems: "center",
+      paddingHorizontal: 24,
+    },
+    logo: {
+      width: 72,
+      height: 72,
+      borderRadius: 22,
+      backgroundColor: colors.primaryLight,
+      borderWidth: 1,
+      borderColor: colors.border,
+      alignItems: "center",
+      justifyContent: "center",
+      marginBottom: 22,
+    },
+    appName: {
+      color: colors.text,
+      fontSize: 29,
+      fontWeight: "700",
+      letterSpacing: -0.9,
+      textAlign: "center",
+    },
+    tagline: {
+      color: colors.textSecondary,
+      fontSize: 13,
+      fontWeight: "400",
+      letterSpacing: 0.1,
+      textAlign: "center",
+      marginTop: 8,
+    },
+    loadingContainer: {
+      width: 136,
+      marginTop: 42,
+    },
+    progressTrack: {
+      height: 3,
+      width: "100%",
+      borderRadius: 3,
+      backgroundColor: colors.border,
+      overflow: "hidden",
+    },
+    progressIndicator: {
+      height: 3,
+      width: 54,
+      borderRadius: 3,
+      backgroundColor: colors.primary,
+    },
+    progressComplete: {
+      height: 3,
+      width: "100%",
+      borderRadius: 3,
+      backgroundColor: colors.primary,
+    },
+    footer: {
+      position: "absolute",
+      bottom: 30,
+      alignItems: "center",
+      paddingHorizontal: 16,
+    },
+    footerText: {
+      color: colors.textMuted,
+      fontSize: 9,
+      fontWeight: "600",
+      letterSpacing: 1.4,
+      textAlign: "center",
+    },
+  });

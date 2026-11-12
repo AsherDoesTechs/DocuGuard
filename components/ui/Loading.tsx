@@ -1,4 +1,4 @@
-import React from "react";
+﻿import React from "react";
 import { View, Text, StyleSheet } from "react-native";
 import Animated, {
   useAnimatedStyle,
@@ -58,5 +58,6 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     borderWidth: 3,
   },
-  label: { fontSize: 14, color: "#6b7280", fontWeight: "500" },
+  label: { fontSize: 14, fontWeight: "500" },
 });
+

@@ -5,7 +5,7 @@ import { Input, Button, Card } from "../../components/ui";
 import { AuthScreen } from "../../components/ui/AuthScreen";
 import { useForm } from "../../hooks/useForm";
 import { useColors } from "@/context/ThemeContext";
-import { Spacing, COLORS } from "@/constants";
+import { Spacing } from "@/constants";
 import { api } from "../../services/api";
 import {
   registerSchema,
@@ -54,22 +54,22 @@ export default function RegisterScreen() {
     if (/[^A-Za-z0-9]/.test(password)) score += 1;
 
     if (score <= 1) {
-      return { score: 20, label: "Weak", color: COLORS.danger };
+      return { score: 20, label: "Weak", color: colors.error };
     }
 
     if (score === 2) {
-      return { score: 40, label: "Fair", color: COLORS.warning };
+      return { score: 40, label: "Fair", color: colors.warning };
     }
 
     if (score === 3) {
-      return { score: 60, label: "Good", color: COLORS.primary };
+      return { score: 60, label: "Good", color: colors.primary };
     }
 
     if (score === 4) {
-      return { score: 80, label: "Strong", color: COLORS.success };
+      return { score: 80, label: "Strong", color: colors.success };
     }
 
-    return { score: 100, label: "Very strong", color: COLORS.success };
+    return { score: 100, label: "Very strong", color: colors.success };
   };
 
   const validate = (values: RegisterFormValues) => {

@@ -1,8 +1,8 @@
-import React from "react";
+﻿import React, { useMemo } from "react";
 import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { COLORS } from "@/constants";
+import { useColors } from "@/context/ThemeContext";
 
 interface SubscriptionViewProps {
   planName: string;
@@ -18,13 +18,15 @@ export const SubscriptionView = ({
   storageTotal,
 }: SubscriptionViewProps) => {
   const router = useRouter();
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const percentage = storageTotal > 0 ? (storageUsed / storageTotal) * 100 : 0;
 
   const handleAction = (action: string) => {
     router.push({
       pathname: "/subscription-payment",
       params: { action },
-    });
+    } as any);
   };
 
   return (
@@ -32,9 +34,9 @@ export const SubscriptionView = ({
       <View style={styles.subHeader}>
         <Text style={styles.subTitle}>Current Plan</Text>
         <View
-          style={[styles.badge, { backgroundColor: `${COLORS.primary}15` }]}
+          style={[styles.badge, { backgroundColor: `${colors.primary}22` }]}
         >
-          <Text style={[styles.badgeText, { color: COLORS.primary }]}>
+          <Text style={[styles.badgeText, { color: colors.primary }]}>
             {planName ? planName.toUpperCase() : "STANDARD TIER"}
           </Text>
         </View>
@@ -46,7 +48,7 @@ export const SubscriptionView = ({
         <View style={styles.usageRow}>
           <Text style={styles.usageLabel}>Storage Used</Text>
           <Text style={styles.usageValue}>
-            {storageUsed} GB / {storageTotal} GB
+            {storageUsed} MB / {storageTotal} MB
           </Text>
         </View>
         <View style={styles.progressBarBackground}>
@@ -55,7 +57,7 @@ export const SubscriptionView = ({
               styles.progressBarFill,
               {
                 width: `${Math.min(percentage, 100)}%`,
-                backgroundColor: COLORS.primary,
+                backgroundColor: colors.primary,
               },
             ]}
           />
@@ -63,11 +65,10 @@ export const SubscriptionView = ({
       </View>
 
       <View style={styles.paymentMethod}>
-        <Ionicons name="card-outline" size={20} color="#666" />
+        <Ionicons name="card-outline" size={20} color={colors.textSecondary} />
         <Text style={styles.paymentText}>Secured via Backend Vault</Text>
       </View>
 
-      {/* Navigation Actions */}
       <TouchableOpacity
         style={styles.primaryButton}
         onPress={() => handleAction("renew")}
@@ -92,63 +93,66 @@ export const SubscriptionView = ({
   );
 };
 
-const styles = StyleSheet.create({
-  container: { padding: 5 },
-  subHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 8,
-  },
-  subTitle: { fontSize: 16, fontWeight: "700", color: COLORS.text },
-  badge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
-  badgeText: { fontSize: 12, fontWeight: "800" },
-  renewalText: { color: COLORS.textSecondary, marginBottom: 20 },
-  usageContainer: { marginBottom: 20 },
-  usageRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 8,
-  },
-  usageLabel: { fontSize: 14, color: COLORS.textSecondary },
-  usageValue: { fontSize: 14, fontWeight: "600", color: COLORS.text },
-  progressBarBackground: {
-    height: 6,
-    backgroundColor: "#E5E7EB",
-    borderRadius: 3,
-    overflow: "hidden",
-  },
-  progressBarFill: { height: "100%", borderRadius: 3 },
-  paymentMethod: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 20,
-    gap: 10,
-  },
-  paymentText: { color: "#4B5563", fontSize: 14 },
-  primaryButton: {
-    backgroundColor: COLORS.primary,
-    borderRadius: 12,
-    height: 48,
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 10,
-  },
-  secondaryButton: {
-    backgroundColor: "#F3F4F6",
-    borderRadius: 12,
-    height: 48,
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 15,
-  },
-  buttonText: { color: "#fff", fontWeight: "700", fontSize: 15 },
-  secondaryButtonText: { color: "#374151", fontWeight: "700", fontSize: 15 },
-  manageButton: { padding: 10 },
-  cancelText: {
-    textAlign: "center",
-    color: "#6B7280",
-    fontSize: 14,
-    fontWeight: "500",
-  },
-});
+const createStyles = (colors: any) =>
+  StyleSheet.create({
+    container: { padding: 5 },
+    subHeader: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      marginBottom: 8,
+    },
+    subTitle: { fontSize: 16, fontWeight: "700", color: colors.text },
+    badge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
+    badgeText: { fontSize: 12, fontWeight: "800" },
+    renewalText: { color: colors.textSecondary, marginBottom: 20 },
+    usageContainer: { marginBottom: 20 },
+    usageRow: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      marginBottom: 8,
+    },
+    usageLabel: { fontSize: 14, color: colors.textSecondary },
+    usageValue: { fontSize: 14, fontWeight: "600", color: colors.text },
+    progressBarBackground: {
+      height: 6,
+      backgroundColor: colors.border,
+      borderRadius: 3,
+      overflow: "hidden",
+    },
+    progressBarFill: { height: "100%", borderRadius: 3 },
+    paymentMethod: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 10,
+      marginBottom: 24,
+    },
+    paymentText: { fontSize: 14, color: colors.textSecondary },
+    primaryButton: {
+      backgroundColor: colors.buttonPrimary,
+      paddingVertical: 14,
+      borderRadius: 12,
+      alignItems: "center",
+      marginBottom: 12,
+    },
+    buttonText: {
+      color: colors.buttonPrimaryText,
+      fontWeight: "600",
+      fontSize: 15,
+    },
+    secondaryButton: {
+      borderWidth: 1,
+      borderColor: colors.primary,
+      paddingVertical: 14,
+      borderRadius: 12,
+      alignItems: "center",
+      marginBottom: 12,
+    },
+    secondaryButtonText: {
+      color: colors.primary,
+      fontWeight: "600",
+      fontSize: 15,
+    },
+    manageButton: { alignItems: "center", paddingVertical: 10 },
+    cancelText: { color: colors.textSecondary, fontSize: 14 },
+  });

@@ -21,8 +21,9 @@ import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import * as SecureStore from "expo-secure-store";
 import * as DocumentPicker from "expo-document-picker";
+import { recordAuditLog } from "@/services/auditService";
 
-import { COLORS } from "@/constants";
+import { useColors } from "@/context/ThemeContext";
 import { DocumentScannerComponent } from "@/components/ui/DocumentScanner";
 import { verifyDocumentWithOrchestrator } from "@/services/documentVerificationClient";
 import { extractDocumentData } from "../utils/ocr";
@@ -242,7 +243,7 @@ const DOCUMENTS_BY_CATEGORY: Record<string, SpecificDocumentItem[]> = {
     },
     {
       id: "sirb",
-      title: "Seafarer’s Identification and Record Book (SIRB)",
+      title: "SeafarerÃ¢â‚¬â„¢s Identification and Record Book (SIRB)",
       description: "Seaman's book issued by MARINA",
       icon: "boat-outline",
       defaultIssuer: "Maritime Industry Authority",
@@ -833,6 +834,8 @@ function Field({
   onSelectSuggestion,
   editable = true,
 }: FieldProps & { editable?: boolean }) {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [filteredSuggestions, setFilteredSuggestions] = useState<string[]>([]);
 
@@ -863,7 +866,7 @@ function Field({
       <TextInput
         value={value}
         placeholder={placeholder}
-        placeholderTextColor="#9CA3AF"
+        placeholderTextColor={colors.textMuted}
         editable={editable}
         onChangeText={(text) => {
           onChangeText(text);
@@ -878,9 +881,9 @@ function Field({
         style={[
           styles.input,
           multiline ? styles.multilineInput : null,
-          error ? { borderColor: COLORS.danger } : null,
+          error ? { borderColor: colors.error } : null,
           !editable
-            ? { backgroundColor: "#F3F4F6", color: COLORS.textSecondary }
+            ? { backgroundColor: colors.surfaceSecondary, color: colors.textSecondary }
             : null,
         ]}
       />
@@ -911,6 +914,8 @@ function Field({
 }
 
 function StepHeader({ step }: { step: number }) {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   return (
     <View style={styles.stepHeader}>
       <Text style={styles.stepLabel}>
@@ -944,6 +949,8 @@ export default function AddDocumentScreen() {
     reminderPrefs,
     loading: autofillLoading,
   } = useAutofill();
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
 
   const [hasNoExpirationDate, setHasNoExpirationDate] = useState(false);
 
@@ -1105,31 +1112,41 @@ export default function AddDocumentScreen() {
 
       const asset = result.assets[0];
 
-      /*
-       * A different file means a different upload, so the key of a previous
-       * upload is dropped.
-       */
-      resetOcrState();
+      const fileIdentityChanged =
+        selectedFile?.uri !== asset.uri ||
+        selectedFile?.name !== asset.name ||
+        selectedFile?.size !== asset.size;
 
-      setSelectedFile({
+      resetOcrState();
+      if (fileIdentityChanged) {
+        setTitle(specificDocument?.title || "");
+        setDocumentNumber("");
+        setIssuer(specificDocument?.defaultIssuer || "");
+        setIssueDate("");
+        setExpiryDate("");
+        setHasNoExpirationDate(false);
+        setNotes("");
+        setFieldErrors({});
+        setExtractedData(null);
+        setOcrUploadMeta(null);
+      }
+
+      const fileData = {
         name: asset.name,
         uri: asset.uri,
         size: asset.size || 0,
         mimeType: asset.mimeType ?? undefined,
-      });
-
-      setTitle(specificDocument?.title || "");
-      setDocumentNumber("");
-      setIssuer(specificDocument?.defaultIssuer || "");
-      setIssueDate("");
-      setExpiryDate("");
-      setHasNoExpirationDate(false);
-      setFieldErrors({});
+      };
+      setSelectedFile(fileData);
 
       setStep(4);
-      feedbackService.success("Document selected. Ready for review.");
-    } catch (error) {
-      feedbackService.error("Could not select the document. Please try again.");
+      await processScan(
+        asset.uri,
+        asset.mimeType ||
+          (asset.name?.toLowerCase().endsWith(".pdf") ? "application/pdf" : "image/jpeg"),
+      );
+    } catch {
+      feedbackService.error("Failed to pick document.");
     }
   }
 
@@ -1560,8 +1577,12 @@ export default function AddDocumentScreen() {
        */
       const result = await saveDocumentToVault(payload);
 
-      // 🔔 EMIT EVENT HERE TO UPDATE DASHBOARD STATS INSTANTLY
+      // Ã°Å¸â€â€ EMIT EVENT HERE TO UPDATE DASHBOARD STATS INSTANTLY
       DeviceEventEmitter.emit("documentVaultChanged");
+
+      await recordAuditLog(payload.documentNumber || "NEW_DOC", "UPLOAD", {
+        message: `Uploaded "${selectedFile?.name || title.trim() || "document"}"`,
+      });
 
       // Ensure a new key for next save
       generateNewSaveKey();
@@ -1684,7 +1705,7 @@ export default function AddDocumentScreen() {
             <Ionicons
               name="shield-checkmark-outline"
               size={30}
-              color={COLORS.primary}
+              color={colors.primary}
             />
           </View>
           <View style={styles.choiceContent}>
@@ -1697,7 +1718,7 @@ export default function AddDocumentScreen() {
           <Ionicons
             name="chevron-forward"
             size={22}
-            color={COLORS.textSecondary}
+            color={colors.textSecondary}
           />
         </TouchableOpacity>
 
@@ -1709,7 +1730,7 @@ export default function AddDocumentScreen() {
             <Ionicons
               name="folder-open-outline"
               size={30}
-              color={COLORS.primary}
+              color={colors.primary}
             />
           </View>
           <View style={styles.choiceContent}>
@@ -1721,7 +1742,7 @@ export default function AddDocumentScreen() {
           <Ionicons
             name="chevron-forward"
             size={22}
-            color={COLORS.textSecondary}
+            color={colors.textSecondary}
           />
         </TouchableOpacity>
       </View>
@@ -1743,7 +1764,7 @@ export default function AddDocumentScreen() {
             onPress={() => selectCategory(item)}
           >
             <View style={styles.categoryIcon}>
-              <Ionicons name={item.icon} size={25} color={COLORS.primary} />
+              <Ionicons name={item.icon} size={25} color={colors.primary} />
             </View>
             <View style={styles.choiceContent}>
               <Text style={styles.choiceTitle}>{item.title}</Text>
@@ -1752,7 +1773,7 @@ export default function AddDocumentScreen() {
             <Ionicons
               name="chevron-forward"
               size={22}
-              color={COLORS.textSecondary}
+              color={colors.textSecondary}
             />
           </TouchableOpacity>
         ))}
@@ -1775,7 +1796,7 @@ export default function AddDocumentScreen() {
             onPress={() => selectSpecificDocument(item)}
           >
             <View style={styles.documentChoiceIcon}>
-              <Ionicons name={item.icon} size={24} color={COLORS.primary} />
+              <Ionicons name={item.icon} size={24} color={colors.primary} />
             </View>
             <View style={styles.choiceContent}>
               <Text style={styles.choiceTitle}>{item.title}</Text>
@@ -1784,7 +1805,7 @@ export default function AddDocumentScreen() {
             <Ionicons
               name="chevron-forward"
               size={22}
-              color={COLORS.textSecondary}
+              color={colors.textSecondary}
             />
           </TouchableOpacity>
         ))}
@@ -1802,7 +1823,7 @@ export default function AddDocumentScreen() {
 
         {ocrLoading ? (
           <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color={COLORS.primary} />
+            <ActivityIndicator size="large" color={colors.primary} />
             <Text style={styles.loadingText}>Extracting document data...</Text>
           </View>
         ) : (
@@ -1815,7 +1836,7 @@ export default function AddDocumentScreen() {
                 <Ionicons
                   name="camera-outline"
                   size={34}
-                  color={COLORS.primary}
+                  color={colors.primary}
                 />
               </View>
               <View style={styles.choiceContent}>
@@ -1827,7 +1848,7 @@ export default function AddDocumentScreen() {
               <Ionicons
                 name="chevron-forward"
                 size={22}
-                color={COLORS.textSecondary}
+                color={colors.textSecondary}
               />
             </TouchableOpacity>
 
@@ -1836,7 +1857,7 @@ export default function AddDocumentScreen() {
                 <Ionicons
                   name="cloud-upload-outline"
                   size={34}
-                  color={COLORS.primary}
+                  color={colors.primary}
                 />
               </View>
               <View style={styles.choiceContent}>
@@ -1848,7 +1869,7 @@ export default function AddDocumentScreen() {
               <Ionicons
                 name="chevron-forward"
                 size={22}
-                color={COLORS.textSecondary}
+                color={colors.textSecondary}
               />
             </TouchableOpacity>
 
@@ -1872,7 +1893,7 @@ export default function AddDocumentScreen() {
                   : "image-outline"
               }
               size={25}
-              color={COLORS.primary}
+              color={colors.primary}
             />
             <View style={{ flex: 1 }}>
               <Text style={styles.fileName} numberOfLines={1}>
@@ -1883,7 +1904,7 @@ export default function AddDocumentScreen() {
               </Text>
             </View>
             <TouchableOpacity onPress={() => setSelectedFile(null)}>
-              <Ionicons name="close-circle" size={23} color={COLORS.danger} />
+              <Ionicons name="close-circle" size={23} color={colors.error} />
             </TouchableOpacity>
           </View>
         ) : null}
@@ -1912,7 +1933,7 @@ export default function AddDocumentScreen() {
         {extractedData ? (
           <View style={styles.extractionCard}>
             <View style={styles.extractionHeader}>
-              <Ionicons name="sparkles" size={20} color={COLORS.primary} />
+              <Ionicons name="sparkles" size={20} color={colors.primary} />
               <Text style={styles.extractionTitle}>Automatic Extraction</Text>
             </View>
             <View style={styles.confidenceRow}>
@@ -1975,14 +1996,14 @@ export default function AddDocumentScreen() {
           <TouchableOpacity
             style={[
               styles.dateButton,
-              fieldErrors.issueDate ? { borderColor: COLORS.danger } : null,
+              fieldErrors.issueDate ? { borderColor: colors.error } : null,
             ]}
             onPress={() => openDatePicker("issueDate")}
           >
             <Ionicons
               name="calendar-outline"
               size={22}
-              color={COLORS.primary}
+              color={colors.primary}
             />
             <Text style={issueDate ? styles.dateText : styles.datePlaceholder}>
               {issueDate || "Select issue date"}
@@ -2027,7 +2048,7 @@ export default function AddDocumentScreen() {
             <Ionicons
               name="calendar-outline"
               size={22}
-              color={hasNoExpirationDate ? "#9CA3AF" : COLORS.primary}
+              color={hasNoExpirationDate ? colors.textMuted : colors.primary}
             />
 
             <Text
@@ -2071,7 +2092,7 @@ export default function AddDocumentScreen() {
               name={hasNoExpirationDate ? "checkbox" : "square-outline"}
               size={21}
               color={
-                hasNoExpirationDate ? COLORS.primary : COLORS.textSecondary
+                hasNoExpirationDate ? colors.primary : colors.textSecondary
               }
             />
 
@@ -2165,11 +2186,11 @@ export default function AddDocumentScreen() {
           disabled={saving}
         >
           {saving ? (
-            <ActivityIndicator color="#fff" />
+            <ActivityIndicator color={colors.buttonPrimaryText} />
           ) : (
             <>
               <Text style={styles.primaryButtonText}>Save Document</Text>
-              <Ionicons name="checkmark" size={20} color="#fff" />
+              <Ionicons name="checkmark" size={20} color={colors.buttonPrimaryText} />
             </>
           )}
         </TouchableOpacity>
@@ -2186,7 +2207,7 @@ export default function AddDocumentScreen() {
       >
         <View style={styles.headerRow}>
           <TouchableOpacity style={styles.backButton} onPress={goBackStep}>
-            <Ionicons name="arrow-back" size={22} color={COLORS.text} />
+            <Ionicons name="arrow-back" size={22} color={colors.text} />
           </TouchableOpacity>
           <StepHeader step={step} />
         </View>
@@ -2233,10 +2254,10 @@ export default function AddDocumentScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: any) => StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: COLORS.background,
+    backgroundColor: colors.background,
   },
   keyboardView: {
     flex: 1,
@@ -2247,11 +2268,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: "#F3F4F6",
+    borderBottomColor: colors.surfaceSecondary,
   },
   container: {
     flex: 1,
-    backgroundColor: COLORS.background,
+    backgroundColor: colors.background,
   },
   header: {
     flexDirection: "row",
@@ -2266,7 +2287,7 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: COLORS.text,
+    color: colors.text,
   },
   stepHeader: {
     paddingHorizontal: 20,
@@ -2275,13 +2296,13 @@ const styles = StyleSheet.create({
   stepLabel: {
     fontSize: 12,
     fontWeight: "700",
-    color: COLORS.primary,
+    color: colors.primary,
     marginBottom: 4,
   },
   stepTitle: {
     fontSize: 22,
     fontWeight: "700",
-    color: COLORS.text,
+    color: colors.text,
     marginBottom: 12,
   },
   progressRow: {
@@ -2291,11 +2312,11 @@ const styles = StyleSheet.create({
   progressSegment: {
     flex: 1,
     height: 4,
-    backgroundColor: "#E5E7EB",
+    backgroundColor: colors.border,
     borderRadius: 2,
   },
   progressSegmentActive: {
-    backgroundColor: COLORS.primary,
+    backgroundColor: colors.primary,
   },
   scrollContent: {
     paddingHorizontal: 20,
@@ -2304,29 +2325,29 @@ const styles = StyleSheet.create({
   questionTitle: {
     fontSize: 18,
     fontWeight: "700",
-    color: COLORS.text,
+    color: colors.text,
     marginBottom: 6,
   },
   questionSubtitle: {
     fontSize: 14,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     marginBottom: 20,
   },
   largeChoice: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#fff",
+    backgroundColor: colors.surface,
     borderRadius: 12,
     padding: 16,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: "#E5E7EB",
+    borderColor: colors.border,
   },
   choiceIcon: {
     width: 50,
     height: 50,
     borderRadius: 25,
-    backgroundColor: "#EFF6FF",
+    backgroundColor: colors.primaryLight,
     justifyContent: "center",
     alignItems: "center",
     marginRight: 16,
@@ -2337,35 +2358,35 @@ const styles = StyleSheet.create({
   choiceTitle: {
     fontSize: 16,
     fontWeight: "600",
-    color: COLORS.text,
+    color: colors.text,
     marginBottom: 4,
   },
   choiceDescription: {
     fontSize: 13,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
   },
   categoryCard: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#fff",
+    backgroundColor: colors.surface,
     borderRadius: 12,
     padding: 16,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: "#E5E7EB",
+    borderColor: colors.border,
   },
   categoryIcon: {
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: "#EFF6FF",
+    backgroundColor: colors.primaryLight,
     justifyContent: "center",
     alignItems: "center",
     marginRight: 16,
   },
   dateButtonDisabled: {
-    backgroundColor: "#F3F4F6",
-    borderColor: "#E5E7EB",
+    backgroundColor: colors.surfaceSecondary,
+    borderColor: colors.border,
   },
 
   noExpirationOption: {
@@ -2383,35 +2404,35 @@ const styles = StyleSheet.create({
   noExpirationTitle: {
     fontSize: 14,
     fontWeight: "600",
-    color: COLORS.text,
+    color: colors.text,
   },
 
   noExpirationDescription: {
     fontSize: 12,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     marginTop: 2,
   },
 
   fieldError: {
-    color: COLORS.danger,
+    color: colors.error,
     fontSize: 12,
     marginTop: 5,
   },
   documentChoice: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#fff",
+    backgroundColor: colors.surface,
     borderRadius: 12,
     padding: 16,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: "#E5E7EB",
+    borderColor: colors.border,
   },
   documentChoiceIcon: {
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: "#EFF6FF",
+    backgroundColor: colors.primaryLight,
     justifyContent: "center",
     alignItems: "center",
     marginRight: 16,
@@ -2424,29 +2445,29 @@ const styles = StyleSheet.create({
   },
   switchLabel: {
     fontSize: 15,
-    color: COLORS.text,
+    color: colors.text,
   },
   toggleSwitch: {
     width: 44,
     height: 24,
     borderRadius: 12,
-    backgroundColor: "#E5E7EB",
+    backgroundColor: colors.border,
     padding: 2,
   },
   toggleSwitchActive: {
-    backgroundColor: COLORS.primary,
+    backgroundColor: colors.primary,
   },
   toggleKnob: {
     width: 20,
     height: 20,
     borderRadius: 10,
-    backgroundColor: "#fff",
+    backgroundColor: colors.surface,
   },
   toggleKnobActive: {
     transform: [{ translateX: 20 }],
   },
   reminderContainer: {
-    backgroundColor: "#F9FAFB",
+    backgroundColor: colors.surfaceSecondary,
     borderRadius: 12,
     padding: 12,
     marginBottom: 16,
@@ -2455,7 +2476,7 @@ const styles = StyleSheet.create({
   reminderTitle: {
     fontSize: 13,
     fontWeight: "600",
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     marginBottom: 6,
   },
   reminderOption: {
@@ -2466,25 +2487,25 @@ const styles = StyleSheet.create({
   },
   reminderOptionText: {
     fontSize: 14,
-    color: COLORS.text,
+    color: colors.text,
   },
   radioButton: {
     width: 20,
     height: 20,
     borderRadius: 10,
     borderWidth: 2,
-    borderColor: "#9CA3AF",
+    borderColor: colors.textMuted,
     alignItems: "center",
     justifyContent: "center",
   },
   radioButtonSelected: {
-    borderColor: "#2563EB",
+    borderColor: colors.primary,
   },
   radioButtonInner: {
     width: 10,
     height: 10,
     borderRadius: 5,
-    backgroundColor: "#2563EB",
+    backgroundColor: colors.buttonPrimary,
   },
   field: {
     marginBottom: 16,
@@ -2492,20 +2513,20 @@ const styles = StyleSheet.create({
   fieldLabel: {
     fontSize: 14,
     fontWeight: "600",
-    color: COLORS.text,
+    color: colors.text,
     marginBottom: 6,
   },
   required: {
-    color: COLORS.danger,
+    color: colors.error,
   },
   input: {
-    backgroundColor: "#fff",
+    backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: "#D1D5DB",
+    borderColor: colors.border,
     borderRadius: 8,
     paddingHorizontal: 12,
     height: 48,
-    color: COLORS.text,
+    color: colors.text,
     fontSize: 15,
   },
   multilineInput: {
@@ -2515,9 +2536,9 @@ const styles = StyleSheet.create({
   dateButton: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#fff",
+    backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: "#D1D5DB",
+    borderColor: colors.border,
     borderRadius: 8,
     paddingHorizontal: 12,
     height: 48,
@@ -2525,18 +2546,18 @@ const styles = StyleSheet.create({
   dateText: {
     flex: 1,
     marginLeft: 10,
-    color: COLORS.text,
+    color: colors.text,
     fontSize: 15,
   },
   datePlaceholder: {
     flex: 1,
     marginLeft: 10,
-    color: "#9CA3AF",
+    color: colors.textMuted,
     fontSize: 15,
   },
   primaryButton: {
     flexDirection: "row",
-    backgroundColor: COLORS.primary,
+    backgroundColor: colors.primary,
     borderRadius: 10,
     height: 50,
     justifyContent: "center",
@@ -2545,25 +2566,25 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   primaryButtonText: {
-    color: "#fff",
+    color: colors.buttonPrimaryText,
     fontSize: 16,
     fontWeight: "600",
   },
   scanOption: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#fff",
+    backgroundColor: colors.surface,
     borderRadius: 12,
     padding: 16,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: "#E5E7EB",
+    borderColor: colors.border,
   },
   scanIcon: {
     width: 54,
     height: 54,
     borderRadius: 27,
-    backgroundColor: "#EFF6FF",
+    backgroundColor: colors.primaryLight,
     justifyContent: "center",
     alignItems: "center",
     marginRight: 16,
@@ -2574,7 +2595,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   skipButtonText: {
-    color: COLORS.primary,
+    color: colors.primary,
     fontSize: 15,
     fontWeight: "600",
   },
@@ -2586,13 +2607,13 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 12,
     fontSize: 14,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     fontWeight: "500",
   },
   filePreview: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#F3F4F6",
+    backgroundColor: colors.surfaceSecondary,
     borderRadius: 10,
     padding: 12,
     marginTop: 16,
@@ -2601,19 +2622,19 @@ const styles = StyleSheet.create({
   fileName: {
     fontSize: 14,
     fontWeight: "600",
-    color: COLORS.text,
+    color: colors.text,
   },
   fileType: {
     fontSize: 11,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     marginTop: 2,
   },
   previewCard: {
     height: 180,
-    backgroundColor: "#F9FAFB",
+    backgroundColor: colors.surfaceSecondary,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: "#E5E7EB",
+    borderColor: colors.border,
     marginBottom: 16,
     overflow: "hidden",
     justifyContent: "center",
@@ -2624,12 +2645,12 @@ const styles = StyleSheet.create({
     height: "100%",
   },
   extractionCard: {
-    backgroundColor: "#EFF6FF",
+    backgroundColor: colors.primaryLight,
     borderRadius: 10,
     padding: 14,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: "#BFDBFE",
+    borderColor: colors.tagBorder,
   },
   extractionHeader: {
     flexDirection: "row",
@@ -2640,7 +2661,7 @@ const styles = StyleSheet.create({
   extractionTitle: {
     fontSize: 14,
     fontWeight: "600",
-    color: COLORS.primary,
+    color: colors.primary,
   },
   confidenceRow: {
     flexDirection: "row",
@@ -2649,17 +2670,17 @@ const styles = StyleSheet.create({
   },
   confidenceLabel: {
     fontSize: 13,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
   },
   confidenceValue: {
     fontSize: 13,
     fontWeight: "700",
-    color: COLORS.primary,
+    color: colors.primary,
   },
   extractionNote: {
     fontSize: 12,
     lineHeight: 18,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     marginTop: 8,
   },
   suggestionsList: {
@@ -2667,9 +2688,9 @@ const styles = StyleSheet.create({
     top: "100%",
     left: 0,
     right: 0,
-    backgroundColor: "#fff",
+    backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: "#D1D5DB",
+    borderColor: colors.border,
     borderTopWidth: 0,
     borderRadius: 8,
     marginTop: 4,
@@ -2685,10 +2706,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: "#F3F4F6",
+    borderBottomColor: colors.surfaceSecondary,
   },
   suggestionText: {
     fontSize: 14,
-    color: COLORS.text,
+    color: colors.text,
   },
 });
+
+
+
+
+
+

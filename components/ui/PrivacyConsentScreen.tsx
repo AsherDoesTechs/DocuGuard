@@ -1,5 +1,5 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useState } from "react";
+﻿import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Linking,
@@ -11,27 +11,18 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
+import { useColors } from "@/context/ThemeContext";
 
 export const PRIVACY_CONSENT_STORAGE_KEY = "docuguard_privacy_consent_v1";
-
 export const PRIVACY_NOTICE_VERSION = "1.0.0";
-
-const COLORS = {
-  background: "#F8FAFD",
-  white: "#FFFFFF",
-  navy: "#17365D",
-  blue: "#3478F6",
-  lightBlue: "#EAF2FF",
-  muted: "#7B8BA1",
-  border: "#DCE5F0",
-  danger: "#B42318",
-};
 
 type Props = {
   onComplete: () => void | Promise<void>;
 };
 
 export default function PrivacyConsentScreen({ onComplete }: Props) {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [noticeAcknowledged, setNoticeAcknowledged] = useState(false);
   const [processingAgreed, setProcessingAgreed] = useState(false);
   const [showNotice, setShowNotice] = useState(false);
@@ -42,10 +33,8 @@ export default function PrivacyConsentScreen({ onComplete }: Props) {
 
   const handleContinue = async () => {
     if (!canContinue || isSaving) return;
-
     setIsSaving(true);
     setError("");
-
     try {
       const consentRecord = JSON.stringify({
         noticeVersion: PRIVACY_NOTICE_VERSION,
@@ -53,14 +42,11 @@ export default function PrivacyConsentScreen({ onComplete }: Props) {
         processingAgreed: true,
         acceptedAt: new Date().toISOString(),
       });
-
       await AsyncStorage.setItem(PRIVACY_CONSENT_STORAGE_KEY, consentRecord);
-
       const saved = await AsyncStorage.getItem(PRIVACY_CONSENT_STORAGE_KEY);
       if (saved !== consentRecord) {
         throw new Error("Privacy consent could not be verified after saving.");
       }
-
       await onComplete();
     } catch (saveError) {
       console.error("Failed to save privacy acknowledgment:", saveError);
@@ -87,13 +73,13 @@ export default function PrivacyConsentScreen({ onComplete }: Props) {
       >
         <View style={styles.brand}>
           <View style={styles.brandIcon}>
-            <Ionicons name="shield-checkmark" size={24} color={COLORS.blue} />
+            <Ionicons name="shield-checkmark" size={24} color={colors.primary} />
           </View>
           <Text style={styles.brandName}>DocuGuard</Text>
         </View>
 
         <View style={styles.heroIcon}>
-          <Ionicons name="lock-closed" size={38} color={COLORS.blue} />
+          <Ionicons name="lock-closed" size={38} color={colors.primary} />
         </View>
 
         <Text style={styles.eyebrow}>YOUR PRIVACY MATTERS</Text>
@@ -105,29 +91,35 @@ export default function PrivacyConsentScreen({ onComplete }: Props) {
         </Text>
 
         <View style={styles.noticeCard}>
-          <Text style={styles.sectionTitle}>
-            How DocuGuard uses information
-          </Text>
+          <Text style={styles.sectionTitle}>How DocuGuard uses information</Text>
 
           <InfoRow
             icon="documents-outline"
             title="Documents and account details"
             description="Information you provide may be used to manage your account, organize documents, and track expiration dates."
+            styles={styles}
+            colors={colors}
           />
           <InfoRow
             icon="notifications-outline"
             title="Reminders and notifications"
             description="Relevant document dates and notification settings may be processed to provide reminders you enable."
+            styles={styles}
+            colors={colors}
           />
           <InfoRow
             icon="cloud-outline"
             title="Storage and service providers"
             description="Depending on the features you use, information may be stored locally and processed by cloud, email, or notification providers."
+            styles={styles}
+            colors={colors}
           />
           <InfoRow
             icon="shield-checkmark-outline"
             title="Security and retention"
             description="DocuGuard uses safeguards intended to protect information. Data should be retained only as long as justified by its stated purpose or applicable obligations."
+            styles={styles}
+            colors={colors}
           />
 
           <Pressable
@@ -142,7 +134,7 @@ export default function PrivacyConsentScreen({ onComplete }: Props) {
             <Ionicons
               name={showNotice ? "chevron-up" : "chevron-down"}
               size={18}
-              color={COLORS.blue}
+              color={colors.primary}
             />
           </Pressable>
 
@@ -176,7 +168,7 @@ export default function PrivacyConsentScreen({ onComplete }: Props) {
                 <Text style={styles.linkText}>
                   Read RA 10173 on the NPC website
                 </Text>
-                <Ionicons name="open-outline" size={16} color={COLORS.blue} />
+                <Ionicons name="open-outline" size={16} color={colors.primary} />
               </Pressable>
             </View>
           )}
@@ -189,6 +181,8 @@ export default function PrivacyConsentScreen({ onComplete }: Props) {
           onPress={() => setNoticeAcknowledged((value) => !value)}
           title="Privacy Notice acknowledgment"
           description="I have reviewed and understood the privacy information presented above."
+          styles={styles}
+          colors={colors}
         />
 
         <ConsentRow
@@ -196,6 +190,8 @@ export default function PrivacyConsentScreen({ onComplete }: Props) {
           onPress={() => setProcessingAgreed((value) => !value)}
           title="Core-service processing consent"
           description="I consent to the personal-data processing described in the final Privacy Notice for the core DocuGuard features, where consent is the applicable lawful basis."
+          styles={styles}
+          colors={colors}
         />
 
         <Text style={styles.disclaimer}>
@@ -214,9 +210,7 @@ export default function PrivacyConsentScreen({ onComplete }: Props) {
           onPress={() => void handleContinue()}
           disabled={!canContinue || isSaving}
           accessibilityRole="button"
-          accessibilityState={{
-            disabled: !canContinue || isSaving,
-          }}
+          accessibilityState={{ disabled: !canContinue || isSaving }}
           style={({ pressed }) => [
             styles.primaryButton,
             (!canContinue || isSaving) && styles.buttonDisabled,
@@ -224,11 +218,11 @@ export default function PrivacyConsentScreen({ onComplete }: Props) {
           ]}
         >
           {isSaving ? (
-            <ActivityIndicator color={COLORS.white} />
+            <ActivityIndicator color={colors.buttonPrimaryText} />
           ) : (
             <>
               <Text style={styles.primaryButtonText}>Agree and Continue</Text>
-              <Ionicons name="arrow-forward" size={20} color={COLORS.white} />
+              <Ionicons name="arrow-forward" size={20} color={colors.buttonPrimaryText} />
             </>
           )}
         </Pressable>
@@ -243,15 +237,19 @@ function InfoRow({
   icon,
   title,
   description,
+  styles,
+  colors,
 }: {
   icon: React.ComponentProps<typeof Ionicons>["name"];
   title: string;
   description: string;
+  styles: any;
+  colors: any;
 }) {
   return (
     <View style={styles.infoRow}>
       <View style={styles.infoIcon}>
-        <Ionicons name={icon} size={20} color={COLORS.blue} />
+        <Ionicons name={icon} size={20} color={colors.primary} />
       </View>
       <View style={styles.infoContent}>
         <Text style={styles.infoTitle}>{title}</Text>
@@ -266,11 +264,15 @@ function ConsentRow({
   onPress,
   title,
   description,
+  styles,
+  colors,
 }: {
   checked: boolean;
   onPress: () => void;
   title: string;
   description: string;
+  styles: any;
+  colors: any;
 }) {
   return (
     <Pressable
@@ -281,7 +283,7 @@ function ConsentRow({
     >
       <View style={[styles.checkbox, checked && styles.checkboxChecked]}>
         {checked && (
-          <Ionicons name="checkmark" size={17} color={COLORS.white} />
+          <Ionicons name="checkmark" size={17} color={colors.buttonPrimaryText} />
         )}
       </View>
       <View style={styles.consentContent}>
@@ -292,225 +294,80 @@ function ConsentRow({
   );
 }
 
-const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-  },
-  scrollContent: {
-    paddingHorizontal: 24,
-    paddingTop: 18,
-    paddingBottom: 32,
-  },
-  brand: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    marginBottom: 26,
-  },
-  brandIcon: {
-    width: 42,
-    height: 42,
-    borderRadius: 13,
-    backgroundColor: COLORS.lightBlue,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  brandName: {
-    color: COLORS.navy,
-    fontSize: 18,
-    fontWeight: "800",
-  },
-  heroIcon: {
-    width: 76,
-    height: 76,
-    borderRadius: 24,
-    backgroundColor: COLORS.lightBlue,
-    alignItems: "center",
-    justifyContent: "center",
-    alignSelf: "center",
-    marginBottom: 18,
-  },
-  eyebrow: {
-    color: COLORS.blue,
-    fontSize: 11,
-    fontWeight: "800",
-    letterSpacing: 1.8,
-    textAlign: "center",
-    marginBottom: 10,
-  },
-  title: {
-    color: COLORS.navy,
-    fontSize: 30,
-    fontWeight: "800",
-    letterSpacing: -0.7,
-    textAlign: "center",
-    marginBottom: 12,
-  },
-  subtitle: {
-    color: COLORS.muted,
-    fontSize: 14,
-    lineHeight: 22,
-    textAlign: "center",
-    marginBottom: 24,
-  },
-  noticeCard: {
-    backgroundColor: COLORS.white,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 20,
-    padding: 18,
-    marginBottom: 24,
-  },
-  sectionTitle: {
-    color: COLORS.navy,
-    fontSize: 17,
-    fontWeight: "800",
-    marginBottom: 18,
-  },
-  infoRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 12,
-    marginBottom: 18,
-  },
-  infoIcon: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: COLORS.lightBlue,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  infoContent: {
-    flex: 1,
-    paddingTop: 1,
-  },
-  infoTitle: {
-    color: COLORS.navy,
-    fontSize: 14,
-    fontWeight: "700",
-    marginBottom: 5,
-  },
-  bodyText: {
-    color: COLORS.muted,
-    fontSize: 13,
-    lineHeight: 20,
-  },
-  noticeLink: {
-    borderTopWidth: 1,
-    borderTopColor: COLORS.border,
-    paddingTop: 15,
-    marginTop: 1,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  linkText: {
-    color: COLORS.blue,
-    fontSize: 13,
-    fontWeight: "700",
-  },
-  expandedNotice: {
-    borderTopWidth: 1,
-    borderTopColor: COLORS.border,
-    marginTop: 14,
-    paddingTop: 14,
-    gap: 8,
-  },
-  expandedTitle: {
-    color: COLORS.navy,
-    fontSize: 14,
-    fontWeight: "800",
-    marginTop: 7,
-  },
-  externalLink: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 7,
-    marginTop: 7,
-    alignSelf: "flex-start",
-  },
-  sectionHeading: {
-    color: COLORS.navy,
-    fontSize: 17,
-    fontWeight: "800",
-    marginBottom: 13,
-  },
-  consentRow: {
-    backgroundColor: COLORS.white,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 16,
-    padding: 15,
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 12,
-    marginBottom: 12,
-  },
-  checkbox: {
-    width: 24,
-    height: 24,
-    borderRadius: 7,
-    borderWidth: 1.5,
-    borderColor: "#AAB8CB",
-    backgroundColor: COLORS.white,
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: 1,
-  },
-  checkboxChecked: {
-    backgroundColor: COLORS.blue,
-    borderColor: COLORS.blue,
-  },
-  consentContent: {
-    flex: 1,
-    gap: 5,
-  },
-  consentTitle: {
-    color: COLORS.navy,
-    fontSize: 14,
-    fontWeight: "800",
-  },
-  disclaimer: {
-    color: COLORS.muted,
-    fontSize: 12,
-    lineHeight: 18,
-    marginTop: 3,
-    marginBottom: 17,
-  },
-  errorText: {
-    color: COLORS.danger,
-    fontSize: 13,
-    marginBottom: 12,
-  },
-  primaryButton: {
-    minHeight: 56,
-    borderRadius: 16,
-    backgroundColor: COLORS.blue,
-    paddingHorizontal: 20,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 10,
-  },
-  buttonDisabled: {
-    opacity: 0.45,
-  },
-  buttonPressed: {
-    opacity: 0.85,
-  },
-  primaryButtonText: {
-    color: COLORS.white,
-    fontSize: 15,
-    fontWeight: "800",
-  },
-  footerNote: {
-    textAlign: "center",
-    marginTop: 20,
-    color: "#9AA8BA",
-    fontSize: 10,
-    fontWeight: "800",
-    letterSpacing: 1.7,
-  },
-});
+const createStyles = (colors: any) =>
+  StyleSheet.create({
+    safeArea: { flex: 1, backgroundColor: colors.background },
+    scrollContent: { paddingHorizontal: 24, paddingTop: 18, paddingBottom: 32 },
+    brand: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 26 },
+    brandIcon: {
+      width: 42, height: 42, borderRadius: 13,
+      backgroundColor: colors.primaryLight, alignItems: "center", justifyContent: "center",
+    },
+    brandName: { color: colors.text, fontSize: 18, fontWeight: "800" },
+    heroIcon: {
+      width: 76, height: 76, borderRadius: 24,
+      backgroundColor: colors.primaryLight, alignItems: "center", justifyContent: "center",
+      alignSelf: "center", marginBottom: 18,
+    },
+    eyebrow: {
+      color: colors.primary, fontSize: 11, fontWeight: "800",
+      letterSpacing: 1.8, textAlign: "center", marginBottom: 10,
+    },
+    title: {
+      color: colors.text, fontSize: 30, fontWeight: "800",
+      letterSpacing: -0.7, textAlign: "center", marginBottom: 12,
+    },
+    subtitle: {
+      color: colors.textSecondary, fontSize: 14, lineHeight: 22,
+      textAlign: "center", marginBottom: 24,
+    },
+    noticeCard: {
+      backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
+      borderRadius: 20, padding: 18, marginBottom: 24,
+    },
+    sectionTitle: { color: colors.text, fontSize: 17, fontWeight: "800", marginBottom: 18 },
+    infoRow: { flexDirection: "row", alignItems: "flex-start", gap: 12, marginBottom: 18 },
+    infoIcon: {
+      width: 38, height: 38, borderRadius: 12,
+      backgroundColor: colors.primaryLight, alignItems: "center", justifyContent: "center",
+    },
+    infoContent: { flex: 1, paddingTop: 1 },
+    infoTitle: { color: colors.text, fontSize: 14, fontWeight: "700", marginBottom: 5 },
+    bodyText: { color: colors.textSecondary, fontSize: 13, lineHeight: 20 },
+    noticeLink: {
+      borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 15, marginTop: 1,
+      flexDirection: "row", justifyContent: "space-between", alignItems: "center",
+    },
+    linkText: { color: colors.primary, fontSize: 13, fontWeight: "700" },
+    expandedNotice: { borderTopWidth: 1, borderTopColor: colors.border, marginTop: 14, paddingTop: 14, gap: 8 },
+    expandedTitle: { color: colors.text, fontSize: 14, fontWeight: "800", marginTop: 7 },
+    externalLink: { flexDirection: "row", alignItems: "center", gap: 7, marginTop: 7, alignSelf: "flex-start" },
+    sectionHeading: { color: colors.text, fontSize: 17, fontWeight: "800", marginBottom: 13 },
+    consentRow: {
+      backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
+      borderRadius: 16, padding: 15, flexDirection: "row", alignItems: "flex-start",
+      gap: 12, marginBottom: 12,
+    },
+    checkbox: {
+      width: 24, height: 24, borderRadius: 7, borderWidth: 1.5,
+      borderColor: colors.border, backgroundColor: colors.surface,
+      alignItems: "center", justifyContent: "center", marginTop: 1,
+    },
+    checkboxChecked: { backgroundColor: colors.buttonPrimary, borderColor: colors.buttonPrimary },
+    consentContent: { flex: 1, gap: 5 },
+    consentTitle: { color: colors.text, fontSize: 14, fontWeight: "800" },
+    disclaimer: { color: colors.textSecondary, fontSize: 12, lineHeight: 18, marginTop: 3, marginBottom: 17 },
+    errorText: { color: colors.error, fontSize: 13, marginBottom: 12 },
+    primaryButton: {
+      minHeight: 56, borderRadius: 16, backgroundColor: colors.buttonPrimary,
+      paddingHorizontal: 20, flexDirection: "row", alignItems: "center",
+      justifyContent: "center", gap: 10,
+    },
+    buttonDisabled: { opacity: 0.45 },
+    buttonPressed: { opacity: 0.85 },
+    primaryButtonText: { color: colors.buttonPrimaryText, fontSize: 15, fontWeight: "800" },
+    footerNote: {
+      textAlign: "center", marginTop: 20, color: colors.textMuted,
+      fontSize: 10, fontWeight: "800", letterSpacing: 1.7,
+    },
+  });

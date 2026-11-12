@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useState } from "react";
 import { InteractionManager } from "react-native";
 import { Stack, useRouter } from "expo-router";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
@@ -13,7 +13,7 @@ import { checkAndScheduleAlerts } from "../services/notificationScheduler";
 import { syncWorker } from "@/services/syncWorker";
 
 import { AlertProvider } from "@/components/ui/AlertService";
-import { ThemeProvider } from "@/context/ThemeContext";
+import { ThemeProvider, useColors, useIsDark } from "@/context/ThemeContext";
 import { ToastProvider } from "@/components/ui/ToastProvider";
 import PushNotificationToastBridge from "@/components/PushNotificationToastBridge";
 import SplashScreen from "@/components/ui/SplashScreen";
@@ -30,8 +30,10 @@ SplashScreenModule.preventAutoHideAsync().catch(() => {});
 
 type StartupStep = "checking" | "privacy" | "onboarding" | "ready";
 
-export default function RootLayout() {
+function RootLayoutNav() {
   const router = useRouter();
+  const isDark = useIsDark();
+  const colors = useColors();
 
   const [startupStep, setStartupStep] = useState<StartupStep>("checking");
   const [authChecked, setAuthChecked] = useState(false);
@@ -49,15 +51,13 @@ export default function RootLayout() {
     setIsLocked,
   } = useAppLock();
 
-  // Single strict waterfall check for Privacy -> Onboarding -> Ready
   useEffect(() => {
     let cancelled = false;
 
-    const isPrivacyConsentAccepted = (storedPrivacy: string | null): boolean => {
-      if (!storedPrivacy) {
-        return false;
-      }
-
+    const isPrivacyConsentAccepted = (
+      storedPrivacy: string | null,
+    ): boolean => {
+      if (!storedPrivacy) return false;
       try {
         const record = JSON.parse(storedPrivacy);
         return (
@@ -74,18 +74,14 @@ export default function RootLayout() {
 
     const checkStartupSequence = async () => {
       try {
-        // --- Step 1: Check Privacy Consent ---
         const storedPrivacy = await AsyncStorage.getItem(
           PRIVACY_CONSENT_STORAGE_KEY,
         );
         const privacyAccepted = isPrivacyConsentAccepted(storedPrivacy);
-
         if (!privacyAccepted) {
           if (!cancelled) setStartupStep("privacy");
           return;
         }
-
-        // --- Step 2: Check Onboarding (only if Privacy complete) ---
         if (ENABLE_ONBOARDING) {
           const completedOnboarding = await AsyncStorage.getItem(
             ONBOARDING_STORAGE_KEY,
@@ -95,38 +91,26 @@ export default function RootLayout() {
             return;
           }
         }
-
-        // --- Step 3: All prerequisites complete ---
-        if (!cancelled) {
-          setStartupStep("ready");
-        }
+        if (!cancelled) setStartupStep("ready");
       } catch (error) {
         console.warn("Failed to check startup sequence:", error);
-        if (!cancelled) {
-          setStartupStep("privacy");
-        }
+        if (!cancelled) setStartupStep("privacy");
       }
     };
 
     void checkStartupSequence();
-
     return () => {
       cancelled = true;
     };
   }, []);
 
-  // Initialize the local database and background services
   useEffect(() => {
     let cancelled = false;
-
     const initializeApp = async () => {
       try {
         await initDatabase();
-
         if (cancelled) return;
-
         setDatabaseReady(true);
-
         try {
           await checkAndScheduleAlerts();
         } catch (error) {
@@ -134,35 +118,24 @@ export default function RootLayout() {
         }
       } catch (error) {
         console.error("Failed to initialize local database:", error);
-
-        if (!cancelled) {
-          setDatabaseReady(true);
-        }
+        if (!cancelled) setDatabaseReady(true);
       }
     };
-
     void initializeApp();
-
     return () => {
       cancelled = true;
     };
   }, []);
 
-  // Hide system splash after the first post-startup screen has had a chance to paint
   useEffect(() => {
     if (databaseReady && startupStep !== "checking") {
       let cancelled = false;
-
       const hide = () => {
-        if (!cancelled) {
-          SplashScreenModule.hideAsync().catch(() => {});
-        }
+        if (!cancelled) SplashScreenModule.hideAsync().catch(() => {});
       };
-
       const task = InteractionManager.runAfterInteractions(() => {
         requestAnimationFrame(hide);
       });
-
       return () => {
         cancelled = true;
         task.cancel();
@@ -170,55 +143,53 @@ export default function RootLayout() {
     }
   }, [databaseReady, startupStep]);
 
-  // Execute Auth routing only after startup checks reach "ready"
   useEffect(() => {
-    if (startupStep !== "ready" || !sessionCheckComplete || sessionExpired) {
+    if (
+      startupStep !== "ready" ||
+      !databaseReady ||
+      !sessionCheckComplete ||
+      sessionExpired ||
+      authChecked
+    ) {
       return;
     }
-
     let cancelled = false;
-
-    const checkAuth = async () => {
+    const checkAuthAndSync = async () => {
       try {
         const token = await SecureStore.getItemAsync("userToken");
-
-        if (cancelled) return;
-
         if (!token) {
-          router.replace("/(auth)/login" as any);
+          if (!cancelled) router.replace("/(auth)/login" as any);
+          return;
         }
+        void (syncWorker as any).kick?.().catch((error: any) => {
+          console.warn("Background sync kick failed:", error);
+        });
       } catch (error) {
-        console.error("Failed to check authentication:", error);
-
-        if (!cancelled) {
-          router.replace("/(auth)/login" as any);
-        }
+        console.error("Auth check failed:", error);
+        if (!cancelled) router.replace("/(auth)/login" as any);
       } finally {
-        if (!cancelled) {
-          setAuthChecked(true);
-        }
+        if (!cancelled) setAuthChecked(true);
       }
     };
-
-    void checkAuth();
-
+    void checkAuthAndSync();
     return () => {
       cancelled = true;
     };
-  }, [startupStep, sessionCheckComplete, sessionExpired, router]);
+  }, [
+    startupStep,
+    databaseReady,
+    sessionCheckComplete,
+    sessionExpired,
+    authChecked,
+    router,
+  ]);
 
-  // Handle session expiration routing
   useEffect(() => {
-    if (!sessionExpired || startupStep !== "ready") {
-      return;
-    }
-
+    if (!sessionExpired || startupStep !== "ready") return;
     setIsLocked(false);
     setAuthChecked(false);
     setShowSplash(false);
-
     router.replace("/(auth)/login" as any);
-
     resetSessionExpired();
   }, [sessionExpired, startupStep, router, setIsLocked, resetSessionExpired]);
 
@@ -230,7 +201,6 @@ export default function RootLayout() {
   const handlePrivacyComplete = useCallback(async () => {
     setAuthChecked(false);
     setShowSplash(true);
-
     try {
       if (ENABLE_ONBOARDING) {
         const completed = await AsyncStorage.getItem(ONBOARDING_STORAGE_KEY);
@@ -238,9 +208,11 @@ export default function RootLayout() {
         return;
       }
     } catch (error) {
-      console.warn("Failed to check onboarding status after privacy consent:", error);
+      console.warn(
+        "Failed to check onboarding status after privacy consent:",
+        error,
+      );
     }
-
     setStartupStep("ready");
   }, []);
 
@@ -255,70 +227,73 @@ export default function RootLayout() {
   }, []);
 
   return (
+    <GestureHandlerRootView
+      style={{ flex: 1, backgroundColor: colors.background }}
+    >
+      <SafeAreaProvider>
+        <AlertProvider>
+          <ToastProvider>
+            {startupStep === "checking" || !databaseReady ? (
+              <SplashScreen isLoading={true} onComplete={() => {}} />
+            ) : startupStep === "privacy" ? (
+              <PrivacyConsentScreen onComplete={handlePrivacyComplete} />
+            ) : startupStep === "onboarding" ? (
+              <OnboardingScreen onComplete={handleOnboardingComplete} />
+            ) : (
+              <>
+                <Stack
+                  screenOptions={{
+                    headerShown: false,
+                    animation: "fade",
+                    contentStyle: { backgroundColor: colors.background },
+                  }}
+                >
+                  <Stack.Screen name="index" />
+                  <Stack.Screen name="(auth)" />
+                  <Stack.Screen name="(tabs)" />
+                  <Stack.Screen name="add-document" />
+                  <Stack.Screen name="edit-document/[id]" />
+                  <Stack.Screen name="document-details/[id]" />
+                  <Stack.Screen name="subscription-payment" />
+                  <Stack.Screen name="document-activity-history" />
+                </Stack>
+
+                {isLocked && !sessionExpired && (
+                  <AppLockScreen
+                    isLocked={isLocked}
+                    biometricEnabled={biometricEnabled}
+                    onUnlockBiometric={unlockWithBiometric}
+                    onUnlockPassword={unlockWithPassword}
+                  />
+                )}
+
+                {showSplash && (
+                  <SplashScreen
+                    isLoading={isStartupLoading}
+                    onComplete={handleSplashComplete}
+                  />
+                )}
+              </>
+            )}
+            <PushNotificationToastBridge
+              enabled={
+                startupStep === "ready" &&
+                !showSplash &&
+                !isLocked &&
+                !sessionExpired
+              }
+            />
+          </ToastProvider>
+        </AlertProvider>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
+  );
+}
+
+export default function RootLayout() {
+  return (
     <ThemeProvider>
-      <GestureHandlerRootView style={{ flex: 1 }}>
-        <SafeAreaProvider>
-          <AlertProvider>
-            <ToastProvider>
-              {/* 
-                Enforced Waterfall Sequence: 
-                1. Checking / Loading -> SplashScreen
-                2. Privacy Consent incomplete -> PrivacyConsentScreen
-                3. Privacy complete, Onboarding incomplete -> OnboardingScreen
-                4. Prerequisites complete -> Stack & App Lock
-              */}
-              {startupStep === "checking" || !databaseReady ? (
-                <SplashScreen isLoading={true} onComplete={() => {}} />
-              ) : startupStep === "privacy" ? (
-                <PrivacyConsentScreen onComplete={handlePrivacyComplete} />
-              ) : startupStep === "onboarding" ? (
-                <OnboardingScreen onComplete={handleOnboardingComplete} />
-              ) : (
-                <>
-                  <Stack
-                    screenOptions={{
-                      headerShown: false,
-                      animation: "fade",
-                    }}
-                  >
-                    <Stack.Screen name="index" />
-                    <Stack.Screen name="(auth)" />
-                    <Stack.Screen name="(tabs)" />
-                    <Stack.Screen name="add-document" />
-                    <Stack.Screen name="edit-document/[id]" />
-                    <Stack.Screen name="document-details/[id]" />
-                    <Stack.Screen name="subscription-payment" />
-                  </Stack>
-
-                  {isLocked && !sessionExpired && (
-                    <AppLockScreen
-                      isLocked={isLocked}
-                      biometricEnabled={biometricEnabled}
-                      onUnlockBiometric={unlockWithBiometric}
-                      onUnlockPassword={unlockWithPassword}
-                    />
-                  )}
-
-                  {showSplash && (
-                    <SplashScreen
-                      isLoading={isStartupLoading}
-                      onComplete={handleSplashComplete}
-                    />
-                  )}
-                </>
-              )}
-              <PushNotificationToastBridge
-                enabled={
-                  startupStep === "ready" &&
-                  !showSplash &&
-                  !isLocked &&
-                  !sessionExpired
-                }
-              />
-            </ToastProvider>
-          </AlertProvider>
-        </SafeAreaProvider>
-      </GestureHandlerRootView>
+      <RootLayoutNav />
     </ThemeProvider>
   );
 }

@@ -575,7 +575,7 @@ export default function LoginScreen() {
             >
               <Text
                 style={{
-                  color: twoFactorMode === "totp" ? "#fff" : colors.text,
+                  color: twoFactorMode === "totp" ? colors.buttonPrimaryText : colors.text,
                 }}
               >
                 Authenticator
@@ -602,7 +602,7 @@ export default function LoginScreen() {
             >
               <Text
                 style={{
-                  color: twoFactorMode === "recovery" ? "#fff" : colors.text,
+                  color: twoFactorMode === "recovery" ? colors.buttonPrimaryText : colors.text,
                 }}
               >
                 Recovery code

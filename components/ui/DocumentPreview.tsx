@@ -1,7 +1,7 @@
-import React from "react";
+﻿import React, { useMemo } from "react";
 import { View, Text, StyleSheet, Image, TouchableOpacity } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import Colors from "../../constants/colors";
+import { useColors } from "@/context/ThemeContext";
 
 interface DocumentPreviewProps {
   fileUrl?: string;
@@ -14,6 +14,8 @@ export const DocumentPreview: React.FC<DocumentPreviewProps> = ({
   fileType,
   onPress,
 }) => {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const isImage =
     fileUrl &&
     (fileUrl.endsWith(".jpg") ||
@@ -37,12 +39,12 @@ export const DocumentPreview: React.FC<DocumentPreviewProps> = ({
         />
       ) : isPdf ? (
         <View style={styles.placeholderContainer}>
-          <Ionicons name="document-text" size={48} color={Colors.primary} />
+          <Ionicons name="document-text" size={48} color={colors.primary} />
           <Text style={styles.fileText}>PDF Document Preview</Text>
         </View>
       ) : (
         <View style={styles.placeholderContainer}>
-          <Ionicons name="folder-open" size={48} color={Colors.textMuted} />
+          <Ionicons name="folder-open" size={48} color={colors.textMuted} />
           <Text style={styles.fileText}>No Preview Available</Text>
         </View>
       )}
@@ -50,31 +52,32 @@ export const DocumentPreview: React.FC<DocumentPreviewProps> = ({
   );
 };
 
-const styles = StyleSheet.create({
-  container: {
-    width: "100%",
-    height: 200,
-    borderRadius: 12,
-    backgroundColor: "#F3F4F6",
-    overflow: "hidden",
-    justifyContent: "center",
-    alignItems: "center",
-    marginVertical: 10,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-  },
-  previewImage: {
-    width: "100%",
-    height: "100%",
-  },
-  placeholderContainer: {
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-  },
-  fileText: {
-    fontSize: 14,
-    color: Colors.textMuted,
-    fontWeight: "500",
-  },
-});
+const createStyles = (colors: any) =>
+  StyleSheet.create({
+    container: {
+      width: "100%",
+      height: 200,
+      borderRadius: 12,
+      backgroundColor: colors.surfaceSecondary,
+      overflow: "hidden",
+      justifyContent: "center",
+      alignItems: "center",
+      marginVertical: 10,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    previewImage: {
+      width: "100%",
+      height: "100%",
+    },
+    placeholderContainer: {
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 8,
+    },
+    fileText: {
+      fontSize: 14,
+      color: colors.textMuted,
+      fontWeight: "500",
+    },
+  });

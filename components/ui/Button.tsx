@@ -62,9 +62,9 @@ export default function Button({
     : isDanger
       ? colors.buttonDangerText
       : isSuccess
-        ? "#FFFFFF"
+        ? colors.buttonPrimaryText
         : isWarning
-          ? "#FFFFFF"
+          ? colors.buttonPrimaryText
           : colors.buttonPrimaryText;
 
   const handlePress = () => {

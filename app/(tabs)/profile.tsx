@@ -57,6 +57,7 @@ type SettingsTab =
   | "notifications"
   | "documents"
   | "appearance"
+  | "activity"
   | "subscription"
   | "support"
   | "privacy"
@@ -1304,7 +1305,7 @@ export default function ProfileScreen() {
                       <TextInput
                         style={styles.input}
                         placeholder="Enter your full name"
-                        placeholderTextColor="#9CA3AF"
+                        placeholderTextColor={colors.textMuted}
                         value={personalInfo.name}
                         onChangeText={(text) =>
                           setPersonalInfo({ ...personalInfo, name: text })
@@ -1315,7 +1316,7 @@ export default function ProfileScreen() {
                       <TextInput
                         style={styles.input}
                         placeholder="Enter your email address"
-                        placeholderTextColor="#9CA3AF"
+                        placeholderTextColor={colors.textMuted}
                         value={personalInfo.email}
                         autoCapitalize="none"
                         keyboardType="email-address"
@@ -1333,7 +1334,7 @@ export default function ProfileScreen() {
                         <Text
                           style={[
                             styles.dropdownSelectorText,
-                            !personalInfo.occupation && { color: "#9CA3AF" },
+                            !personalInfo.occupation && { color: colors.textMuted },
                           ]}
                         >
                           {personalInfo.occupation || "Select what you do..."}
@@ -1359,7 +1360,7 @@ export default function ProfileScreen() {
                           <TextInput
                             style={styles.input}
                             placeholder="Type what you do..."
-                            placeholderTextColor="#9CA3AF"
+                            placeholderTextColor={colors.textMuted}
                             value={personalInfo.occupation}
                             onChangeText={(text) =>
                               setPersonalInfo({
@@ -1378,7 +1379,7 @@ export default function ProfileScreen() {
                       <TextInput
                         style={styles.input}
                         placeholder="+63 900 000 0000"
-                        placeholderTextColor="#9CA3AF"
+                        placeholderTextColor={colors.textMuted}
                         keyboardType="phone-pad"
                         value={personalInfo.phone}
                         onChangeText={(text) =>
@@ -1424,7 +1425,7 @@ export default function ProfileScreen() {
                       <TextInput
                         style={styles.input}
                         placeholder="Current Password"
-                        placeholderTextColor="#9CA3AF"
+                        placeholderTextColor={colors.textMuted}
                         secureTextEntry
                         value={passwords.current}
                         onChangeText={(t) =>
@@ -1434,7 +1435,7 @@ export default function ProfileScreen() {
                       <TextInput
                         style={styles.input}
                         placeholder="New Password (min 12 chars)"
-                        placeholderTextColor="#9CA3AF"
+                        placeholderTextColor={colors.textMuted}
                         secureTextEntry
                         value={passwords.new}
                         onChangeText={(t) =>
@@ -1444,7 +1445,7 @@ export default function ProfileScreen() {
                       <TextInput
                         style={styles.input}
                         placeholder="Confirm New Password"
-                        placeholderTextColor="#9CA3AF"
+                        placeholderTextColor={colors.textMuted}
                         secureTextEntry
                         value={passwords.confirm}
                         onChangeText={(t) =>
@@ -1514,7 +1515,7 @@ export default function ProfileScreen() {
                               <Ionicons
                                 name="copy-outline"
                                 size={16}
-                                color="#fff"
+                                color={colors.buttonPrimaryText}
                               />
                             </TouchableOpacity>
                           </View>
@@ -1562,7 +1563,7 @@ export default function ProfileScreen() {
                           <TextInput
                             style={[styles.input, { marginTop: 12 }]}
                             placeholder="Enter 6-digit code"
-                            placeholderTextColor="#9CA3AF"
+                            placeholderTextColor={colors.textMuted}
                             keyboardType="number-pad"
                             maxLength={6}
                             value={twoFactorCode}
@@ -1623,7 +1624,7 @@ export default function ProfileScreen() {
                           <TextInput
                             style={styles.input}
                             placeholder="Current password"
-                            placeholderTextColor="#9CA3AF"
+                            placeholderTextColor={colors.textMuted}
                             secureTextEntry
                             value={twoFactorDisablePassword}
                             onChangeText={setTwoFactorDisablePassword}
@@ -1673,7 +1674,7 @@ export default function ProfileScreen() {
                                 ? "6-digit authenticator code"
                                 : "32-character recovery code"
                             }
-                            placeholderTextColor="#9CA3AF"
+                            placeholderTextColor={colors.textMuted}
                             keyboardType={
                               twoFactorDisableMode === "totp"
                                 ? "number-pad"
@@ -1803,6 +1804,51 @@ export default function ProfileScreen() {
                     </View>
                   )}
 
+                  {/* Activity History & Audit Logs */}
+                  <SettingRow
+                    colors={colors}
+                    styles={styles}
+                    icon="time-outline"
+                    title="Activity History"
+                    subtitle="Review document uploads, edits, views, and security events"
+                    isActive={activeTab === "activity"}
+                    onPress={() =>
+                      setActiveTab(
+                        activeTab === "activity" ? "none" : "activity",
+                      )
+                    }
+                  />
+                  {activeTab === "activity" && (
+                    <View style={styles.expandedSection}>
+                      <Text style={styles.sectionSubtitle}>
+                        Vault Security & Activity Log
+                      </Text>
+                      <Text
+                        style={[styles.settingSubtitle, { marginBottom: 12 }]}
+                      >
+                        Full immutable record of document accesses,
+                        modifications, and deletions for transparency.
+                      </Text>
+
+                      <TouchableOpacity
+                        style={styles.saveButton}
+                        onPress={() =>
+                          router.push("/document-activity-history" as any)
+                        }
+                      >
+                        <Ionicons
+                          name="list-outline"
+                          size={18}
+                          color={colors.buttonPrimaryText}
+                          style={{ marginRight: 6 }}
+                        />
+                        <Text style={styles.saveButtonText}>
+                          Open Full Activity Log Screen
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+
                   {/* Notifications */}
                   <SettingRow
                     colors={colors}
@@ -1865,7 +1911,7 @@ export default function ProfileScreen() {
                       <TextInput
                         style={styles.input}
                         placeholder="30"
-                        placeholderTextColor="#9CA3AF"
+                        placeholderTextColor={colors.textMuted}
                         keyboardType="numeric"
                         value={expiryLeadDays}
                         onChangeText={setExpiryLeadDays}
@@ -1926,7 +1972,7 @@ export default function ProfileScreen() {
                       <TextInput
                         style={styles.input}
                         placeholder="30"
-                        placeholderTextColor="#9CA3AF"
+                        placeholderTextColor={colors.textMuted}
                         keyboardType="number-pad"
                         value={String(docPreferences.expiryReminderDays)}
                         onChangeText={(val) =>
@@ -2033,8 +2079,8 @@ export default function ProfileScreen() {
                         uploaded to the cloud.
                       </Text>
                       <TouchableOpacity
-                        style={[styles.saveButton, { marginTop: 16 }]}
-                        onPress={exportLocalBackup}
+                        style={[styles.saveButton, { marginTop: 16, flexDirection: "row", gap: 8 }]}
+                        onPress={() => void exportLocalBackup()}
                         accessibilityRole="button"
                         accessibilityLabel="Export local backup"
                       >
@@ -2046,8 +2092,8 @@ export default function ProfileScreen() {
                         <Text style={styles.saveButtonText}>Export Backup</Text>
                       </TouchableOpacity>
                       <TouchableOpacity
-                        style={[styles.saveButton, { marginTop: 10 }]}
-                        onPress={importLocalBackup}
+                        style={[styles.saveButton, { marginTop: 10, flexDirection: "row", gap: 8 }]}
+                        onPress={() => void importLocalBackup()}
                         accessibilityRole="button"
                         accessibilityLabel="Import local backup"
                       >
@@ -2311,7 +2357,7 @@ export default function ProfileScreen() {
               <TextInput
                 style={styles.modalSearchInput}
                 placeholder="Search occupation..."
-                placeholderTextColor="#9CA3AF"
+                placeholderTextColor={colors.textMuted}
                 value={searchQuery}
                 onChangeText={setSearchQuery}
                 clearButtonMode="while-editing"
@@ -2474,7 +2520,7 @@ export default function ProfileScreen() {
                 <TextInput
                   style={styles.input}
                   placeholder="Account Password"
-                  placeholderTextColor="#9CA3AF"
+                  placeholderTextColor={colors.textMuted}
                   secureTextEntry
                   value={deletePassword}
                   onChangeText={setDeletePassword}
@@ -2837,7 +2883,7 @@ const createStyles = (COLORS: ColorScheme) =>
       textAlignVertical: "top",
     },
     actionButton: {
-      backgroundColor: "#2563EB",
+      backgroundColor: COLORS.buttonPrimary,
       paddingVertical: 12,
       paddingHorizontal: 16,
       borderRadius: 10,
@@ -2847,7 +2893,7 @@ const createStyles = (COLORS: ColorScheme) =>
     },
 
     actionButtonText: {
-      color: "#FFFFFF",
+      color: COLORS.buttonPrimaryText,
       fontSize: 14,
       fontWeight: "600",
     },

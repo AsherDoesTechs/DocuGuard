@@ -1,8 +1,16 @@
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  useMemo,
+} from "react";
 import { API_BASE_URL } from "../services/api";
-import { COLORS } from "../constants";
-import { feedbackService, useFeedbackService } from "../services/feedbackService";
-
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import {
+  feedbackService,
+  useFeedbackService,
+} from "../services/feedbackService";
+import { useColors } from "@/context/ThemeContext";
 
 import {
   View,
@@ -25,18 +33,6 @@ import Animated, { FadeIn, FadeInDown, Easing } from "react-native-reanimated";
 import * as SecureStore from "expo-secure-store";
 import * as LocalAuthentication from "expo-local-authentication";
 
-const DG = {
-  navy: "#0F172A",
-  emerald: "#059669",
-  slate: "#64748B",
-  bg: "#F8FAFC",
-  white: "#FFFFFF",
-  border: "#E2E8F0",
-  greenBg: "#ECFDF5",
-  greenText: "#047857",
-  muted: "#94A3B8",
-};
-
 const SLIDER_WIDTH = 260;
 const THUMB_SIZE = 45;
 const SLIDE_DISTANCE = SLIDER_WIDTH - THUMB_SIZE - 10;
@@ -45,6 +41,22 @@ const SLIDE_THRESHOLD = SLIDE_DISTANCE * 0.65;
 export default function DocuGuardCheckout() {
   const router = useRouter();
   useFeedbackService();
+  const colors = useColors();
+  const DG = useMemo(
+    () => ({
+      navy: colors.text,
+      emerald: colors.success,
+      slate: colors.textSecondary,
+      bg: colors.background,
+      white: colors.surface,
+      border: colors.border,
+      greenBg: colors.successLight,
+      greenText: colors.success,
+      muted: colors.textMuted,
+    }),
+    [colors],
+  );
+  const styles = useMemo(() => createStyles(DG, colors), [DG, colors]);
 
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
@@ -181,7 +193,8 @@ export default function DocuGuardCheckout() {
       if (!isEnrolled) {
         await feedbackService.alert({
           title: "Biometrics Not Set Up",
-          message: "Please enroll a fingerprint or other biometric security method on your device first.",
+          message:
+            "Please enroll a fingerprint or other biometric security method on your device first.",
           type: "warning",
         });
         return;
@@ -367,7 +380,7 @@ export default function DocuGuardCheckout() {
 
             {errorMessage && (
               <View style={styles.errorBanner}>
-                <Ionicons name="alert-circle" size={18} color={COLORS.danger} />
+                <Ionicons name="alert-circle" size={18} color={colors.error} />
 
                 <Text style={styles.errorText}>{errorMessage}</Text>
               </View>
@@ -401,11 +414,11 @@ export default function DocuGuardCheckout() {
                   <View style={styles.divider} />
 
                   <View style={styles.featureList}>
-                    <Feature text="50 GB document storage" />
-                    <Feature text="Expiration reminders" />
-                    <Feature text="Advanced document management" />
-                    <Feature text="Expanded account limits" />
-                    <Feature text="Future Pro features included" />
+                    <Feature text="50 GB document storage" DG={DG} />
+                    <Feature text="Expiration reminders" DG={DG} />
+                    <Feature text="Advanced document management" DG={DG} />
+                    <Feature text="Expanded account limits" DG={DG} />
+                    <Feature text="Future Pro features included" DG={DG} />
                   </View>
                 </View>
 
@@ -507,7 +520,7 @@ export default function DocuGuardCheckout() {
                         <Ionicons
                           name="chevron-forward"
                           size={20}
-                          color="#FFFFFF"
+                          color={colors.buttonPrimaryText}
                         />
                       </RNAnimated.View>
 
@@ -558,7 +571,7 @@ export default function DocuGuardCheckout() {
                     >
                       {loading ? (
                         <>
-                          <ActivityIndicator color="#FFFFFF" />
+                          <ActivityIndicator color={colors.buttonPrimaryText} />
 
                           <Text style={[styles.btnText, { marginLeft: 10 }]}>
                             ACTIVATING...
@@ -569,7 +582,7 @@ export default function DocuGuardCheckout() {
                           <Ionicons
                             name="finger-print"
                             size={21}
-                            color="#FFFFFF"
+                            color={colors.buttonPrimaryText}
                           />
 
                           <Text style={[styles.btnText, { marginLeft: 8 }]}>
@@ -617,7 +630,11 @@ export default function DocuGuardCheckout() {
                   {step === 1 ? "REVIEW PAYMENT" : "CONTINUE"}
                 </Text>
 
-                <Ionicons name="arrow-forward" size={18} color="#FFFFFF" />
+                <Ionicons
+                  name="arrow-forward"
+                  size={18}
+                  color={colors.buttonPrimaryText}
+                />
               </TouchableOpacity>
             )}
           </View>
@@ -633,14 +650,30 @@ export default function DocuGuardCheckout() {
  * ---------------------------------------------------------
  */
 
-function Feature({ text }: { text: string }) {
+function Feature({ text, DG }: { text: string; DG: any }) {
   return (
-    <View style={styles.featureRow}>
-      <View style={styles.checkCircle}>
+    <View
+      style={{ flexDirection: "row", alignItems: "center", marginBottom: 11 }}
+    >
+      <View
+        style={{
+          width: 22,
+          height: 22,
+          borderRadius: 11,
+          backgroundColor: DG.greenBg,
+          justifyContent: "center",
+          alignItems: "center",
+          marginRight: 10,
+        }}
+      >
         <Ionicons name="checkmark" size={14} color={DG.emerald} />
       </View>
 
-      <Text style={styles.featureText}>{text}</Text>
+      <Text
+        style={{ fontSize: 14, color: DG.navy, fontWeight: "500", flex: 1 }}
+      >
+        {text}
+      </Text>
     </View>
   );
 }
@@ -651,438 +684,439 @@ function Feature({ text }: { text: string }) {
  * ---------------------------------------------------------
  */
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: DG.bg,
-  },
-
-  flex: {
-    flex: 1,
-  },
-
-  scrollContent: {
-    padding: 25,
-    paddingBottom: 45,
-  },
-
-  header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 20,
-  },
-
-  brand: {
-    fontSize: 21,
-    fontWeight: "900",
-    color: DG.navy,
-  },
-
-  secureLabel: {
-    fontSize: 9,
-    fontWeight: "800",
-    color: DG.emerald,
-    letterSpacing: 1.2,
-    marginTop: 2,
-  },
-
-  progressContainer: {
-    flexDirection: "row",
-    gap: 6,
-    marginBottom: 30,
-  },
-
-  progressSegment: {
-    flex: 1,
-    height: 4,
-    borderRadius: 4,
-    backgroundColor: DG.border,
-  },
-
-  progressActive: {
-    backgroundColor: DG.emerald,
-  },
-
-  content: {
-    marginBottom: 25,
-  },
-
-  stepNumber: {
-    fontSize: 11,
-    fontWeight: "800",
-    color: DG.emerald,
-    letterSpacing: 1.2,
-    marginBottom: 6,
-  },
-
-  stepTitle: {
-    fontSize: 29,
-    fontWeight: "900",
-    color: DG.navy,
-    marginBottom: 22,
-  },
-
-  planCard: {
-    backgroundColor: DG.white,
-    borderRadius: 18,
-    padding: 22,
-    borderWidth: 1,
-    borderColor: DG.border,
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 3,
+const createStyles = (DG: any, colors: any) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: DG.bg,
     },
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    elevation: 2,
-  },
 
-  planHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-  },
+    flex: {
+      flex: 1,
+    },
 
-  planName: {
-    fontSize: 21,
-    fontWeight: "900",
-    color: DG.navy,
-  },
+    scrollContent: {
+      padding: 25,
+      paddingBottom: 45,
+    },
 
-  planDescription: {
-    fontSize: 13,
-    color: DG.slate,
-    marginTop: 3,
-  },
+    header: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      marginBottom: 20,
+    },
 
-  proBadge: {
-    backgroundColor: DG.navy,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 7,
-  },
+    brand: {
+      fontSize: 21,
+      fontWeight: "900",
+      color: DG.navy,
+    },
 
-  proBadgeText: {
-    color: DG.white,
-    fontSize: 10,
-    fontWeight: "900",
-    letterSpacing: 1,
-  },
+    secureLabel: {
+      fontSize: 9,
+      fontWeight: "800",
+      color: DG.emerald,
+      letterSpacing: 1.2,
+      marginTop: 2,
+    },
 
-  priceRow: {
-    flexDirection: "row",
-    alignItems: "baseline",
-    marginTop: 22,
-  },
+    progressContainer: {
+      flexDirection: "row",
+      gap: 6,
+      marginBottom: 30,
+    },
 
-  price: {
-    fontSize: 38,
-    fontWeight: "900",
-    color: DG.navy,
-  },
-
-  pricePeriod: {
-    fontSize: 14,
-    color: DG.slate,
-    marginLeft: 5,
-    fontWeight: "600",
-  },
-
-  divider: {
-    height: 1,
-    backgroundColor: DG.border,
-    marginVertical: 20,
-  },
-
-  featureList: {
-    gap: 13,
-  },
-
-  featureRow: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-
-  checkCircle: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: DG.greenBg,
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 10,
-  },
-
-  featureText: {
-    fontSize: 14,
-    color: DG.navy,
-    fontWeight: "600",
-    flex: 1,
-  },
-
-  infoBox: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: DG.greenBg,
-    borderRadius: 12,
-    padding: 13,
-    marginTop: 15,
-    gap: 9,
-  },
-
-  infoText: {
-    flex: 1,
-    color: DG.greenText,
-    fontSize: 12,
-    lineHeight: 18,
-    fontWeight: "600",
-  },
-
-  paymentCard: {
-    backgroundColor: DG.white,
-    borderRadius: 18,
-    padding: 22,
-    borderWidth: 1,
-    borderColor: DG.border,
-    alignItems: "center",
-  },
-
-  paymentIcon: {
-    width: 62,
-    height: 62,
-    borderRadius: 31,
-    backgroundColor: "#F1F5F9",
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 18,
-  },
-
-  paymentTitle: {
-    fontSize: 21,
-    fontWeight: "900",
-    color: DG.navy,
-    textAlign: "center",
-  },
-
-  paymentDescription: {
-    color: DG.slate,
-    fontSize: 13,
-    lineHeight: 20,
-    textAlign: "center",
-    marginTop: 8,
-  },
-
-  amountBox: {
-    width: "100%",
-    backgroundColor: "#F8FAFC",
-    borderRadius: 13,
-    padding: 18,
-    alignItems: "center",
-    marginTop: 22,
-  },
-
-  amountLabel: {
-    fontSize: 10,
-    fontWeight: "900",
-    letterSpacing: 1,
-    color: DG.muted,
-  },
-
-  amount: {
-    fontSize: 34,
-    fontWeight: "900",
-    color: DG.navy,
-    marginTop: 3,
-  },
-
-  amountPeriod: {
-    fontSize: 12,
-    color: DG.slate,
-    marginTop: 2,
-  },
-
-  demoNotice: {
-    width: "100%",
-    flexDirection: "row",
-    alignItems: "flex-start",
-    backgroundColor: DG.greenBg,
-    borderRadius: 12,
-    padding: 13,
-    marginTop: 15,
-    gap: 9,
-  },
-
-  demoNoticeText: {
-    flex: 1,
-    color: DG.greenText,
-    fontSize: 12,
-    lineHeight: 18,
-    fontWeight: "600",
-  },
-
-  gate: {
-    alignItems: "center",
-    marginTop: 15,
-  },
-
-  sliderContainer: {
-    width: "100%",
-    alignItems: "center",
-    marginTop: 10,
-  },
-
-  securityIcon: {
-    width: 82,
-    height: 82,
-    borderRadius: 41,
-    backgroundColor: DG.greenBg,
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 18,
-  },
-
-  gateTitle: {
-    fontSize: 21,
-    fontWeight: "900",
-    color: DG.navy,
-    textAlign: "center",
-  },
-
-  gateText: {
-    marginTop: 8,
-    color: DG.slate,
-    fontWeight: "500",
-    textAlign: "center",
-    fontSize: 14,
-    lineHeight: 21,
-    maxWidth: 330,
-  },
-
-  sliderTrack: {
-    width: SLIDER_WIDTH,
-    height: 55,
-    backgroundColor: DG.border,
-    borderRadius: 30,
-    justifyContent: "center",
-    padding: 5,
-    marginTop: 24,
-    overflow: "hidden",
-  },
-
-  sliderThumb: {
-    width: THUMB_SIZE,
-    height: THUMB_SIZE,
-    backgroundColor: DG.navy,
-    borderRadius: THUMB_SIZE / 2,
-    justifyContent: "center",
-    alignItems: "center",
-    position: "absolute",
-    zIndex: 2,
-    left: 5,
-    shadowColor: DG.navy,
-    shadowOffset: {
-      width: 0,
+    progressSegment: {
+      flex: 1,
       height: 4,
+      borderRadius: 4,
+      backgroundColor: DG.border,
     },
-    shadowOpacity: 0.3,
-    shadowRadius: 6,
-    elevation: 5,
-  },
 
-  sliderText: {
-    position: "absolute",
-    alignSelf: "center",
-    color: DG.slate,
-    fontWeight: "700",
-    fontSize: 13,
-  },
+    progressActive: {
+      backgroundColor: DG.emerald,
+    },
 
-  biometricContainer: {
-    alignItems: "center",
-    width: "100%",
-    marginTop: 10,
-  },
+    content: {
+      marginBottom: 25,
+    },
 
-  fingerprintCircle: {
-    width: 110,
-    height: 110,
-    borderRadius: 55,
-    backgroundColor: DG.greenBg,
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 20,
-  },
+    stepNumber: {
+      fontSize: 11,
+      fontWeight: "800",
+      color: DG.emerald,
+      letterSpacing: 1.2,
+      marginBottom: 6,
+    },
 
-  confirmBtn: {
-    marginTop: 25,
-    backgroundColor: DG.emerald,
-    paddingVertical: 18,
-    paddingHorizontal: 22,
-    borderRadius: 14,
-    width: "100%",
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-  },
+    stepTitle: {
+      fontSize: 29,
+      fontWeight: "900",
+      color: DG.navy,
+      marginBottom: 22,
+    },
 
-  confirmBtnDisabled: {
-    opacity: 0.7,
-  },
+    planCard: {
+      backgroundColor: DG.white,
+      borderRadius: 18,
+      padding: 22,
+      borderWidth: 1,
+      borderColor: DG.border,
+      shadowColor: "#000",
+      shadowOffset: {
+        width: 0,
+        height: 3,
+      },
+      shadowOpacity: 0.05,
+      shadowRadius: 10,
+      elevation: 2,
+    },
 
-  footer: {
-    flexDirection: "row",
-    gap: 10,
-    marginTop: 10,
-  },
+    planHeader: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "flex-start",
+    },
 
-  backBtn: {
-    flex: 1,
-    padding: 18,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: 7,
-  },
+    planName: {
+      fontSize: 21,
+      fontWeight: "900",
+      color: DG.navy,
+    },
 
-  backText: {
-    color: DG.slate,
-    fontWeight: "800",
-    fontSize: 13,
-  },
+    planDescription: {
+      fontSize: 13,
+      color: DG.slate,
+      marginTop: 3,
+    },
 
-  nextBtn: {
-    flex: 2,
-    backgroundColor: DG.navy,
-    padding: 19,
-    borderRadius: 13,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: 8,
-  },
+    proBadge: {
+      backgroundColor: DG.navy,
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+      borderRadius: 7,
+    },
 
-  btnText: {
-    color: DG.white,
-    fontWeight: "900",
-    fontSize: 13,
-  },
+    proBadgeText: {
+      color: DG.white,
+      fontSize: 10,
+      fontWeight: "900",
+      letterSpacing: 1,
+    },
 
-  errorBanner: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#FEE2E2",
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 16,
-    gap: 8,
-  },
+    priceRow: {
+      flexDirection: "row",
+      alignItems: "baseline",
+      marginTop: 22,
+    },
 
-  errorText: {
-    flex: 1,
-    fontSize: 13,
-    color: "#991B1B",
-    lineHeight: 18,
-  },
-});
+    price: {
+      fontSize: 38,
+      fontWeight: "900",
+      color: DG.navy,
+    },
+
+    pricePeriod: {
+      fontSize: 14,
+      color: DG.slate,
+      marginLeft: 5,
+      fontWeight: "600",
+    },
+
+    divider: {
+      height: 1,
+      backgroundColor: DG.border,
+      marginVertical: 20,
+    },
+
+    featureList: {
+      gap: 13,
+    },
+
+    featureRow: {
+      flexDirection: "row",
+      alignItems: "center",
+    },
+
+    checkCircle: {
+      width: 22,
+      height: 22,
+      borderRadius: 11,
+      backgroundColor: DG.greenBg,
+      justifyContent: "center",
+      alignItems: "center",
+      marginRight: 10,
+    },
+
+    featureText: {
+      fontSize: 14,
+      color: DG.navy,
+      fontWeight: "600",
+      flex: 1,
+    },
+
+    infoBox: {
+      flexDirection: "row",
+      alignItems: "center",
+      backgroundColor: DG.greenBg,
+      borderRadius: 12,
+      padding: 13,
+      marginTop: 15,
+      gap: 9,
+    },
+
+    infoText: {
+      flex: 1,
+      color: DG.greenText,
+      fontSize: 12,
+      lineHeight: 18,
+      fontWeight: "600",
+    },
+
+    paymentCard: {
+      backgroundColor: DG.white,
+      borderRadius: 18,
+      padding: 22,
+      borderWidth: 1,
+      borderColor: DG.border,
+      alignItems: "center",
+    },
+
+    paymentIcon: {
+      width: 62,
+      height: 62,
+      borderRadius: 31,
+      backgroundColor: colors.surfaceSecondary,
+      justifyContent: "center",
+      alignItems: "center",
+      marginBottom: 18,
+    },
+
+    paymentTitle: {
+      fontSize: 21,
+      fontWeight: "900",
+      color: DG.navy,
+      textAlign: "center",
+    },
+
+    paymentDescription: {
+      color: DG.slate,
+      fontSize: 13,
+      lineHeight: 20,
+      textAlign: "center",
+      marginTop: 8,
+    },
+
+    amountBox: {
+      width: "100%",
+      backgroundColor: colors.surfaceSecondary,
+      borderRadius: 13,
+      padding: 18,
+      alignItems: "center",
+      marginTop: 22,
+    },
+
+    amountLabel: {
+      fontSize: 10,
+      fontWeight: "900",
+      letterSpacing: 1,
+      color: DG.muted,
+    },
+
+    amount: {
+      fontSize: 34,
+      fontWeight: "900",
+      color: DG.navy,
+      marginTop: 3,
+    },
+
+    amountPeriod: {
+      fontSize: 12,
+      color: DG.slate,
+      marginTop: 2,
+    },
+
+    demoNotice: {
+      width: "100%",
+      flexDirection: "row",
+      alignItems: "flex-start",
+      backgroundColor: DG.greenBg,
+      borderRadius: 12,
+      padding: 13,
+      marginTop: 15,
+      gap: 9,
+    },
+
+    demoNoticeText: {
+      flex: 1,
+      color: DG.greenText,
+      fontSize: 12,
+      lineHeight: 18,
+      fontWeight: "600",
+    },
+
+    gate: {
+      alignItems: "center",
+      marginTop: 15,
+    },
+
+    sliderContainer: {
+      width: "100%",
+      alignItems: "center",
+      marginTop: 10,
+    },
+
+    securityIcon: {
+      width: 82,
+      height: 82,
+      borderRadius: 41,
+      backgroundColor: DG.greenBg,
+      justifyContent: "center",
+      alignItems: "center",
+      marginBottom: 18,
+    },
+
+    gateTitle: {
+      fontSize: 21,
+      fontWeight: "900",
+      color: DG.navy,
+      textAlign: "center",
+    },
+
+    gateText: {
+      marginTop: 8,
+      color: DG.slate,
+      fontWeight: "500",
+      textAlign: "center",
+      fontSize: 14,
+      lineHeight: 21,
+      maxWidth: 330,
+    },
+
+    sliderTrack: {
+      width: SLIDER_WIDTH,
+      height: 55,
+      backgroundColor: DG.border,
+      borderRadius: 30,
+      justifyContent: "center",
+      padding: 5,
+      marginTop: 24,
+      overflow: "hidden",
+    },
+
+    sliderThumb: {
+      width: THUMB_SIZE,
+      height: THUMB_SIZE,
+      backgroundColor: DG.navy,
+      borderRadius: THUMB_SIZE / 2,
+      justifyContent: "center",
+      alignItems: "center",
+      position: "absolute",
+      zIndex: 2,
+      left: 5,
+      shadowColor: DG.navy,
+      shadowOffset: {
+        width: 0,
+        height: 4,
+      },
+      shadowOpacity: 0.3,
+      shadowRadius: 6,
+      elevation: 5,
+    },
+
+    sliderText: {
+      position: "absolute",
+      alignSelf: "center",
+      color: DG.slate,
+      fontWeight: "700",
+      fontSize: 13,
+    },
+
+    biometricContainer: {
+      alignItems: "center",
+      width: "100%",
+      marginTop: 10,
+    },
+
+    fingerprintCircle: {
+      width: 110,
+      height: 110,
+      borderRadius: 55,
+      backgroundColor: DG.greenBg,
+      justifyContent: "center",
+      alignItems: "center",
+      marginBottom: 20,
+    },
+
+    confirmBtn: {
+      marginTop: 25,
+      backgroundColor: DG.emerald,
+      paddingVertical: 18,
+      paddingHorizontal: 22,
+      borderRadius: 14,
+      width: "100%",
+      alignItems: "center",
+      justifyContent: "center",
+      flexDirection: "row",
+    },
+
+    confirmBtnDisabled: {
+      opacity: 0.7,
+    },
+
+    footer: {
+      flexDirection: "row",
+      gap: 10,
+      marginTop: 10,
+    },
+
+    backBtn: {
+      flex: 1,
+      padding: 18,
+      alignItems: "center",
+      justifyContent: "center",
+      flexDirection: "row",
+      gap: 7,
+    },
+
+    backText: {
+      color: DG.slate,
+      fontWeight: "800",
+      fontSize: 13,
+    },
+
+    nextBtn: {
+      flex: 2,
+      backgroundColor: DG.navy,
+      padding: 19,
+      borderRadius: 13,
+      alignItems: "center",
+      justifyContent: "center",
+      flexDirection: "row",
+      gap: 8,
+    },
+
+    btnText: {
+      color: DG.white,
+      fontWeight: "900",
+      fontSize: 13,
+    },
+
+    errorBanner: {
+      flexDirection: "row",
+      alignItems: "center",
+      backgroundColor: colors.errorLight,
+      borderRadius: 10,
+      padding: 12,
+      marginBottom: 16,
+      gap: 8,
+    },
+
+    errorText: {
+      flex: 1,
+      fontSize: 13,
+      color: colors.error,
+      lineHeight: 18,
+    },
+  });

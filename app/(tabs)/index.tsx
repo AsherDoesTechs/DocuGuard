@@ -1,4 +1,4 @@
-﻿import React, { useState, useCallback, useMemo, useEffect } from "react";
+import React, { useState, useCallback, useMemo, useEffect } from "react";
 import {
   View,
   Text,
@@ -11,7 +11,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { Card } from "../../components/ui";
-import { COLORS as BASE_COLORS, Spacing, BORDER_RADIUS } from "@/constants";
+import { Spacing, BORDER_RADIUS } from "@/constants";
 import { useTheme } from "@/context/ThemeContext";
 import { HomeSkeleton } from "@/components/ui/Skeleton";
 import { formatShortDate } from "../../utils";
@@ -57,26 +57,13 @@ export default function HomeScreen() {
   useFeedbackService();
 
   // Apply the active global theme to the existing app colors.
+
   const COLORS = useMemo(
-    () =>
-      ({
-        ...BASE_COLORS,
-        background: colors.background,
-        surface: colors.surface,
-        primary: colors.primary,
-        primaryDark: colors.primaryDark,
-        primaryLight: colors.primaryLight,
-        text: colors.text,
-        textSecondary: colors.textSecondary,
-        textMuted: colors.textMuted,
-        success: colors.success,
-        warning: colors.warning,
-        warningLight: colors.warningLight,
-        danger: colors.error,
-        progressBackground: colors.progressBackground,
-        border: colors.border,
-        secondary: colors.primaryDark,
-      }) as typeof BASE_COLORS,
+    () => ({
+      ...colors,
+      danger: colors.error,
+      secondary: colors.primaryDark,
+    }),
     [colors],
   );
 
@@ -892,7 +879,7 @@ export default function HomeScreen() {
   );
 }
 
-const createStyles = (COLORS: typeof BASE_COLORS) =>
+const createStyles = (COLORS: any) =>
   StyleSheet.create({
     safeArea: {
       flex: 1,

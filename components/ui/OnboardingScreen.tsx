@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+﻿import { useRef, useState, useMemo } from "react";
 import {
   View,
   Text,
@@ -14,21 +14,12 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useColors } from "@/context/ThemeContext";
 
 export const ONBOARDING_STORAGE_KEY = "docuguard_onboarding_completed_v1";
 
 type OnboardingScreenProps = {
   onComplete: () => void;
-};
-
-const COLORS = {
-  background: "#F8FAFD",
-  white: "#FFFFFF",
-  navy: "#17365D",
-  blue: "#3478F6",
-  lightBlue: "#EAF2FF",
-  muted: "#7B8BA1",
-  successGreen: "#16A34A",
 };
 
 const slides = [
@@ -58,6 +49,8 @@ const slides = [
 export default function OnboardingScreen({
   onComplete,
 }: OnboardingScreenProps) {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const { width } = useWindowDimensions();
   const scrollRef = useRef<ScrollView>(null);
 
@@ -142,7 +135,7 @@ export default function OnboardingScreen({
         <View style={styles.header}>
           <View style={styles.brand}>
             <View style={styles.brandIcon}>
-              <Ionicons name="shield-checkmark" size={19} color={COLORS.blue} />
+              <Ionicons name="shield-checkmark" size={19} color={colors.primary} />
             </View>
             <Text style={styles.brandName}>DocuGuard</Text>
           </View>
@@ -173,7 +166,7 @@ export default function OnboardingScreen({
               <View style={styles.illustrationArea}>
                 <View style={styles.outerCircle}>
                   <View style={styles.innerCircle}>
-                    <Ionicons name={slide.icon} size={76} color={COLORS.blue} />
+                    <Ionicons name={slide.icon} size={76} color={colors.primary} />
                   </View>
                 </View>
 
@@ -221,7 +214,7 @@ export default function OnboardingScreen({
                 ]}
                 {...panResponder.panHandlers}
               >
-                <Ionicons name="arrow-forward" size={22} color={COLORS.white} />
+                <Ionicons name="arrow-forward" size={22} color={colors.buttonPrimaryText} />
               </Animated.View>
             </View>
           ) : (
@@ -237,7 +230,7 @@ export default function OnboardingScreen({
               ]}
             >
               <Text style={styles.primaryButtonText}>Continue</Text>
-              <Ionicons name="chevron-forward" size={20} color={COLORS.white} />
+              <Ionicons name="chevron-forward" size={20} color={colors.buttonPrimaryText} />
             </Pressable>
           )}
 
@@ -248,204 +241,209 @@ export default function OnboardingScreen({
   );
 }
 
-const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-  },
-  container: {
-    flex: 1,
-  },
-  header: {
-    minHeight: 60,
-    paddingHorizontal: 24,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  brand: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 9,
-  },
-  brandIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: 11,
-    backgroundColor: COLORS.lightBlue,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  brandName: {
-    color: COLORS.navy,
-    fontSize: 17,
-    fontWeight: "700",
-    letterSpacing: -0.4,
-  },
-  carousel: {
-    flex: 1,
-  },
-  slide: {
-    flex: 1,
-    paddingHorizontal: 32,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  illustrationArea: {
-    width: "100%",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 42,
-    position: "relative",
-  },
-  outerCircle: {
-    width: 220,
-    height: 220,
-    borderRadius: 110,
-    backgroundColor: "#EEF4FF",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  innerCircle: {
-    width: 164,
-    height: 164,
-    borderRadius: 82,
-    backgroundColor: COLORS.white,
-    borderWidth: 1,
-    borderColor: "#DFE9FF",
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: COLORS.navy,
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.06,
-    shadowRadius: 18,
-    elevation: 3,
-  },
-  decorativeDotTop: {
-    position: "absolute",
-    top: 18,
-    right: "17%",
-    width: 13,
-    height: 13,
-    borderRadius: 7,
-    backgroundColor: "#A8C7FF",
-  },
-  decorativeDotBottom: {
-    position: "absolute",
-    bottom: 20,
-    left: "16%",
-    width: 9,
-    height: 9,
-    borderRadius: 5,
-    backgroundColor: "#C3D9FF",
-  },
-  textArea: {
-    width: "100%",
-    alignItems: "center",
-  },
-  eyebrow: {
-    fontSize: 11,
-    fontWeight: "800",
-    letterSpacing: 1.7,
-    color: COLORS.blue,
-    textAlign: "center",
-    marginBottom: 17,
-  },
-  title: {
-    fontSize: 34,
-    lineHeight: 41,
-    fontWeight: "800",
-    letterSpacing: -1.1,
-    color: COLORS.navy,
-    textAlign: "center",
-    marginBottom: 16,
-  },
-  description: {
-    maxWidth: 330,
-    fontSize: 15,
-    lineHeight: 24,
-    fontWeight: "400",
-    color: COLORS.muted,
-    textAlign: "center",
-  },
-  footer: {
-    paddingHorizontal: 24,
-    paddingTop: 14,
-    paddingBottom: 12,
-  },
-  pagination: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 7,
-    marginBottom: 25,
-  },
-  paginationDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-    backgroundColor: "#D5DFED",
-  },
-  paginationDotActive: {
-    width: 24,
-    backgroundColor: COLORS.blue,
-  },
-  primaryButton: {
-    minHeight: 56,
-    borderRadius: 16,
-    backgroundColor: COLORS.blue,
-    paddingHorizontal: 22,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 10,
-  },
-  primaryButtonPressed: {
-    opacity: 0.88,
-  },
-  primaryButtonText: {
-    color: COLORS.white,
-    fontSize: 16,
-    fontWeight: "700",
-  },
-  sliderTrack: {
-    height: 56,
-    borderRadius: 16,
-    backgroundColor: COLORS.lightBlue,
-    justifyContent: "center",
-    alignItems: "center",
-    position: "relative",
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "#D3E3FD",
-  },
-  sliderText: {
-    color: COLORS.blue,
-    fontSize: 15,
-    fontWeight: "700",
-    letterSpacing: 0.3,
-  },
-  sliderThumb: {
-    position: "absolute",
-    left: 4,
-    width: 48,
-    height: 48,
-    borderRadius: 12,
-    backgroundColor: COLORS.blue,
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: COLORS.navy,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  footerNote: {
-    marginTop: 19,
-    textAlign: "center",
-    fontSize: 10,
-    fontWeight: "700",
-    letterSpacing: 2,
-    color: "#9AA8BA",
-  },
-});
+const createStyles = (colors: any) =>
+  StyleSheet.create({
+    safeArea: {
+      flex: 1,
+      backgroundColor: colors.background,
+    },
+    container: {
+      flex: 1,
+    },
+    header: {
+      minHeight: 60,
+      paddingHorizontal: 24,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+    },
+    brand: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 9,
+    },
+    brandIcon: {
+      width: 34,
+      height: 34,
+      borderRadius: 11,
+      backgroundColor: colors.primaryLight,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    brandName: {
+      color: colors.text,
+      fontSize: 17,
+      fontWeight: "700",
+      letterSpacing: -0.4,
+    },
+    carousel: {
+      flex: 1,
+    },
+    slide: {
+      flex: 1,
+      paddingHorizontal: 32,
+      justifyContent: "center",
+      alignItems: "center",
+    },
+    illustrationArea: {
+      width: "100%",
+      alignItems: "center",
+      justifyContent: "center",
+      marginBottom: 42,
+      position: "relative",
+    },
+    outerCircle: {
+      width: 220,
+      height: 220,
+      borderRadius: 110,
+      backgroundColor: colors.primaryLight,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    innerCircle: {
+      width: 164,
+      height: 164,
+      borderRadius: 82,
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+      alignItems: "center",
+      justifyContent: "center",
+      shadowColor: colors.shadow,
+      shadowOffset: { width: 0, height: 8 },
+      shadowOpacity: 0.06,
+      shadowRadius: 18,
+      elevation: 3,
+    },
+    decorativeDotTop: {
+      position: "absolute",
+      top: 18,
+      right: "17%",
+      width: 13,
+      height: 13,
+      borderRadius: 7,
+      backgroundColor: colors.primary,
+      opacity: 0.35,
+    },
+    decorativeDotBottom: {
+      position: "absolute",
+      bottom: 20,
+      left: "16%",
+      width: 9,
+      height: 9,
+      borderRadius: 5,
+      backgroundColor: colors.primary,
+      opacity: 0.2,
+    },
+    textArea: {
+      width: "100%",
+      alignItems: "center",
+    },
+    eyebrow: {
+      fontSize: 11,
+      fontWeight: "800",
+      letterSpacing: 1.7,
+      color: colors.primary,
+      textAlign: "center",
+      marginBottom: 17,
+    },
+    title: {
+      fontSize: 34,
+      lineHeight: 41,
+      fontWeight: "800",
+      letterSpacing: -1.1,
+      color: colors.text,
+      textAlign: "center",
+      marginBottom: 16,
+    },
+    description: {
+      maxWidth: 330,
+      fontSize: 15,
+      lineHeight: 24,
+      fontWeight: "400",
+      color: colors.textSecondary,
+      textAlign: "center",
+    },
+    footer: {
+      paddingHorizontal: 24,
+      paddingTop: 14,
+      paddingBottom: 12,
+    },
+    pagination: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 7,
+      marginBottom: 25,
+    },
+    paginationDot: {
+      width: 7,
+      height: 7,
+      borderRadius: 4,
+      backgroundColor: colors.border,
+    },
+    paginationDotActive: {
+      width: 24,
+      backgroundColor: colors.primary,
+    },
+    primaryButton: {
+      minHeight: 56,
+      borderRadius: 16,
+      backgroundColor: colors.buttonPrimary,
+      paddingHorizontal: 22,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 10,
+    },
+    primaryButtonPressed: {
+      opacity: 0.88,
+    },
+    primaryButtonText: {
+      color: colors.buttonPrimaryText,
+      fontSize: 16,
+      fontWeight: "700",
+    },
+    sliderTrack: {
+      height: 56,
+      borderRadius: 16,
+      backgroundColor: colors.primaryLight,
+      justifyContent: "center",
+      alignItems: "center",
+      position: "relative",
+      overflow: "hidden",
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    sliderText: {
+      color: colors.primary,
+      fontSize: 15,
+      fontWeight: "700",
+      letterSpacing: 0.3,
+    },
+    sliderThumb: {
+      position: "absolute",
+      left: 4,
+      width: 48,
+      height: 48,
+      borderRadius: 12,
+      backgroundColor: colors.buttonPrimary,
+      alignItems: "center",
+      justifyContent: "center",
+      shadowColor: colors.shadow,
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.15,
+      shadowRadius: 4,
+      elevation: 2,
+    },
+    footerNote: {
+      marginTop: 19,
+      textAlign: "center",
+      fontSize: 10,
+      fontWeight: "700",
+      letterSpacing: 2,
+      color: colors.textMuted,
+    },
+  });
+
+

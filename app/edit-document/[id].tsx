@@ -24,8 +24,9 @@ import { Ionicons } from "@expo/vector-icons";
 import * as SecureStore from "expo-secure-store";
 
 import { DOCUMENTS_BY_CATEGORY } from "../../constants/documentTypes";
+import { recordAuditLog } from "@/services/auditService";
 import { Card, Input, Button } from "@/components/ui";
-import { COLORS } from "@/constants";
+import { useColors } from "@/context/ThemeContext";
 import {
   getDocumentById,
   updateDocument,
@@ -375,6 +376,8 @@ export default function EditDocumentScreen() {
   useFeedbackService();
 
   const documentId = Array.isArray(params.id) ? params.id[0] : params.id;
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
 
   const [noExpirationDate, setNoExpirationDate] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -913,6 +916,11 @@ export default function EditDocumentScreen() {
       localSaveSuccessful = true;
       console.log("Local database update completed successfully.");
 
+      // Record MODIFY audit log
+      await recordAuditLog(values.documentNumber || String(numericId), "MODIFY", {
+        message: `Updated "${values.title || "document"}"`,
+      });
+
       if (cloudId !== null) {
         const token = await SecureStore.getItemAsync("userToken");
 
@@ -951,7 +959,7 @@ export default function EditDocumentScreen() {
       setErrors({});
       setTouched({});
 
-      // 🔔 EMIT THE EVENT HERE SO HOMESCREEN REFRESHES STATS IN REAL TIME
+      // ðŸ”” EMIT THE EVENT HERE SO HOMESCREEN REFRESHES STATS IN REAL TIME
       DeviceEventEmitter.emit("documentVaultChanged");
 
       console.log("=== [EditDocument: SAVE SUCCESSFUL] ===");
@@ -1075,7 +1083,7 @@ export default function EditDocumentScreen() {
     return (
       <SafeAreaView style={styles.container} edges={["top", "left", "right"]}>
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={COLORS.primary} />
+          <ActivityIndicator size="large" color={colors.primary} />
           <Text style={styles.loadingText}>Loading document...</Text>
         </View>
       </SafeAreaView>
@@ -1090,7 +1098,7 @@ export default function EditDocumentScreen() {
             <Ionicons
               name="alert-circle-outline"
               size={42}
-              color={COLORS.danger}
+              color={colors.error}
             />
           </View>
 
@@ -1126,7 +1134,7 @@ export default function EditDocumentScreen() {
             accessibilityRole="button"
             accessibilityLabel="Go back"
           >
-            <Ionicons name="chevron-back" size={27} color={COLORS.primary} />
+            <Ionicons name="chevron-back" size={27} color={colors.primary} />
           </TouchableOpacity>
 
           <View style={styles.headerCenter}>
@@ -1153,7 +1161,7 @@ export default function EditDocumentScreen() {
             <Ionicons
               name="refresh-outline"
               size={21}
-              color={hasChanges ? COLORS.primary : COLORS.textSecondary}
+              color={hasChanges ? colors.primary : colors.textSecondary}
             />
           </TouchableOpacity>
         </View>
@@ -1170,7 +1178,7 @@ export default function EditDocumentScreen() {
                 <Ionicons
                   name="document-text-outline"
                   size={20}
-                  color={COLORS.primary}
+                  color={colors.primary}
                 />
               </View>
 
@@ -1188,7 +1196,7 @@ export default function EditDocumentScreen() {
                   <Ionicons
                     name={selectedDocumentType.item.icon}
                     size={25}
-                    color={COLORS.primary}
+                    color={colors.primary}
                   />
                 </View>
 
@@ -1233,7 +1241,7 @@ export default function EditDocumentScreen() {
                 <Ionicons
                   name="create-outline"
                   size={20}
-                  color={COLORS.primary}
+                  color={colors.primary}
                 />
               </View>
 
@@ -1280,7 +1288,7 @@ export default function EditDocumentScreen() {
                 <Ionicons
                   name="sparkles-outline"
                   size={15}
-                  color={COLORS.primary}
+                  color={colors.primary}
                 />
                 <Text style={styles.defaultIssuerText}>
                   Suggested issuer: {selectedDocumentType.item.defaultIssuer}
@@ -1316,7 +1324,7 @@ export default function EditDocumentScreen() {
                 <Ionicons
                   name="calendar-outline"
                   size={20}
-                  color={COLORS.primary}
+                  color={colors.primary}
                 />
               </View>
 
@@ -1379,7 +1387,7 @@ export default function EditDocumentScreen() {
                   }
                   size={21}
                   color={
-                    noExpirationDate ? COLORS.primary : COLORS.textSecondary
+                    noExpirationDate ? colors.primary : colors.textSecondary
                   }
                 />
 
@@ -1440,10 +1448,10 @@ export default function EditDocumentScreen() {
                 size={20}
                 color={
                   daysUntilExpiry !== null && daysUntilExpiry < 0
-                    ? COLORS.danger
+                    ? colors.error
                     : daysUntilExpiry !== null && daysUntilExpiry <= 30
-                      ? "#B7791F"
-                      : COLORS.primary
+                      ? colors.warning
+                      : colors.primary
                 }
               />
 
@@ -1462,7 +1470,7 @@ export default function EditDocumentScreen() {
                 <Ionicons
                   name="notifications-outline"
                   size={21}
-                  color={COLORS.primary}
+                  color={colors.primary}
                 />
               </View>
 
@@ -1477,10 +1485,10 @@ export default function EditDocumentScreen() {
                 value={values.enableAlerts}
                 onValueChange={(value) => updateValue("enableAlerts", value)}
                 trackColor={{
-                  false: COLORS.border,
-                  true: COLORS.primary,
+                  false: colors.border,
+                  true: colors.primary,
                 }}
-                thumbColor="#FFFFFF"
+                thumbColor={colors.switchThumb}
                 accessibilityLabel="Enable expiration alerts"
               />
             </View>
@@ -1492,7 +1500,7 @@ export default function EditDocumentScreen() {
                 <Ionicons
                   name="document-text-outline"
                   size={20}
-                  color={COLORS.primary}
+                  color={colors.primary}
                 />
               </View>
 
@@ -1514,7 +1522,7 @@ export default function EditDocumentScreen() {
                 }))
               }
               placeholder="Add additional notes..."
-              placeholderTextColor={COLORS.textSecondary}
+              placeholderTextColor={colors.textMuted}
               multiline
               numberOfLines={5}
               maxLength={1000}
@@ -1540,7 +1548,7 @@ export default function EditDocumentScreen() {
                 <Ionicons
                   name="information-circle-outline"
                   size={20}
-                  color={COLORS.primary}
+                  color={colors.primary}
                 />
               </View>
 
@@ -1587,7 +1595,7 @@ export default function EditDocumentScreen() {
                 <Ionicons
                   name="checkmark-circle-outline"
                   size={17}
-                  color={COLORS.textSecondary}
+                  color={colors.textSecondary}
                 />
                 <Text style={styles.noChangesText}>No changes to save</Text>
               </View>
@@ -1604,7 +1612,7 @@ export default function EditDocumentScreen() {
             <Ionicons
               name={useLocalData ? "phone-portrait-outline" : "cloud-outline"}
               size={16}
-              color={COLORS.textSecondary}
+              color={colors.textSecondary}
             />
 
             <Text style={styles.dataSourceText}>
@@ -1625,8 +1633,8 @@ export default function EditDocumentScreen() {
    STYLES
 ========================================================= */
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.background },
+const createStyles = (colors: any) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: colors.background },
   keyboardContainer: { flex: 1 },
   content: { padding: 16, paddingBottom: 40 },
 
@@ -1636,7 +1644,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 12,
   },
-  loadingText: { fontSize: 14, color: COLORS.textSecondary },
+  loadingText: { fontSize: 14, color: colors.textSecondary },
 
   errorContainer: {
     flex: 1,
@@ -1656,7 +1664,7 @@ const styles = StyleSheet.create({
   errorTitle: {
     fontSize: 20,
     fontWeight: "700",
-    color: COLORS.text,
+    color: colors.text,
     textAlign: "center",
     marginBottom: 8,
   },
@@ -1664,7 +1672,7 @@ const styles = StyleSheet.create({
     maxWidth: 340,
     fontSize: 14,
     lineHeight: 21,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     textAlign: "center",
   },
   errorActions: {
@@ -1676,16 +1684,16 @@ const styles = StyleSheet.create({
   secondaryButton: {
     height: 48,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#FFFFFF",
+    backgroundColor: colors.surface,
   },
   secondaryButtonText: {
     fontSize: 15,
     fontWeight: "600",
-    color: COLORS.text,
+    color: colors.text,
   },
 
   header: {
@@ -1695,8 +1703,8 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: 8,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-    backgroundColor: COLORS.background,
+    borderBottomColor: colors.border,
+    backgroundColor: colors.background,
   },
   headerButton: {
     width: 44,
@@ -1712,7 +1720,7 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 18,
     fontWeight: "700",
-    color: COLORS.text,
+    color: colors.text,
   },
   unsavedBadge: {
     flexDirection: "row",
@@ -1724,12 +1732,12 @@ const styles = StyleSheet.create({
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: "#D97706",
+    backgroundColor: colors.warning,
   },
   unsavedText: {
     fontSize: 11,
     fontWeight: "600",
-    color: "#D97706",
+    color: colors.warning,
   },
   resetButton: {
     width: 44,
@@ -1757,21 +1765,21 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 16,
     fontWeight: "700",
-    color: COLORS.text,
+    color: colors.text,
   },
   sectionSubtitle: {
     fontSize: 12,
     lineHeight: 18,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     marginTop: 2,
   },
   fieldLabel: {
     fontSize: 14,
     fontWeight: "600",
-    color: COLORS.text,
+    color: colors.text,
     marginBottom: 9,
   },
-  required: { color: COLORS.danger },
+  required: { color: colors.error },
 
   groupList: { gap: 8, paddingBottom: 5 },
   groupChip: {
@@ -1779,22 +1787,22 @@ const styles = StyleSheet.create({
     paddingHorizontal: 13,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: "#FFFFFF",
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
   },
   groupChipActive: {
-    backgroundColor: COLORS.primary,
-    borderColor: COLORS.primary,
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
   },
   groupChipText: {
     fontSize: 13,
     fontWeight: "600",
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
   },
-  groupChipTextActive: { color: "#FFFFFF" },
+  groupChipTextActive: { color: colors.buttonPrimaryText },
 
   searchContainer: {
     height: 46,
@@ -1803,8 +1811,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: "#FFFFFF",
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
     flexDirection: "row",
     alignItems: "center",
   },
@@ -1813,7 +1821,7 @@ const styles = StyleSheet.create({
     height: "100%",
     marginHorizontal: 8,
     fontSize: 14,
-    color: COLORS.text,
+    color: colors.text,
   },
 
   documentTypeList: { gap: 9 },
@@ -1823,11 +1831,11 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: "#FFFFFF",
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
   },
   documentTypeCardActive: {
-    borderColor: COLORS.primary,
+    borderColor: colors.primary,
     backgroundColor: "rgba(37, 99, 235, 0.05)",
   },
   documentTypeIcon: {
@@ -1839,19 +1847,19 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(37, 99, 235, 0.08)",
     marginRight: 11,
   },
-  documentTypeIconActive: { backgroundColor: COLORS.primary },
+  documentTypeIconActive: { backgroundColor: colors.primary },
   documentTypeContent: { flex: 1, marginRight: 8 },
   documentTypeTitle: {
     fontSize: 14,
     fontWeight: "700",
-    color: COLORS.text,
+    color: colors.text,
     marginBottom: 3,
   },
-  documentTypeTitleActive: { color: COLORS.primary },
+  documentTypeTitleActive: { color: colors.primary },
   documentTypeDescription: {
     fontSize: 12,
     lineHeight: 17,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
   },
   emptyTypes: {
     alignItems: "center",
@@ -1860,7 +1868,7 @@ const styles = StyleSheet.create({
   },
   emptyTypesText: {
     fontSize: 13,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     marginTop: 8,
   },
   showMoreButton: {
@@ -1873,12 +1881,12 @@ const styles = StyleSheet.create({
   showMoreText: {
     fontSize: 13,
     fontWeight: "600",
-    color: COLORS.primary,
+    color: colors.primary,
   },
   errorText: {
     fontSize: 12,
     lineHeight: 17,
-    color: COLORS.danger,
+    color: colors.error,
     marginTop: 7,
   },
 
@@ -1900,19 +1908,19 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: "700",
     letterSpacing: 0.7,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     marginBottom: 3,
   },
   selectedSummaryTitle: {
     fontSize: 16,
     fontWeight: "700",
-    color: COLORS.text,
+    color: colors.text,
     marginBottom: 3,
   },
   selectedSummaryDescription: {
     fontSize: 12,
     lineHeight: 18,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
   },
   metadataRow: {
     flexDirection: "row",
@@ -1920,20 +1928,20 @@ const styles = StyleSheet.create({
     marginTop: 15,
     paddingTop: 13,
     borderTopWidth: 1,
-    borderTopColor: COLORS.border,
+    borderTopColor: colors.border,
   },
   metadataItem: { flex: 1 },
   metadataLabel: {
     fontSize: 9,
     fontWeight: "700",
     letterSpacing: 0.7,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     marginBottom: 3,
   },
   metadataValue: {
     fontSize: 12,
     fontWeight: "600",
-    color: COLORS.text,
+    color: colors.text,
     textTransform: "capitalize",
   },
 
@@ -1944,7 +1952,7 @@ const styles = StyleSheet.create({
   },
   characterCounterText: {
     fontSize: 10,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
   },
   defaultIssuerHint: {
     flexDirection: "row",
@@ -1957,11 +1965,11 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 11,
     lineHeight: 16,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
   },
   inputHint: {
     fontSize: 11,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     marginTop: -7,
     marginBottom: 11,
   },
@@ -1974,12 +1982,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     padding: 13,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     borderRadius: 11,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: colors.surface,
   },
   noExpiryOptionActive: {
-    borderColor: COLORS.primary,
+    borderColor: colors.primary,
     backgroundColor: "rgba(37, 99, 235, 0.06)",
   },
   noExpiryTextContainer: {
@@ -1989,12 +1997,12 @@ const styles = StyleSheet.create({
   noExpiryTitle: {
     fontSize: 14,
     fontWeight: "600",
-    color: COLORS.text,
+    color: colors.text,
   },
   noExpiryDescription: {
     fontSize: 12,
     lineHeight: 17,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     marginTop: 3,
   },
 
@@ -2016,12 +2024,12 @@ const styles = StyleSheet.create({
   expiryPreviewTitle: {
     fontSize: 12,
     fontWeight: "700",
-    color: COLORS.text,
+    color: colors.text,
     marginBottom: 2,
   },
   expiryPreviewMessage: {
     fontSize: 12,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
   },
 
   settingRow: {
@@ -2044,12 +2052,12 @@ const styles = StyleSheet.create({
   settingTitle: {
     fontSize: 14,
     fontWeight: "700",
-    color: COLORS.text,
+    color: colors.text,
   },
   settingDescription: {
     fontSize: 12,
     lineHeight: 17,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     marginTop: 2,
   },
 
@@ -2058,12 +2066,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 13,
     paddingVertical: 12,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     borderRadius: 10,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: colors.surface,
     fontSize: 14,
     lineHeight: 20,
-    color: COLORS.text,
+    color: colors.text,
   },
 
   statusGrid: {
@@ -2080,13 +2088,13 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontWeight: "700",
     letterSpacing: 0.6,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     marginBottom: 4,
   },
   statusValue: {
     fontSize: 12,
     fontWeight: "600",
-    color: COLORS.text,
+    color: colors.text,
     textTransform: "capitalize",
   },
 
@@ -2100,11 +2108,11 @@ const styles = StyleSheet.create({
   },
   noChangesText: {
     fontSize: 12,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
   },
   saveHint: {
     fontSize: 11,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     textAlign: "center",
     marginTop: 9,
   },
@@ -2117,7 +2125,7 @@ const styles = StyleSheet.create({
   },
   dataSourceText: {
     fontSize: 11,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
   },
   bottomSpacing: { height: 20 },
 });

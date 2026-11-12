@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   View,
   Text,
@@ -7,12 +7,13 @@ import {
   TouchableOpacity,
   DeviceEventEmitter,
   ActivityIndicator,
+  Platform,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { Card, StatusBadge } from "@/components/ui";
-import { COLORS } from "@/constants";
+import { useColors } from "@/context/ThemeContext";
 import {
   formatShortDate,
   getDaysUntilExpiry,
@@ -27,13 +28,13 @@ import {
   logDocumentAction,
   LocalDocument,
 } from "@/services/localDatabase";
+import { recordAuditLog } from "@/services/auditService";
 import { cancelDocumentNotifications } from "@/services/notificationScheduler";
 import * as SecureStore from "expo-secure-store";
 import { api } from "@/services/api";
 import * as Clipboard from "expo-clipboard";
 import * as Sharing from "expo-sharing";
 import * as FileSystem from "expo-file-system/legacy";
-import Loading from "@/components/ui/Loading";
 import {
   feedbackService,
   useFeedbackService,
@@ -50,6 +51,8 @@ export default function DocumentDetailsScreen() {
   const [history, setHistory] = useState<any[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const mountedRef = useRef(true);
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
 
   // Initialize feedback service
   useFeedbackService();
@@ -64,6 +67,11 @@ export default function DocumentDetailsScreen() {
       if (mountedRef.current) {
         setDocument(doc);
       }
+
+      // Record ACCESS audit log
+      await recordAuditLog(doc.documentNumber || String(doc.id), "ACCESS", {
+        message: `Viewed "${doc.title || "document"}" details`,
+      });
     } catch (error: any) {
       if (mountedRef.current) {
         feedbackService.error(
@@ -114,6 +122,15 @@ export default function DocumentDetailsScreen() {
         setIsDeleting(true);
 
         try {
+          // Record DELETE audit log before removing records
+          await recordAuditLog(
+            document.documentNumber || String(document.id),
+            "DELETE",
+            {
+              message: `Deleted "${document.title || "document"}"`,
+            },
+          );
+
           // 1. Cancel pending local notification alerts
           await cancelDocumentNotifications(localId);
 
@@ -150,68 +167,131 @@ export default function DocumentDetailsScreen() {
     if (!document) return;
     setIsDownloading(true);
     try {
-      let downloadUrl = document.fileUrl;
+      const localUri =
+        document.fileUrl &&
+        (document.fileUrl.startsWith("file://") ||
+          document.fileUrl.startsWith("content://"))
+          ? document.fileUrl
+          : null;
 
-      // If there's no direct fileUrl or it's a local URI, request a fresh signed URL from the server
-      if (
-        !downloadUrl ||
-        downloadUrl.startsWith("file://") ||
-        downloadUrl.startsWith("content://")
-      ) {
-        if (document.cloudId) {
-          const res = await api.client.get(
-            `/documents/${document.cloudId}/file-url`,
-          );
-          downloadUrl = res.data?.fileUrl;
-        } else if (document.id) {
-          const res = await api.client.get(
-            `/documents/${document.id}/file-url`,
-          );
-          downloadUrl = res.data?.fileUrl;
+      let remoteUrl: string | null =
+        document.fileUrl && /^https?:\/\//i.test(document.fileUrl)
+          ? document.fileUrl
+          : null;
+
+      if (!localUri) {
+        const docRef = document.cloudId ?? document.id;
+        if (docRef != null) {
+          try {
+            const res = await api.client.get(`/documents/${docRef}/file-url`);
+            if (typeof res.data?.fileUrl === "string" && res.data.fileUrl) {
+              remoteUrl = res.data.fileUrl;
+            }
+          } catch {
+            // fall back to any existing remote URL
+          }
         }
       }
 
-      if (!downloadUrl) {
-        feedbackService.error(
-          "No valid file attachment available for download.",
-        );
+      if (!localUri && !remoteUrl) {
+        feedbackService.error("No file available to download for this document.");
         return;
       }
 
-      const cleanTitle = document.title
-        .replace(/[^a-z0-9]/gi, "_")
-        .toLowerCase();
-      const ext = document.fileType?.includes("image") ? "jpg" : "pdf";
-      const filename = `${cleanTitle}_${document.id}.${ext}`;
-      const fileUri = `${FileSystem.documentDirectory}${filename}`;
+      const mime = (document.fileType || "").toLowerCase();
+      const ext = mime.includes("png")
+        ? "png"
+        : mime.includes("jpeg") || mime.includes("jpg") || mime.includes("image")
+          ? "jpg"
+          : "pdf";
+      const cleanTitle = (document.title || "document")
+        .replace(/[^a-z0-9]+/gi, "_")
+        .replace(/^_+|_+$/g, "")
+        .toLowerCase() || "document";
+      const idPart = document.id ?? document.cloudId ?? "file";
+      const filename = `${cleanTitle}_${idPart}.${ext}`;
+      const baseDir = FileSystem.cacheDirectory || FileSystem.documentDirectory;
+      if (!baseDir) throw new Error("Storage is not available on this device.");
+      const tempUri = `${baseDir}${filename}`;
 
-      const downloadResult = await FileSystem.downloadAsync(
-        downloadUrl,
-        fileUri,
-      );
+      let sourceUri = tempUri;
 
-      if (downloadResult.status === 200) {
-        // This opens the system dialog allowing you to select "Save to Files" / device storage
-        if (await Sharing.isAvailableAsync()) {
-          await Sharing.shareAsync(downloadResult.uri, {
-            mimeType: document.fileType || "application/pdf",
-            dialogTitle: "Save Document to Storage",
-            UTI: document.fileType?.includes("image")
-              ? "public.jpeg"
-              : "com.adobe.pdf",
-          });
-        } else {
-          feedbackService.success(
-            `Downloaded to app storage: ${downloadResult.uri}`,
-          );
+      if (localUri) {
+        const info = await FileSystem.getInfoAsync(localUri);
+        if (!info.exists) {
+          throw new Error("The original file is not available on this device.");
         }
+        if (localUri !== tempUri) {
+          await FileSystem.copyAsync({ from: localUri, to: tempUri });
+        }
+        sourceUri = tempUri;
+      } else if (remoteUrl) {
+        const result = await FileSystem.downloadAsync(remoteUrl, tempUri);
+        if (result.status < 200 || result.status >= 300) {
+          throw new Error("Failed to download the file. Please try again.");
+        }
+        sourceUri = result.uri;
+      }
+
+      const sourceInfo = await FileSystem.getInfoAsync(sourceUri);
+      if (!sourceInfo.exists) {
+        throw new Error("Downloaded file could not be prepared.");
+      }
+
+      const mimeType =
+        document.fileType ||
+        (ext === "pdf" ? "application/pdf" : ext === "png" ? "image/png" : "image/jpeg");
+
+      if (Platform.OS === "android") {
+        const permissions =
+          await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
+        if (!permissions.granted) {
+          feedbackService.error("Storage permission was not granted.");
+          return;
+        }
+
+        const base64 = await FileSystem.readAsStringAsync(sourceUri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        const destUri = await FileSystem.StorageAccessFramework.createFileAsync(
+          permissions.directoryUri,
+          filename,
+          mimeType,
+        );
+        await FileSystem.writeAsStringAsync(destUri, base64, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+
+        feedbackService.success(
+          "File saved to the selected folder. You can find it in your file manager.",
+        );
       } else {
-        throw new Error("Failed to download file from server.");
+        const savedUri = `${FileSystem.documentDirectory}${filename}`;
+        if (sourceUri !== savedUri) {
+          await FileSystem.copyAsync({ from: sourceUri, to: savedUri });
+        }
+        if (await Sharing.isAvailableAsync()) {
+          await Sharing.shareAsync(savedUri, {
+            mimeType,
+            dialogTitle: "Save to Files",
+            UTI:
+              ext === "pdf"
+                ? "com.adobe.pdf"
+                : ext === "png"
+                  ? "public.png"
+                  : "public.jpeg",
+          });
+        }
+        feedbackService.success(
+          "File saved. Use 'Save to Files' to store it in your device storage.",
+        );
       }
     } catch (error: any) {
       console.error("Download error:", error);
       feedbackService.error(
-        error.message || "Something went wrong while retrieving your file.",
+        error?.response?.data?.error ||
+          error?.message ||
+          "Could not download the document file.",
       );
     } finally {
       if (mountedRef.current) setIsDownloading(false);
@@ -321,16 +401,14 @@ export default function DocumentDetailsScreen() {
     return map[action] || action.replace(/_/g, " ");
   }
 
-  if (isLoading) return <Loading />;
-
-  if (!document) {
+  if (!isLoading && !document) {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.errorContainer}>
           <Ionicons
             name="document-text"
             size={48}
-            color={COLORS.textSecondary}
+            color={colors.textSecondary}
           />
           <Text style={styles.errorText}>Document not found</Text>
           <TouchableOpacity
@@ -344,79 +422,106 @@ export default function DocumentDetailsScreen() {
     );
   }
 
-  const daysUntilExpiry = getDaysUntilExpiry(document.expiryDate);
+  const daysUntilExpiry = document?.expiryDate
+    ? getDaysUntilExpiry(document.expiryDate)
+    : null;
 
   return (
     <SafeAreaView style={styles.container} edges={["top", "left", "right"]}>
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()} hitSlop={10}>
-            <Ionicons name="chevron-back" size={28} color={COLORS.primary} />
+            <Ionicons name="chevron-back" size={28} color={colors.primary} />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Document Details</Text>
           <TouchableOpacity
             onPress={() =>
+              document?.documentNumber &&
               copyToClipboard(document.documentNumber, "Document Number")
             }
             hitSlop={10}
+            disabled={!document?.documentNumber}
           >
-            <Ionicons name="copy" size={24} color={COLORS.primary} />
+            <Ionicons
+              name="copy"
+              size={24}
+              color={document?.documentNumber ? colors.primary : colors.textSecondary}
+            />
           </TouchableOpacity>
         </View>
 
         <Card style={styles.docCard}>
           <View style={styles.docHeader}>
             <View style={{ flex: 1, marginRight: 12 }}>
-              <Text style={styles.docTitle}>{document.title}</Text>
-              <Text style={styles.docIssuer}>{document.issuer}</Text>
+              <Text style={styles.docTitle}>{document?.title || " "}</Text>
+              <Text style={styles.docIssuer}>{document?.issuer || " "}</Text>
             </View>
-            <StatusBadge status={document.status || "ACTIVE"} />
+            {document ? <StatusBadge status={document.status || "ACTIVE"} /> : null}
           </View>
           <View style={styles.metaGrid}>
             <Card style={styles.metaItem}>
               <TouchableOpacity
                 onPress={() =>
+                  document?.documentNumber &&
                   copyToClipboard(document.documentNumber, "Document Number")
                 }
                 activeOpacity={0.7}
+                disabled={!document?.documentNumber}
               >
-                <Ionicons name="file-tray" size={24} color={COLORS.primary} />
+                <Ionicons name="file-tray" size={24} color={colors.primary} />
                 <Text style={styles.metaLabel}>Document Number</Text>
-                <Text style={styles.metaValue}>{document.documentNumber}</Text>
+                <Text style={styles.metaValue}>
+                  {document?.documentNumber || "—"}
+                </Text>
               </TouchableOpacity>
             </Card>
             <Card style={styles.metaItem}>
-              <Ionicons name="calendar" size={24} color={COLORS.primary} />
+              <Ionicons name="calendar" size={24} color={colors.primary} />
               <Text style={styles.metaLabel}>Issue Date</Text>
               <Text style={styles.metaValue}>
-                {formatShortDate(document.issueDate)}
+                {document?.issueDate ? formatShortDate(document.issueDate) : "—"}
               </Text>
             </Card>
             <Card style={styles.metaItem}>
-              <Ionicons name="time" size={24} color={COLORS.primary} />
+              <Ionicons name="time" size={24} color={colors.primary} />
               <Text style={styles.metaLabel}>Expiry Date</Text>
               <Text style={styles.metaValue}>
-                {formatShortDate(document.expiryDate)}
+                {document?.expiryDate
+                  ? formatShortDate(document.expiryDate)
+                  : "—"}
               </Text>
             </Card>
             <Card style={styles.metaItem}>
               <Ionicons
-                name={daysUntilExpiry < 0 ? "alert-circle" : "checkmark-circle"}
+                name={
+                  daysUntilExpiry != null && daysUntilExpiry < 0
+                    ? "alert-circle"
+                    : "checkmark-circle"
+                }
                 size={24}
-                color={daysUntilExpiry < 0 ? COLORS.danger : COLORS.success}
+                color={
+                  daysUntilExpiry != null && daysUntilExpiry < 0
+                    ? colors.error
+                    : colors.success
+                }
               />
               <Text style={styles.metaLabel}>Days Until Expiry</Text>
               <Text
                 style={[
                   styles.metaValue,
                   {
-                    color: daysUntilExpiry < 0 ? COLORS.danger : COLORS.success,
+                    color:
+                      daysUntilExpiry != null && daysUntilExpiry < 0
+                        ? colors.error
+                        : colors.success,
                   },
                 ]}
               >
-                {daysUntilExpiry < 0
-                  ? `Expired ${Math.abs(daysUntilExpiry)} days ago`
-                  : `${daysUntilExpiry} days`}
+                {daysUntilExpiry == null
+                  ? "—"
+                  : daysUntilExpiry < 0
+                    ? `Expired ${Math.abs(daysUntilExpiry)} days ago`
+                    : `${daysUntilExpiry} days`}
               </Text>
             </Card>
           </View>
@@ -425,61 +530,63 @@ export default function DocumentDetailsScreen() {
             <View style={styles.syncStatusItem}>
               <Ionicons
                 name={
-                  document.needsSync
+                  document?.needsSync
                     ? "cloud-upload-outline"
-                    : document.syncStatus === "failed"
+                    : document?.syncStatus === "failed"
                       ? "alert-circle-outline"
                       : "cloud-done-outline"
                 }
                 size={16}
                 color={
-                  document.needsSync
-                    ? COLORS.warning
-                    : document.syncStatus === "failed"
-                      ? COLORS.danger
-                      : COLORS.success
+                  document?.needsSync
+                    ? colors.warning
+                    : document?.syncStatus === "failed"
+                      ? colors.error
+                      : colors.success
                 }
               />
               <Text style={styles.syncStatusText}>
-                {getSyncStatusDisplay(
-                  document.syncStatus || "local",
-                  document.needsSync,
-                )}
+                {document
+                  ? getSyncStatusDisplay(
+                      document.syncStatus || "local",
+                      document.needsSync,
+                    )
+                  : " "}
               </Text>
             </View>
           </View>
         </Card>
 
-        {document.notes ? (
+        {document?.notes ? (
           <Card style={styles.notesCard}>
             <View style={styles.notesHeader}>
               <Text style={styles.notesTitle}>Notes</Text>
               <TouchableOpacity
-                onPress={() => copyToClipboard(document.notes!, "Notes")}
+                onPress={() => document?.notes && copyToClipboard(document.notes, "Notes")}
                 hitSlop={10}
               >
-                <Ionicons name="copy" size={20} color={COLORS.primary} />
+                <Ionicons name="copy" size={20} color={colors.primary} />
               </TouchableOpacity>
             </View>
             <Text style={styles.notesText}>{document.notes}</Text>
           </Card>
         ) : null}
 
-        {document.processingStatus === "processing" && (
+        {document?.processingStatus === "processing" && (
           <Card style={styles.processingCard}>
-            <ActivityIndicator size="small" color={COLORS.primary} />
+            <ActivityIndicator size="small" color={colors.primary} />
             <Text style={styles.processingText}>
               Processing document with AI...
             </Text>
           </Card>
         )}
 
-        {document.processingStatus === "manual_review" && (
+        {document?.processingStatus === "manual_review" && (
           <Card style={styles.processingCard}>
             <Ionicons
               name="alert-circle-outline"
               size={20}
-              color={COLORS.warning}
+              color={colors.warning}
             />
             <Text style={styles.processingText}>
               Manual review needed. AI could not confidently verify the
@@ -488,16 +595,16 @@ export default function DocumentDetailsScreen() {
             </Text>
           </Card>
         )}
-        {document.processingStatus === "failed" && (
+        {document?.processingStatus === "failed" && (
           <Card style={styles.errorCard}>
-            <Ionicons name="alert-circle" size={20} color={COLORS.danger} />
+            <Ionicons name="alert-circle" size={20} color={colors.error} />
             <Text style={styles.errorText}>
               Processing failed. You can still view the document.
             </Text>
           </Card>
         )}
 
-        {document.riskLevel != null && document.riskScore != null && (
+        {document?.riskLevel != null && document?.riskScore != null && (
           <Card style={styles.riskCard}>
             <Text style={styles.riskLabel}>AI Risk Assessment</Text>
             <View style={styles.riskRow}>
@@ -524,11 +631,11 @@ export default function DocumentDetailsScreen() {
             <Ionicons
               name="time-outline"
               size={20}
-              color={COLORS.textSecondary}
+              color={colors.textSecondary}
             />
           </View>
           {loadingHistory ? (
-            <ActivityIndicator size="small" color={COLORS.primary} />
+            <ActivityIndicator size="small" color={colors.primary} />
           ) : history.length === 0 ? (
             <Text style={styles.historyEmpty}>No activity recorded yet</Text>
           ) : (
@@ -539,7 +646,7 @@ export default function DocumentDetailsScreen() {
                     <Ionicons
                       name={getHistoryIcon(item.action)}
                       size={14}
-                      color={COLORS.primary}
+                      color={colors.primary}
                     />
                   </View>
                   <View style={styles.historyContent}>
@@ -557,18 +664,18 @@ export default function DocumentDetailsScreen() {
         </Card>
 
         <View style={styles.actions}>
-          {document.status !== "verified" && (
+          {document?.status !== "verified" && (
             <TouchableOpacity
               style={[styles.actionButton, styles.actionVerify]}
               onPress={handleVerify}
-              disabled={isVerifying || isDeleting}
+              disabled={!document || isVerifying || isDeleting}
             >
               {isVerifying ? (
-                <ActivityIndicator size="small" color="#fff" />
+                <ActivityIndicator size="small" color={colors.buttonPrimaryText} />
               ) : (
                 <>
-                  <Ionicons name="checkmark-circle" size={20} color="#fff" />
-                  <Text style={[styles.actionButtonText, { color: "#fff" }]}>
+                  <Ionicons name="checkmark-circle" size={20} color={colors.buttonPrimaryText} />
+                  <Text style={[styles.actionButtonText, { color: colors.buttonPrimaryText }]}>
                     Verify Document
                   </Text>
                 </>
@@ -577,26 +684,28 @@ export default function DocumentDetailsScreen() {
           )}
           <TouchableOpacity
             style={[styles.actionButton, styles.actionPrimary]}
-            onPress={() => router.push(`/edit-document/${document.id}` as any)}
-            disabled={isDownloading || isVerifying || isDeleting}
+            onPress={() =>
+              document?.id && router.push(`/edit-document/${document.id}` as any)
+            }
+            disabled={!document?.id || isDownloading || isVerifying || isDeleting}
           >
-            <Ionicons name="create" size={20} color="#fff" />
-            <Text style={[styles.actionButtonText, { color: "#fff" }]}>
+            <Ionicons name="create" size={20} color={colors.buttonPrimaryText} />
+            <Text style={[styles.actionButtonText, { color: colors.buttonPrimaryText }]}>
               Edit Document
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.actionButton, styles.actionSecondary]}
             onPress={handleDownload}
-            disabled={isDownloading || isVerifying || isDeleting}
+            disabled={!document || isDownloading || isVerifying || isDeleting}
           >
             {isDownloading ? (
-              <ActivityIndicator size="small" color={COLORS.primary} />
+              <ActivityIndicator size="small" color={colors.primary} />
             ) : (
               <>
-                <Ionicons name="download" size={20} color={COLORS.primary} />
+                <Ionicons name="download" size={20} color={colors.primary} />
                 <Text
-                  style={[styles.actionButtonText, { color: COLORS.primary }]}
+                  style={[styles.actionButtonText, { color: colors.primary }]}
                 >
                   Download
                 </Text>
@@ -606,29 +715,29 @@ export default function DocumentDetailsScreen() {
           <TouchableOpacity
             style={[styles.actionButton, styles.actionSecondary]}
             onPress={handleExport}
-            disabled={isDownloading || isVerifying || isDeleting}
+            disabled={!document || isDownloading || isVerifying || isDeleting}
           >
             <Ionicons
               name="document-text-outline"
               size={20}
-              color={COLORS.primary}
+              color={colors.primary}
             />
-            <Text style={[styles.actionButtonText, { color: COLORS.primary }]}>
+            <Text style={[styles.actionButtonText, { color: colors.primary }]}>
               Export
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.actionButton, styles.actionDanger]}
             onPress={handleDelete}
-            disabled={isDownloading || isVerifying || isDeleting}
+            disabled={!document?.id || isDownloading || isVerifying || isDeleting}
           >
             {isDeleting ? (
-              <ActivityIndicator size="small" color={COLORS.danger} />
+              <ActivityIndicator size="small" color={colors.error} />
             ) : (
               <>
-                <Ionicons name="trash" size={20} color={COLORS.danger} />
+                <Ionicons name="trash" size={20} color={colors.error} />
                 <Text
-                  style={[styles.actionButtonText, { color: COLORS.danger }]}
+                  style={[styles.actionButtonText, { color: colors.error }]}
                 >
                   Delete
                 </Text>
@@ -641,8 +750,8 @@ export default function DocumentDetailsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.background },
+const createStyles = (colors: any) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: colors.background },
   content: { padding: 16, paddingBottom: 40 },
   loadingContainer: {
     flex: 1,
@@ -650,14 +759,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 12,
   },
-  loadingText: { fontSize: 14, color: COLORS.textSecondary },
+  loadingText: { fontSize: 14, color: colors.textSecondary },
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 20,
   },
-  headerTitle: { fontSize: 18, fontWeight: "700", color: COLORS.text },
+  headerTitle: { fontSize: 18, fontWeight: "700", color: colors.text },
   docCard: { marginBottom: 20 },
   docHeader: {
     flexDirection: "row",
@@ -665,25 +774,25 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
     marginBottom: 20,
   },
-  docTitle: { fontSize: 22, fontWeight: "700", color: COLORS.text },
-  docIssuer: { fontSize: 14, color: COLORS.textSecondary, marginTop: 4 },
+  docTitle: { fontSize: 22, fontWeight: "700", color: colors.text },
+  docIssuer: { fontSize: 14, color: colors.textSecondary, marginTop: 4 },
   metaGrid: { gap: 12 },
   metaItem: { alignItems: "center", paddingVertical: 12 },
-  metaLabel: { fontSize: 12, color: COLORS.textSecondary, marginTop: 8 },
+  metaLabel: { fontSize: 12, color: colors.textSecondary, marginTop: 8 },
   metaValue: {
     fontSize: 16,
     fontWeight: "600",
-    color: COLORS.text,
+    color: colors.text,
     marginTop: 4,
   },
   syncStatusRow: {
     borderTopWidth: 1,
-    borderTopColor: COLORS.border,
+    borderTopColor: colors.border,
     paddingTop: 12,
     marginTop: 12,
   },
   syncStatusItem: { flexDirection: "row", alignItems: "center", gap: 6 },
-  syncStatusText: { fontSize: 12, color: COLORS.textSecondary },
+  syncStatusText: { fontSize: 12, color: colors.textSecondary },
   notesCard: { marginBottom: 20 },
   notesHeader: {
     flexDirection: "row",
@@ -691,8 +800,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 8,
   },
-  notesTitle: { fontSize: 16, fontWeight: "700", color: COLORS.text },
-  notesText: { fontSize: 14, color: COLORS.text, lineHeight: 20 },
+  notesTitle: { fontSize: 16, fontWeight: "700", color: colors.text },
+  notesText: { fontSize: 14, color: colors.text, lineHeight: 20 },
   actions: { gap: 12 },
   actionButton: {
     flexDirection: "row",
@@ -703,10 +812,10 @@ const styles = StyleSheet.create({
     gap: 8,
     minHeight: 48,
   },
-  actionPrimary: { backgroundColor: COLORS.primary },
-  actionSecondary: { backgroundColor: `${COLORS.primary}15` },
-  actionDanger: { backgroundColor: `${COLORS.danger}15` },
-  actionVerify: { backgroundColor: COLORS.success },
+  actionPrimary: { backgroundColor: colors.primary },
+  actionSecondary: { backgroundColor: colors.primaryLight },
+  actionDanger: { backgroundColor: colors.errorLight },
+  actionVerify: { backgroundColor: colors.success },
   actionButtonText: { fontWeight: "600", fontSize: 16 },
   processingCard: {
     flexDirection: "row",
@@ -714,7 +823,7 @@ const styles = StyleSheet.create({
     gap: 12,
     marginBottom: 20,
   },
-  processingText: { fontSize: 14, color: COLORS.primary, fontWeight: "600" },
+  processingText: { fontSize: 14, color: colors.primary, fontWeight: "600" },
   errorCard: {
     flexDirection: "row",
     alignItems: "center",
@@ -725,7 +834,7 @@ const styles = StyleSheet.create({
   riskLabel: {
     fontSize: 14,
     fontWeight: "600",
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     marginBottom: 8,
   },
   riskRow: {
@@ -733,7 +842,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
   },
-  riskScore: { fontSize: 16, fontWeight: "700", color: COLORS.text },
+  riskScore: { fontSize: 16, fontWeight: "700", color: colors.text },
   errorContainer: {
     flex: 1,
     justifyContent: "center",
@@ -741,14 +850,14 @@ const styles = StyleSheet.create({
     gap: 16,
     padding: 24,
   },
-  errorText: { fontSize: 16, color: COLORS.textSecondary, textAlign: "center" },
+  errorText: { fontSize: 16, color: colors.textSecondary, textAlign: "center" },
   retryButton: {
-    backgroundColor: COLORS.primary,
+    backgroundColor: colors.primary,
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 8,
   },
-  retryButtonText: { color: "#fff", fontWeight: "600", fontSize: 16 },
+  retryButtonText: { color: colors.buttonPrimaryText, fontWeight: "600", fontSize: 16 },
   historyCard: { marginBottom: 20 },
   historyHeader: {
     flexDirection: "row",
@@ -756,24 +865,24 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 12,
   },
-  historyTitle: { fontSize: 16, fontWeight: "700", color: COLORS.text },
+  historyTitle: { fontSize: 16, fontWeight: "700", color: colors.text },
   historyList: { gap: 10 },
   historyItem: { flexDirection: "row", gap: 10, alignItems: "flex-start" },
   historyDot: {
     width: 24,
     height: 24,
     borderRadius: 12,
-    backgroundColor: `${COLORS.primary}20`,
+    backgroundColor: colors.primaryLight,
     alignItems: "center",
     justifyContent: "center",
     marginTop: 2,
   },
   historyContent: { flex: 1 },
-  historyAction: { fontSize: 14, fontWeight: "500", color: COLORS.text },
-  historyTime: { fontSize: 12, color: COLORS.textSecondary, marginTop: 2 },
+  historyAction: { fontSize: 14, fontWeight: "500", color: colors.text },
+  historyTime: { fontSize: 12, color: colors.textSecondary, marginTop: 2 },
   historyEmpty: {
     fontSize: 13,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     fontStyle: "italic",
   },
 });

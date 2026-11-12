@@ -19,7 +19,7 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { Card, StatusBadge, EmptyState } from "../../components/ui";
 import SearchBar from "@/components/ui/SearchBar";
-import { COLORS as BASE_COLORS, DOCUMENT_CATEGORIES } from "../../constants";
+import { DOCUMENT_CATEGORIES } from "../../constants";
 import { useTheme } from "@/context/ThemeContext";
 import { formatShortDate, classifyExpiration } from "../../utils";
 import { RefreshableContainer } from "@/components/ui/RefreshableContainer";
@@ -130,7 +130,7 @@ const statusMatches = (
 
 interface DocumentItemProps {
   doc: LocalDocument;
-  COLORS: typeof BASE_COLORS;
+  COLORS: any;
   onPress: (id: string | number) => void;
   maskNumber: (num?: string) => string;
   getSyncIcon: (doc: LocalDocument) => {
@@ -272,26 +272,13 @@ export default function DocumentsScreen() {
   const { colors } = useTheme();
 
   const COLORS = useMemo(
-    () =>
-      ({
-        ...BASE_COLORS,
-        background: colors.background,
-        surface: colors.surface,
-        primary: colors.primary,
-        primaryDark: colors.primaryDark,
-        primaryLight: colors.primaryLight,
-        text: colors.text,
-        textSecondary: colors.textSecondary,
-        textMuted: colors.textMuted,
-        success: colors.success,
-        warning: colors.warning,
-        warningLight: colors.warningLight,
-        danger: colors.error,
-        border: colors.border,
-        inputBackground: colors.inputBackground,
-        inputBorder: colors.inputBorder,
-        overlay: colors.modalOverlay,
-      }) as typeof BASE_COLORS,
+    () => ({
+      ...colors,
+      danger: colors.error,
+      overlay: colors.modalOverlay,
+      shadow: colors.shadow,
+      buttonPrimaryText: colors.buttonPrimaryText,
+    }),
     [colors],
   );
 
@@ -881,7 +868,7 @@ export default function DocumentsScreen() {
   );
 }
 
-const createStyles = (COLORS: typeof BASE_COLORS) =>
+const createStyles = (COLORS: any) =>
   StyleSheet.create({
     safeArea: {
       flex: 1,
@@ -1027,7 +1014,7 @@ const createStyles = (COLORS: typeof BASE_COLORS) =>
       maxHeight: "60%",
       padding: 20,
       elevation: 8,
-      shadowColor: "#000000",
+      shadowColor: COLORS.shadow,
       shadowOffset: { width: 0, height: 4 },
       shadowOpacity: 0.2,
       shadowRadius: 12,
@@ -1088,7 +1075,7 @@ const createStyles = (COLORS: typeof BASE_COLORS) =>
       paddingHorizontal: 20,
       borderRadius: 28,
       elevation: 6,
-      shadowColor: "#000000",
+      shadowColor: COLORS.shadow,
       shadowOffset: { width: 0, height: 4 },
       shadowOpacity: 0.25,
       shadowRadius: 5,
