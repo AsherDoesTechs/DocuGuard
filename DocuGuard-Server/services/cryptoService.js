@@ -151,11 +151,18 @@ function encryptFields(obj, fields) {
 /**
  * Decrypt an object's sensitive fields in place. Fields not present are
  * skipped. Returns the same object reference.
+ *
+ * If a field cannot be decrypted (e.g. tampered/corrupted ciphertext or
+ * key mismatch for legacy data), it is set to null so reads do not fail.
  */
 function decryptFields(obj, fields) {
   for (const field of fields) {
     if (obj[field] !== undefined && obj[field] !== null) {
-      obj[field] = decrypt(obj[field]);
+      try {
+        obj[field] = decrypt(obj[field]);
+      } catch (_err) {
+        obj[field] = null;
+      }
     }
   }
   return obj;
