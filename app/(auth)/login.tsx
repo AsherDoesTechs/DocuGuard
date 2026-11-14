@@ -45,6 +45,8 @@ export default function LoginScreen() {
 
   const [isBiometricSupported, setIsBiometricSupported] = useState(false);
   const [biometricSubmitting, setBiometricSubmitting] = useState(false);
+  const [lockoutUntil, setLockoutUntil] = useState<number | null>(null);
+  const [lockoutSecondsLeft, setLockoutSecondsLeft] = useState(0);
 
   // Refs prevent duplicate requests before React updates loading state.
   const loginRequestRef = useRef(false);
@@ -52,6 +54,58 @@ export default function LoginScreen() {
   const biometricRequestRef = useRef(false);
 
   useFeedbackService();
+
+  const parseRetryAfterSeconds = (err: any): number | null => {
+    const retryAfterHeader =
+      err?.response?.headers?.["retry-after"] ??
+      err?.response?.headers?.["Retry-After"];
+    if (retryAfterHeader != null) {
+      const n = Number(retryAfterHeader);
+      if (Number.isFinite(n) && n > 0) return Math.ceil(n);
+      const dateMs = Date.parse(String(retryAfterHeader));
+      if (!Number.isNaN(dateMs)) {
+        const secs = Math.ceil((dateMs - Date.now()) / 1000);
+        if (secs > 0) return secs;
+      }
+    }
+    const msg = String(err?.response?.data?.error || err?.message || "");
+    const match = msg.match(/(\d+)\s*(s|sec|secs|second|seconds|m|min|mins|minute|minutes)/i);
+    if (match) {
+      const value = Number(match[1]);
+      if (Number.isFinite(value) && value > 0) {
+        const unit = match[2].toLowerCase();
+        return unit.startsWith("m") ? value * 60 : value;
+      }
+    }
+    return null;
+  };
+
+  const startLockoutCountdown = (seconds?: number | null) => {
+    const secs = Math.max(1, Math.min(60 * 60, Math.ceil(seconds ?? 60)));
+    setLockoutUntil(Date.now() + secs * 1000);
+  };
+
+  useEffect(() => {
+    if (!lockoutUntil) {
+      setLockoutSecondsLeft(0);
+      return;
+    }
+    const tick = () => {
+      const remaining = Math.max(0, Math.ceil((lockoutUntil - Date.now()) / 1000));
+      setLockoutSecondsLeft(remaining);
+      if (remaining <= 0) setLockoutUntil(null);
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [lockoutUntil]);
+
+  const isLockedOut = lockoutSecondsLeft > 0;
+  const formatLockoutTime = (totalSeconds: number) => {
+    const m = Math.floor(totalSeconds / 60);
+    const s = totalSeconds % 60;
+    return m > 0 ? `${m}:${String(s).padStart(2, "0")}` : `${s}s`;
+  };
 
   const completeLogin = useCallback(
     async (
@@ -279,6 +333,8 @@ export default function LoginScreen() {
         setTwoFactorCode("");
         feedbackService.error(message);
       } else if (status === 429) {
+        const retryAfter = parseRetryAfterSeconds(err);
+        startLockoutCountdown(retryAfter);
         const message = "Too many attempts. Please wait before trying again.";
         setTwoFactorError(message);
         feedbackService.warning(message);
@@ -363,6 +419,8 @@ export default function LoginScreen() {
           errorMessage =
             "Network error. Please check your internet connection and try again.";
         } else if (status === 429) {
+          const retryAfter = parseRetryAfterSeconds(err);
+          startLockoutCountdown(retryAfter);
           errorMessage = "Too many attempts. Please wait before trying again.";
         } else if (status >= 500) {
           errorMessage =
@@ -390,6 +448,12 @@ export default function LoginScreen() {
   // Run the existing schema validation before allowing a request.
   // The attempted-submit flag makes errors visible even before fields blur.
   const handleLoginPress = () => {
+    if (isLockedOut) {
+      feedbackService.warning(
+        `Too many attempts. Try again in ${formatLockoutTime(lockoutSecondsLeft)}.`,
+      );
+      return;
+    }
     if (loginRequestRef.current || form.isSubmitting) {
       return;
     }
@@ -589,6 +653,14 @@ export default function LoginScreen() {
       textAlign: "center",
       fontSize: 14,
     },
+    lockoutText: {
+      marginTop: 16,
+      marginBottom: -8,
+      textAlign: "center",
+      fontSize: 14,
+      fontWeight: "600",
+      color: colors.warning ?? colors.error,
+    },
     biometricSection: {
       marginTop: 32,
       alignItems: "center",
@@ -744,6 +816,7 @@ export default function LoginScreen() {
               loading={twoFactorSubmitting}
               disabled={
                 twoFactorSubmitting ||
+                isLockedOut ||
                 twoFactorCode.length !== (twoFactorMode === "totp" ? 6 : 32)
               }
             />
@@ -855,10 +928,10 @@ export default function LoginScreen() {
 
           <View style={{ marginTop: Spacing.sm }}>
             <Button
-              title="Sign In"
-              onPress={handleLoginPress}
-              loading={form.isSubmitting}
-              disabled={form.isSubmitting || biometricSubmitting}
+            title="Sign In"
+            onPress={handleLoginPress}
+            loading={form.isSubmitting}
+            disabled={form.isSubmitting || biometricSubmitting || isLockedOut}
             />
           </View>
 
