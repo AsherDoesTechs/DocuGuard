@@ -491,7 +491,7 @@ export default function LoginScreen() {
   const handleLoginPress = () => {
     if (isLockedOut) {
       feedbackService.warning(
-        `Too many attempts. Try again in ${formatLockoutTime(lockoutSecondsLeft)}.`,
+        `TOO MANY ATTEMPTS. TRY AGAIN IN ${formatLockoutTime(lockoutSecondsLeft)}.`,
       );
       return;
     }
@@ -699,8 +699,10 @@ export default function LoginScreen() {
       marginBottom: -8,
       textAlign: "center",
       fontSize: 14,
-      fontWeight: "600",
-      color: colors.warning ?? colors.error,
+      fontWeight: "700",
+      color: colors.error,
+      textTransform: "uppercase",
+      letterSpacing: 0.3,
     },
     biometricSection: {
       marginTop: 32,
@@ -1025,7 +1027,7 @@ export default function LoginScreen() {
           accessibilityRole="alert"
           accessibilityLiveRegion="polite"
         >
-          Too many attempts. Try again in {formatLockoutTime(lockoutSecondsLeft)}.
+          TOO MANY ATTEMPTS. TRY AGAIN IN {formatLockoutTime(lockoutSecondsLeft)}.
         </Text>
       )}
 
