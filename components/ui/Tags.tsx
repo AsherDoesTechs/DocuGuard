@@ -8,6 +8,8 @@ import {
   ScrollView,
   Modal,
   FlatList,
+  KeyboardAvoidingView,
+  Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { Spacing as SPACING } from "@/constants";
@@ -200,10 +202,13 @@ export function TagsInput({
       <Modal
         visible={modalVisible}
         transparent
-        animationType="slide"
+        animationType="fade"
         onRequestClose={() => setModalVisible(false)}
       >
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+        >
           <View style={styles.modalContainer}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Add Tags</Text>
@@ -274,6 +279,7 @@ export function TagsInput({
               keyExtractor={(item) => item}
               keyboardShouldPersistTaps="handled"
               contentContainerStyle={styles.listContent}
+              style={styles.suggestionsList}
               renderItem={({ item }) => (
                 <TouchableOpacity
                   style={styles.suggestionItem}
@@ -307,7 +313,7 @@ export function TagsInput({
               <Text style={styles.doneButtonText}>Done</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
@@ -384,16 +390,23 @@ const createStyles = (colors: any) =>
     modalOverlay: {
       flex: 1,
       backgroundColor: colors.modalOverlay ?? "rgba(0,0,0,0.5)",
-      justifyContent: "flex-end",
+      justifyContent: "center",
+      alignItems: "center",
+      padding: 16,
     },
     modalContainer: {
-      maxHeight: "85%",
+      width: "100%",
+      maxWidth: 520,
+      maxHeight: "80%",
       backgroundColor: colors.surface,
-      borderTopLeftRadius: 16,
-      borderTopRightRadius: 16,
+      borderRadius: 16,
       padding: 16,
       borderWidth: 1,
       borderColor: colors.border,
+      justifyContent: "flex-start",
+    },
+    suggestionsList: {
+      flexGrow: 0,
     },
     modalHeader: {
       flexDirection: "row",
