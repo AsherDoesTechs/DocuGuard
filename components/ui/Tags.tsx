@@ -9,6 +9,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { Spacing as SPACING } from "@/constants";
+import { TAG_SUGGESTIONS } from "@/constants/tagSuggestions";
 import { useColors } from "@/context/ThemeContext";
 import {
   getAllTags,
@@ -58,8 +59,12 @@ export function TagsInput({
   };
 
   const loadAllTags = async () => {
-    const allTags = await getAllTags();
-    setSuggestions(allTags);
+    try {
+      const allTags = await getAllTags();
+      setSuggestions(Array.from(new Set([...TAG_SUGGESTIONS, ...allTags])));
+    } catch (_err) {
+      setSuggestions([...TAG_SUGGESTIONS]);
+    }
   };
 
   const addTag = useCallback((tag: string) => {
@@ -112,9 +117,18 @@ export function TagsInput({
       const q = inputValue.trim().toLowerCase();
       if (!q) return false;
       const tag = s.toLowerCase();
-      return tag.includes(q) || q.includes(tag) || tag.startsWith(q);
+      return tag.startsWith(q) || tag.includes(q);
     })
-    .slice(0, 5);
+    .sort((a, b) => {
+      const q = inputValue.trim().toLowerCase();
+      const aTag = a.toLowerCase();
+      const bTag = b.toLowerCase();
+      const aStarts = aTag.startsWith(q) ? 0 : 1;
+      const bStarts = bTag.startsWith(q) ? 0 : 1;
+      if (aStarts !== bStarts) return aStarts - bStarts;
+      return aTag.localeCompare(bTag);
+    })
+    .slice(0, 8);
 
   return (
     <View style={styles.container}>

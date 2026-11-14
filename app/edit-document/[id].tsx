@@ -1698,54 +1698,6 @@ export default function EditDocumentScreen() {
             <View style={styles.sectionHeader}>
               <View style={styles.sectionIcon}>
                 <Ionicons
-                  name="document-attach-outline"
-                  size={20}
-                  color={colors.primary}
-                />
-              </View>
-            </View>
-
-            <Text style={styles.fileMetaText}>
-              Current: {values.fileType || "Unknown type"}
-              {values.s3Key ? " • Cloud file linked" : values.fileUrl ? " • Local file available" : " • No file attached"}
-            </Text>
-
-            {replacementFile ? (
-              <View style={styles.replacementBox}>
-                <Ionicons name="swap-horizontal-outline" size={18} color={colors.primary} />
-                <Text style={styles.replacementText} numberOfLines={1}>
-                  Replacement: {replacementFile.name}
-                </Text>
-                <TouchableOpacity onPress={() => setReplacementFile(null)} accessibilityRole="button" accessibilityLabel="Remove replacement file">
-                  <Ionicons name="close-circle" size={20} color={colors.textSecondary} />
-                </TouchableOpacity>
-              </View>
-            ) : null}
-
-            <View style={styles.fileActionsRow}>
-              <TouchableOpacity
-                style={styles.fileActionButton}
-                onPress={handlePickReplacementFile}
-                accessibilityRole="button"
-              >
-                <Ionicons name="folder-open-outline" size={18} color={colors.primary} />
-                <Text style={styles.fileActionText}>Pick File</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.fileActionButton}
-                onPress={handleScanReplacement}
-                accessibilityRole="button"
-              >
-                <Ionicons name="scan-outline" size={18} color={colors.primary} />
-                <Text style={styles.fileActionText}>Scan</Text>
-              </TouchableOpacity>
-            </View>
-          </Card>
-
-          <Card>
-            <View style={styles.sectionHeader}>
-              <View style={styles.sectionIcon}>
-                <Ionicons
                   name="information-circle-outline"
                   size={20}
                   color={colors.primary}
