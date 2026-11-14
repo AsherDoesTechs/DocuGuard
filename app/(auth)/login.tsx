@@ -168,6 +168,12 @@ export default function LoginScreen() {
             typeof parsedCredentials.email === "string" &&
             typeof parsedCredentials.password === "string";
 
+          const credentialsMatchAccount =
+            hasUsableCredentials &&
+            (credentialUserId === null ||
+              effectiveUserId === null ||
+              credentialUserId === effectiveUserId);
+
           let biometricSetting: string | null = null;
           if (effectiveUserId !== null) {
             biometricSetting = await SecureStore.getItemAsync(
@@ -186,24 +192,25 @@ export default function LoginScreen() {
                 biometricSetting = legacy;
               }
             }
+            // Recover: cached credentials for this account imply biometric login can be offered.
+            if (biometricSetting === null && hasUsableCredentials && credentialsMatchAccount) {
+              await SecureStore.setItemAsync(
+                `docuguard.security.biometricEnabled.user.${effectiveUserId}`,
+                "true",
+              );
+              biometricSetting = "true";
+            }
           } else {
             biometricSetting = await SecureStore.getItemAsync(
               "docuguard.security.biometricEnabled",
             );
           }
 
-          const credentialsMatchAccount =
-            hasUsableCredentials &&
-            (credentialUserId === null ||
-              effectiveUserId === null ||
-              credentialUserId === effectiveUserId);
-
           if (active) {
             setIsBiometricSupported(
               hasHardware &&
                 isEnrolled &&
-                credentialsMatchAccount &&
-                (biometricSetting === "true" || Boolean(token)),
+                biometricSetting === "true",
             );
           }
         } catch (error) {

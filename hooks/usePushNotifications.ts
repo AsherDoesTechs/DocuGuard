@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Platform } from "react-native";
+import { AppState, Platform } from "react-native";
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import Constants from "expo-constants";
@@ -15,15 +15,20 @@ import { api } from "../services/api";
  */
 const isExpoGo = isRunningInExpoGo();
 
-// Configure how notifications behave when the app is running in the foreground.
+// Configure notifications: suppress OS/out-of-app-style alerts while the app
+// is foregrounded (in-app toast/UI handles them) and allow system presentation
+// when backgrounded/inactive.
 if (!isExpoGo) {
   Notifications.setNotificationHandler({
-    handleNotification: async () => ({
-      shouldShowBanner: true,
-      shouldShowList: true,
-      shouldPlaySound: true,
-      shouldSetBadge: true,
-    }),
+    handleNotification: async () => {
+      const inForeground = AppState.currentState === "active";
+      return {
+        shouldShowBanner: !inForeground,
+        shouldShowList: !inForeground,
+        shouldPlaySound: !inForeground,
+        shouldSetBadge: !inForeground,
+      };
+    },
   });
 }
 

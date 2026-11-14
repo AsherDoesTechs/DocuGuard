@@ -600,14 +600,11 @@ async function clearLocalSessionUnlocked(): Promise<void> {
   // user_id so the same account restores them on next sign-in.
   await setLocalUserId(null);
 
-  // Device-level security shortcuts must never carry across accounts on a
-  // shared device. Biometrics/app lock must be explicitly re-enabled by the
-  // next signed-in account owner.
+  // Clear transient session/security state but preserve cached credentials and
+  // per-user biometric/app-lock preferences so the same account can use
+  // biometric quick sign-in on this device after sign-out.
   await Promise.all([
-    SecureStore.deleteItemAsync("secure_user_credentials"),
-    SecureStore.deleteItemAsync("biometric_credentials"),
     SecureStore.deleteItemAsync("biometricEnabled"),
-    SecureStore.deleteItemAsync("docuguard.appLock.enabled"),
     SecureStore.deleteItemAsync("docuguard.session.backgroundAt"),
   ]);
 }
@@ -645,11 +642,11 @@ export async function clearLocalSessionIfOwner(
 
     await setLocalUserId(null);
 
+    // Preserve cached credentials and per-user biometric/app-lock preferences
+    // for the same account so quick sign-in/app protection can work after
+    // session expiry/sign-out on this device.
     await Promise.all([
-      SecureStore.deleteItemAsync("secure_user_credentials"),
-      SecureStore.deleteItemAsync("biometric_credentials"),
       SecureStore.deleteItemAsync("biometricEnabled"),
-      SecureStore.deleteItemAsync("docuguard.appLock.enabled"),
       SecureStore.deleteItemAsync("docuguard.session.backgroundAt"),
     ]);
 

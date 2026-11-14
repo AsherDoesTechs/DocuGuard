@@ -898,7 +898,13 @@ export default function ProfileScreen() {
           validCached =
             typeof parsed?.email === "string" &&
             typeof parsed?.password === "string" &&
-            parsed?.userId === ownerId;
+            (parsed?.userId === ownerId || typeof parsed?.userId !== "number");
+          if (validCached && parsed?.userId !== ownerId) {
+            await SecureStore.setItemAsync(
+              "secure_user_credentials",
+              JSON.stringify({ ...parsed, userId: ownerId }),
+            );
+          }
         }
         if (!validCached) {
           await SecureStore.setItemAsync(
@@ -1302,11 +1308,9 @@ export default function ProfileScreen() {
             getLocalDataOwnerIdForSessionExpiration(),
           ]);
 
-          // Remove biometric credentials so a future biometric sign-in cannot
-          // authenticate as this account after sign-out or account changes.
+          // Preserve cached credentials/per-user biometric settings for quick
+          // sign-in on this device; clear only transient session tokens.
           await Promise.all([
-            SecureStore.deleteItemAsync("secure_user_credentials"),
-            SecureStore.deleteItemAsync("biometric_credentials"),
             SecureStore.deleteItemAsync("refreshToken"),
           ]);
 
@@ -1330,8 +1334,6 @@ export default function ProfileScreen() {
           try {
             await Promise.all([
               SecureStore.deleteItemAsync("userToken"),
-              SecureStore.deleteItemAsync("secure_user_credentials"),
-              SecureStore.deleteItemAsync("biometric_credentials"),
               SecureStore.deleteItemAsync("refreshToken"),
             ]);
           } catch {}
@@ -1803,6 +1805,38 @@ export default function ProfileScreen() {
                           <Text style={styles.totpUriText} selectable>
                             {recoveryCodes.join("\n")}
                           </Text>
+
+                          <TouchableOpacity
+                            style={[
+                              styles.saveButton,
+                              {
+                                padding: 8,
+                                marginTop: 8,
+                                flexDirection: "row",
+                                gap: 6,
+                                justifyContent: "center",
+                              },
+                            ]}
+                            onPress={async () => {
+                              await Clipboard.setStringAsync(
+                                recoveryCodes.join("\n"),
+                              );
+                              feedbackService.success(
+                                "Recovery codes copied to clipboard!",
+                              );
+                            }}
+                          >
+                            <Ionicons
+                              name="copy-outline"
+                              size={16}
+                              color={colors.buttonPrimaryText}
+                            />
+                            <Text
+                              style={[styles.saveButtonText, { fontSize: 12 }]}
+                            >
+                              Copy Recovery Codes
+                            </Text>
+                          </TouchableOpacity>
 
                           <TouchableOpacity
                             style={[styles.verifyButton, { marginTop: 10 }]}

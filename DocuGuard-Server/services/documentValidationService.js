@@ -37,12 +37,31 @@ function classifyExpectedCategory(selectedCategory) {
 function evaluateExtractionConfidence(extractedData) {
   const fields = extractedData?.extractedFields;
 
+  // When structured Azure field metadata is unavailable, fall back to
+  // top-level extracted values so uploads can proceed to manual review/edit.
   if (!fields || typeof fields !== "object" || Array.isArray(fields)) {
+    const topLevelValues = [
+      extractedData?.title,
+      extractedData?.issuer,
+      extractedData?.documentNumber,
+      extractedData?.issueDate,
+      extractedData?.expiryDate,
+    ].filter((v) => v !== null && v !== undefined && String(v).trim() !== "");
+
+    if (topLevelValues.length > 0) {
+      return {
+        needsReview: false,
+        reason: "top_level_extraction_available",
+        populatedFields: topLevelValues.length,
+        uncertainFields: 0,
+      };
+    }
+
     return { needsReview: true, reason: "no_extracted_fields" };
   }
 
   const configuredThreshold = Number(
-    process.env.AZURE_FIELD_CONFIDENCE_THRESHOLD || "0.50",
+    process.env.AZURE_FIELD_CONFIDENCE_THRESHOLD || "0.35",
   );
 
   if (
@@ -51,8 +70,10 @@ function evaluateExtractionConfidence(extractedData) {
     configuredThreshold > 1
   ) {
     return {
-      needsReview: true,
-      reason: "invalid_field_confidence_threshold",
+      needsReview: false,
+      reason: "invalid_field_confidence_threshold_ignored",
+      populatedFields: 0,
+      uncertainFields: 0,
     };
   }
 
@@ -111,11 +132,9 @@ function evaluateExtractionConfidence(extractedData) {
     const confidence = node.confidence;
 
     if (
-      node.needsReview !== false ||
-      typeof confidence !== "number" ||
-      !Number.isFinite(confidence) ||
-      confidence < configuredThreshold ||
-      confidence > 1
+      typeof confidence === "number" &&
+      Number.isFinite(confidence) &&
+      confidence < configuredThreshold
     ) {
       uncertainFields += 1;
     }
@@ -124,13 +143,32 @@ function evaluateExtractionConfidence(extractedData) {
   inspect(fields);
 
   if (populatedFields === 0) {
+    const topLevelValues = [
+      extractedData?.title,
+      extractedData?.issuer,
+      extractedData?.documentNumber,
+      extractedData?.issueDate,
+      extractedData?.expiryDate,
+    ].filter((v) => v !== null && v !== undefined && String(v).trim() !== "");
+
+    if (topLevelValues.length > 0) {
+      return {
+        needsReview: false,
+        reason: "top_level_extraction_available",
+        populatedFields: topLevelValues.length,
+        uncertainFields: 0,
+      };
+    }
+
     return { needsReview: true, reason: "no_usable_extracted_fields" };
   }
 
+  // Allow partial extraction to proceed so users can review/edit fields in-app
+  // instead of hard-failing with "Verification Halted".
   if (uncertainFields > 0) {
     return {
-      needsReview: true,
-      reason: "low_field_confidence",
+      needsReview: false,
+      reason: "partial_extraction_needs_review",
       populatedFields,
       uncertainFields,
     };

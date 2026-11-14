@@ -1486,10 +1486,6 @@ export default function AddDocumentScreen() {
       errors.documentNumber = "Enter the document number.";
     }
 
-    if (!issuer.trim()) {
-      errors.issuer = "Enter the issuing agency.";
-    }
-
     if (!issueDate) {
       errors.issueDate = "Select the issue date.";
     } else if (!isValidDateString(issueDate)) {
@@ -2082,11 +2078,12 @@ export default function AddDocumentScreen() {
           label="Issuing Agency"
           value={issuer}
           placeholder="e.g. Department of Foreign Affairs"
-          required
           error={fieldErrors.issuer}
-          editable={false}
-          onChangeText={() => {}}
-          suggestions={[]}
+          onChangeText={(value) => {
+            setIssuer(sanitizeText(value, MAX_ISSUER_LENGTH));
+            setFieldErrors((current) => ({ ...current, issuer: undefined }));
+          }}
+          suggestions={issuers}
         />
 
         <View style={styles.field}>
