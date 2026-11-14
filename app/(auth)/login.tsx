@@ -70,6 +70,11 @@ export default function LoginScreen() {
         if (secs > 0) return secs;
       }
     }
+    const bodyRetry = err?.response?.data?.retryAfter;
+    if (bodyRetry != null) {
+      const n = Number(bodyRetry);
+      if (Number.isFinite(n) && n > 0) return Math.ceil(n);
+    }
     const msg = String(err?.response?.data?.error || err?.message || "");
     const match = msg.match(/(\d+)\s*(s|sec|secs|second|seconds|m|min|mins|minute|minutes)/i);
     if (match) {
@@ -83,7 +88,8 @@ export default function LoginScreen() {
   };
 
   const startLockoutCountdown = (seconds?: number | null) => {
-    const secs = Math.max(1, Math.min(60 * 60, Math.ceil(seconds ?? 60)));
+    // Default 15 minutes to match server auth limiter window.
+    const secs = Math.max(1, Math.min(60 * 60, Math.ceil(seconds ?? 15 * 60)));
     const until = Date.now() + secs * 1000;
     setLockoutUntil(until);
     void SecureStore.setItemAsync(LOGIN_LOCKOUT_UNTIL_KEY, String(until)).catch(
@@ -363,13 +369,16 @@ export default function LoginScreen() {
         setTwoFactorError(message);
         setTwoFactorCode("");
         feedbackService.error(message);
-      } else if (status === 429) {
+      } else if (
+        status === 429 ||
+        err?.response?.data?.code === "AUTH_RATE_LIMIT_EXCEEDED"
+      ) {
         const retryAfter = parseRetryAfterSeconds(err);
         startLockoutCountdown(retryAfter);
         const message = "Too many attempts. Please wait before trying again.";
         setTwoFactorError(message);
         feedbackService.warning(message);
-      } else if (/too many (login )?attempts|rate limit/i.test(String(err?.response?.data?.error || ""))) {
+      } else if (/too many (login|authentication|administrator )?attempts|rate limit/i.test(String(err?.response?.data?.error || ""))) {
         const retryAfter = parseRetryAfterSeconds(err);
         startLockoutCountdown(retryAfter);
         const message = "Too many attempts. Please wait before trying again.";
@@ -455,11 +464,14 @@ export default function LoginScreen() {
         if (!err?.response) {
           errorMessage =
             "Network error. Please check your internet connection and try again.";
-        } else if (status === 429) {
+        } else if (
+          status === 429 ||
+          err?.response?.data?.code === "AUTH_RATE_LIMIT_EXCEEDED"
+        ) {
           const retryAfter = parseRetryAfterSeconds(err);
           startLockoutCountdown(retryAfter);
           errorMessage = "Too many attempts. Please wait before trying again.";
-        } else if (/too many (login )?attempts|rate limit/i.test(String(err?.response?.data?.error || ""))) {
+        } else if (/too many (login|authentication|administrator )?attempts|rate limit/i.test(String(err?.response?.data?.error || ""))) {
           const retryAfter = parseRetryAfterSeconds(err);
           startLockoutCountdown(retryAfter);
           errorMessage = "Too many attempts. Please wait before trying again.";

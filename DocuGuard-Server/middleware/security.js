@@ -56,15 +56,23 @@ const apiLimiter = rateLimit({
 
 // 2. Strict Limiter for Auth Routes (Login/Register) to prevent brute-force
 const authLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 10, // Limit each IP to 10 login/register attempts per hour
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // Limit each IP to 5 attempts per 15 minutes
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => ipKeyGenerator(req.ip),
+  handler: (_req, res, _next, options) => {
+    const retryAfterSec = Math.ceil(options.windowMs / 1000);
+    res.set("Retry-After", String(retryAfterSec));
+    res.status(options.statusCode).json({
+      ...options.message,
+      retryAfter: retryAfterSec,
+    });
+  },
   message: {
     status: "fail",
     code: ErrorCodes.AUTH_RATE_LIMIT_EXCEEDED,
-    error: "Too many authentication attempts, please try again later.",
+    error: "Too many login attempts. Please try again later.",
   },
 });
 
@@ -83,11 +91,19 @@ const uploadLimiter = rateLimit({
 });
 // Dedicated IP-based limits for the controlled administrator authentication flow.
 const adminLoginLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000,
-  max: 10,
+  windowMs: 15 * 60 * 1000,
+  max: 5,
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => ipKeyGenerator(req.ip),
+  handler: (_req, res, _next, options) => {
+    const retryAfterSec = Math.ceil(options.windowMs / 1000);
+    res.set("Retry-After", String(retryAfterSec));
+    res.status(options.statusCode).json({
+      ...options.message,
+      retryAfter: retryAfterSec,
+    });
+  },
   message: {
     status: "fail",
     code: ErrorCodes.AUTH_RATE_LIMIT_EXCEEDED,
