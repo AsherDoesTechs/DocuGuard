@@ -85,6 +85,16 @@ export default function LoginScreen() {
             "secure_user_credentials",
             JSON.stringify({ email, password, userId }),
           );
+          const perUserKey = `docuguard.security.biometricEnabled.user.${userId}`;
+          const existingBio = await SecureStore.getItemAsync(perUserKey);
+          if (existingBio === null) {
+            const legacyBio = await SecureStore.getItemAsync(
+              "docuguard.security.biometricEnabled",
+            );
+            if (legacyBio === "true") {
+              await SecureStore.setItemAsync(perUserKey, "true");
+            }
+          }
         } catch (e) {
           console.warn("[Login] Failed to save biometric credentials:", e);
         }
@@ -117,7 +127,7 @@ export default function LoginScreen() {
 
       const checkBiometricSupport = async () => {
         try {
-          const [hasHardware, isEnrolled, token, storedCredentials, activeUserId] =
+          const [hasHardware, isEnrolled, token, storedCredentials, activeUserId, lastSignedOutUserId] =
             await Promise.all([
               LocalAuthentication.hasHardwareAsync(),
               LocalAuthentication.isEnrolledAsync(),
@@ -125,6 +135,11 @@ export default function LoginScreen() {
               SecureStore.getItemAsync("secure_user_credentials"),
               (async () => {
                 const raw = await SecureStore.getItemAsync("docuguard.localUserId");
+                const n = raw ? Number(raw) : NaN;
+                return Number.isSafeInteger(n) && n > 0 ? n : null;
+              })(),
+              (async () => {
+                const raw = await SecureStore.getItemAsync("docuguard.lastSignedOutUserId");
                 const n = raw ? Number(raw) : NaN;
                 return Number.isSafeInteger(n) && n > 0 ? n : null;
               })(),
@@ -147,7 +162,7 @@ export default function LoginScreen() {
               ? parsedCredentials.userId
               : null;
 
-          const effectiveUserId = activeUserId ?? credentialUserId;
+          const effectiveUserId = activeUserId ?? credentialUserId ?? lastSignedOutUserId;
           const hasUsableCredentials =
             !!parsedCredentials &&
             typeof parsedCredentials.email === "string" &&
@@ -188,8 +203,7 @@ export default function LoginScreen() {
               hasHardware &&
                 isEnrolled &&
                 credentialsMatchAccount &&
-                (biometricSetting === "true" ||
-                  (effectiveUserId !== null && Boolean(token))),
+                (biometricSetting === "true" || Boolean(token)),
             );
           }
         } catch (error) {

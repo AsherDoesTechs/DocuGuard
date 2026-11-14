@@ -830,13 +830,16 @@ export function useAppLock() {
       const sessionValid = await api.validateStoredSession(token);
       if (!sessionValid) return false;
 
+      const finalUserId = await getActiveLocalUserIdStrict();
       const [verifiedToken, verifiedBackgroundAt, verifiedBiometricPreference] =
         await Promise.all([
           SecureStore.getItemAsync("userToken"),
           runBackgroundTimestampOperation(() =>
             SecureStore.getItemAsync(SESSION_BACKGROUND_AT_KEY),
           ),
-          SecureStore.getItemAsync("biometricEnabled"),
+          finalUserId !== null
+            ? SecureStore.getItemAsync(getBiometricEnabledKey(finalUserId))
+            : Promise.resolve(SecureStore.getItemAsync("docuguard.security.biometricEnabled")),
         ]);
 
       if (
