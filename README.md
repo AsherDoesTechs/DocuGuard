@@ -6,12 +6,12 @@ DocuGuard is a BSIT capstone project consisting of a React Native (Expo) mobile 
 
 ## Repository Components
 
-| Component | Path | Purpose |
-| --- | --- | --- |
-| Mobile app | `/` | Main Expo Router app for end users (documents, reminders, profile, scan/OCR, auth, backup, subscription flow). |
-| Backend API | `DocuGuard-Server/` | Express/Node API, PostgreSQL/Supabase data access, auth, document processing, notifications, audit logs, subscription/demo activation. |
-| Admin app | `DocuGuard-Admin/` | Expo app for admin/device enrollment and trusted admin flows (biometric/device trust). |
-| Shared modules | `shared/` | Shared schemas/utilities used by app and/or server (e.g. backup schema). |
+| Component      | Path                | Purpose                                                                                                                                |
+| -------------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Mobile app     | `/`                 | Main Expo Router app for end users (documents, reminders, profile, scan/OCR, auth, backup, subscription flow).                         |
+| Backend API    | `DocuGuard-Server/` | Express/Node API, PostgreSQL/Supabase data access, auth, document processing, notifications, audit logs, subscription/demo activation. |
+| Admin app      | `DocuGuard-Admin/`  | Expo app for admin/device enrollment and trusted admin flows (biometric/device trust).                                                 |
+| Shared modules | `shared/`           | Shared schemas/utilities used by app and/or server (e.g. backup schema).                                                               |
 
 ## Core Features (Main App)
 
@@ -43,12 +43,14 @@ PostgreSQL/Supabase  Supabase/Storage   External services
 ## Technology Stack
 
 ### Mobile (`/`)
+
 - React Native 0.86, React 19, Expo SDK ~57, Expo Router
 - TypeScript, NativeWind/Tailwind (configured), Reanimated/Gesture Handler
 - Expo modules: Camera, Image Picker/Manipulator, Document Scanner, SQLite, Secure Store, Local Authentication, Notifications, File System, Sharing, Document Picker, etc.
 - Axios/Zod/React Hook Form
 
 ### Backend (`DocuGuard-Server/`)
+
 - Node.js, Express 5
 - PostgreSQL (`pg`), Supabase client
 - Auth/security: JWT, bcrypt/bcryptjs, helmet, cors, express-rate-limit
@@ -56,6 +58,7 @@ PostgreSQL/Supabase  Supabase/Storage   External services
 - Validation/utilities: Zod
 
 ### Admin (`DocuGuard-Admin/`)
+
 - Expo SDK ~58, Expo Router
 - `react-native-biometric-signature`, Secure Store, notifications/device integrations
 
@@ -81,6 +84,7 @@ DocuGuard/
 ```
 
 ### Key Backend Areas (`DocuGuard-Server/`)
+
 - `routes/`: `auth`, `documents`, `dashboard`, `reminder`, `notification`, `admin`, `adminAuth`, `search`, `export`, `backup`, `subscription`, `profile`, `auditLogs`
 - `controllers/`, `services/`, `middleware/`, `jobs/`, `utils/`, `config/`
 - `migrations/001`–`012`: settings, audit log/retention, search vector, user roles, admin identity/device trust, privacy consent history, session revocation, idempotency, 2FA recovery codes, 2FA setup expiration, document audit logs, users 2FA/verification columns
@@ -88,6 +92,7 @@ DocuGuard/
 ## Getting Started
 
 ### Prerequisites
+
 - Node.js (LTS recommended) and npm
 - Expo tooling / Android/iOS environment as needed for React Native development
 - PostgreSQL or Supabase project for backend data
@@ -136,6 +141,7 @@ npm run dev   # or: npm start
 ## Scripts
 
 ### Mobile (`package.json`)
+
 - `npm start` — Expo dev server
 - `npm run android` / `npm run ios` — native runs
 - `npm run typecheck` — TypeScript check
@@ -144,6 +150,7 @@ npm run dev   # or: npm start
 - `npm run check` — typecheck + tests + server checks
 
 ### Backend (`DocuGuard-Server/package.json`)
+
 - `npm run dev` — nodemon
 - `npm start` — start server
 - `npm run check:syntax` / `npm run check` — syntax/tests checks
@@ -159,3 +166,12 @@ npm run dev   # or: npm start
 ## License
 
 Intended for academic and educational purposes (BSIT Capstone). See `LICENSE`.
+
+## COMMANDS USED IN DEVELOPMENT PHASE:
+
+eas build --platform android --profile preview
+.\gradlew.bat app:assembleRelease -x lint -x test --configure-on-demand --build-cache
+npx eas-cli update --channel preview --message "Debug login authentication flow" --platform android --environment preview
+npx expo run:android
+npx expo start --dev-client
+npx expo run:android --variant release
