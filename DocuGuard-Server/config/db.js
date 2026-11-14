@@ -1,25 +1,42 @@
 const { Pool } = require("pg");
 const fs = require("fs");
 const path = require("path");
+
+// Load server env reliably regardless of current working directory.
+require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
 require("dotenv").config();
 
 let connectionString = process.env.DATABASE_URL;
 
 if (!connectionString && process.env.DB_HOST) {
-  const ssl =
-    process.env.DB_SSL === "false" ? false : { rejectUnauthorized: false };
-  connectionString = `postgresql://${encodeURIComponent(process.env.DB_USER)}:${encodeURIComponent(process.env.DB_PASSWORD)}@${process.env.DB_HOST}:${process.env.DB_PORT || 5432}/${process.env.DB_NAME || "postgres"}?sslmode=${ssl ? "require" : "disable"}`;
+  const sslEnabled = process.env.DB_SSL !== "false";
+  connectionString = `postgresql://${encodeURIComponent(process.env.DB_USER || "")}:${encodeURIComponent(process.env.DB_PASSWORD || "")}@${process.env.DB_HOST}:${process.env.DB_PORT || 5432}/${process.env.DB_NAME || "postgres"}?sslmode=${sslEnabled ? "require" : "disable"}`;
 }
 
 const caPath = path.join(__dirname, "..", "certs", "supabase-ca.crt");
-const ca = fs.readFileSync(caPath, "utf8");
+
+function resolveSsl() {
+  if (process.env.DB_SSL === "false") return false;
+  if (connectionString && /sslmode=disable/i.test(connectionString)) return false;
+
+  if (process.env.DB_SSL === "true" || (connectionString && /sslmode=(require|verify-ca|verify-full)/i.test(connectionString))) {
+    if (fs.existsSync(caPath)) {
+      return { ca: fs.readFileSync(caPath, "utf8"), rejectUnauthorized: true };
+    }
+    return { rejectUnauthorized: false };
+  }
+
+  // Default: prefer SSL when a CA bundle is present (e.g. Supabase); otherwise
+  // allow non-SSL connections for local/dev databases.
+  if (fs.existsSync(caPath)) {
+    return { ca: fs.readFileSync(caPath, "utf8"), rejectUnauthorized: true };
+  }
+  return false;
+}
 
 const pool = new Pool({
   connectionString,
-  ssl: {
-    ca,
-    rejectUnauthorized: true,
-  },
+  ssl: resolveSsl(),
   max: 10,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 10000,

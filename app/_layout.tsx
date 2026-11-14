@@ -255,6 +255,7 @@ function RootLayoutNav() {
                   <Stack.Screen name="add-document" />
                   <Stack.Screen name="edit-document/[id]" />
                   <Stack.Screen name="document-details/[id]" />
+                  <Stack.Screen name="document-viewer" />
                   <Stack.Screen name="subscription-payment" />
                   <Stack.Screen name="document-activity-history" />
                 </Stack>

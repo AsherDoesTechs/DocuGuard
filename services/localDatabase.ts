@@ -528,6 +528,18 @@ async function switchLocalUserUnlocked(
 
   await SecureStore.deleteItemAsync(LAST_SIGNED_OUT_USER_ID_KEY);
 
+  // Biometric/app-lock shortcuts are device-global and must never carry across
+  // accounts. Require the new account owner to opt in again on this device.
+  if (accountChanged) {
+    await Promise.all([
+      SecureStore.deleteItemAsync("secure_user_credentials"),
+      SecureStore.deleteItemAsync("biometric_credentials"),
+      SecureStore.deleteItemAsync("biometricEnabled"),
+      SecureStore.deleteItemAsync("docuguard.appLock.enabled"),
+      SecureStore.deleteItemAsync("docuguard.session.backgroundAt"),
+    ]);
+  }
+
   /*
    * The retry log follows the account.
    *
@@ -587,6 +599,17 @@ async function clearLocalSessionUnlocked(): Promise<void> {
   // Clear authentication/user context only. Saved documents remain keyed by
   // user_id so the same account restores them on next sign-in.
   await setLocalUserId(null);
+
+  // Device-level security shortcuts must never carry across accounts on a
+  // shared device. Biometrics/app lock must be explicitly re-enabled by the
+  // next signed-in account owner.
+  await Promise.all([
+    SecureStore.deleteItemAsync("secure_user_credentials"),
+    SecureStore.deleteItemAsync("biometric_credentials"),
+    SecureStore.deleteItemAsync("biometricEnabled"),
+    SecureStore.deleteItemAsync("docuguard.appLock.enabled"),
+    SecureStore.deleteItemAsync("docuguard.session.backgroundAt"),
+  ]);
 }
 
 /**
@@ -621,6 +644,14 @@ export async function clearLocalSessionIfOwner(
     }
 
     await setLocalUserId(null);
+
+    await Promise.all([
+      SecureStore.deleteItemAsync("secure_user_credentials"),
+      SecureStore.deleteItemAsync("biometric_credentials"),
+      SecureStore.deleteItemAsync("biometricEnabled"),
+      SecureStore.deleteItemAsync("docuguard.appLock.enabled"),
+      SecureStore.deleteItemAsync("docuguard.session.backgroundAt"),
+    ]);
 
     return true;
   });
@@ -782,6 +813,18 @@ export async function initDatabase() {
       await database.execAsync(
         `ALTER TABLE documents ADD COLUMN risk_level TEXT`,
       );
+    }
+    if (!existingColumns.has("is_archived")) {
+      await database.execAsync(`ALTER TABLE documents ADD COLUMN is_archived INTEGER DEFAULT 0`);
+    }
+    if (!existingColumns.has("archived_at")) {
+      await database.execAsync(`ALTER TABLE documents ADD COLUMN archived_at TEXT`);
+    }
+    if (!existingColumns.has("trashed_at")) {
+      await database.execAsync(`ALTER TABLE documents ADD COLUMN trashed_at TEXT`);
+    }
+    if (!existingColumns.has("deleted_at")) {
+      await database.execAsync(`ALTER TABLE documents ADD COLUMN deleted_at TEXT`);
     }
     // Clear the fabricated "Low"/0 defaults on rows that were never assessed.
     await database.execAsync(
@@ -1958,6 +2001,7 @@ export async function getAllDocuments(): Promise<LocalDocument[]> {
       SELECT ${DOC_COLUMNS}
       FROM documents d
       WHERE d.status IS NOT 'deleted'
+        AND COALESCE(d.is_archived, 0) = 0
         AND ${userId === null ? "1 = 0" : "d.user_id = ?"}
       ORDER BY d.expiry_date IS NULL, d.expiry_date ASC, d.id DESC
     `,
@@ -2287,7 +2331,7 @@ export async function getAllTags(): Promise<string[]> {
       `SELECT DISTINCT t.tag
        FROM document_tags t
        JOIN documents d ON d.id = t.document_id
-       WHERE d.status IS NOT 'deleted'
+       WHERE d.status IS NOT 'deleted' AND COALESCE(d.is_archived,0)=0
          AND ${userId === null ? "1 = 0" : "d.user_id = ?"}
        ORDER BY t.tag`,
       userId === null ? [] : [userId],
@@ -3483,4 +3527,58 @@ export async function upsertExpiredDocumentReminder(
   );
 
   return result.lastInsertRowId as number;
+}
+
+export async function moveDocumentToTrash(id: number): Promise<void> {
+  const userId = await getLocalUserId();
+  const database = await getDb();
+  await database.runAsync(
+    `UPDATE documents SET status = 'deleted', trashed_at = ?, deleted_at = ?, needs_sync = 1 WHERE id = ? AND ${userId === null ? "1 = 0" : "user_id = ?"}`,
+    [new Date().toISOString(), new Date().toISOString(), id, ...(userId === null ? [] : [userId])],
+  );
+}
+
+export async function restoreDocumentFromTrash(id: number): Promise<void> {
+  const userId = await getLocalUserId();
+  const database = await getDb();
+  await database.runAsync(
+    `UPDATE documents SET status = 'active', trashed_at = NULL, deleted_at = NULL, needs_sync = 1 WHERE id = ? AND ${userId === null ? "1 = 0" : "user_id = ?"}`,
+    [id, ...(userId === null ? [] : [userId])],
+  );
+}
+
+export async function archiveDocument(id: number, archive = true): Promise<void> {
+  const userId = await getLocalUserId();
+  const database = await getDb();
+  await database.runAsync(
+    `UPDATE documents SET is_archived = ?, archived_at = ?, needs_sync = 1 WHERE id = ? AND ${userId === null ? "1 = 0" : "user_id = ?"}`,
+    [archive ? 1 : 0, archive ? new Date().toISOString() : null, id, ...(userId === null ? [] : [userId])],
+  );
+}
+
+export async function getTrashedDocuments(): Promise<LocalDocument[]> {
+  const userId = await getLocalUserId();
+  const rows = await queryDocuments(
+    `SELECT ${DOC_COLUMNS}
+     FROM documents d
+     WHERE ${userId === null ? "1 = 0" : "d.user_id = ?"}
+       AND (d.status = 'deleted' OR d.trashed_at IS NOT NULL)
+     ORDER BY COALESCE(d.trashed_at, d.updated_at) DESC`,
+    userId === null ? [] : [userId],
+  );
+  return rows;
+}
+
+export async function getArchivedDocuments(): Promise<LocalDocument[]> {
+  const userId = await getLocalUserId();
+  const rows = await queryDocuments(
+    `SELECT ${DOC_COLUMNS}
+     FROM documents d
+     WHERE ${userId === null ? "1 = 0" : "d.user_id = ?"}
+       AND COALESCE(d.is_archived, 0) = 1
+       AND d.status IS NOT 'deleted'
+     ORDER BY COALESCE(d.archived_at, d.updated_at) DESC`,
+    userId === null ? [] : [userId],
+  );
+  return rows;
 }

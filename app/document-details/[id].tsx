@@ -12,7 +12,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { Card, StatusBadge } from "@/components/ui";
+import { Card, StatusBadge, DocumentTags } from "@/components/ui";
 import { useColors } from "@/context/ThemeContext";
 import {
   formatShortDate,
@@ -111,50 +111,30 @@ export default function DocumentDetailsScreen() {
     if (!document?.id || isDeleting) return;
 
     await feedbackService.confirm({
-      title: "Delete Document",
-      message:
-        "Are you sure you want to permanently delete this document from your vault?",
-      confirmText: "Delete",
+      title: "Move to Trash",
+      message: "Move this document to Trash? You can restore it later from Trash.",
+      confirmText: "Move to Trash",
       cancelText: "Cancel",
       destructive: true,
       onConfirm: async () => {
         const localId = document.id as number;
         setIsDeleting(true);
-
         try {
-          // Record DELETE audit log before removing records
-          await recordAuditLog(
-            document.documentNumber || String(document.id),
-            "DELETE",
-            {
-              message: `Deleted "${document.title || "document"}"`,
-            },
-          );
-
-          // 1. Cancel pending local notification alerts
+          await recordAuditLog(document.documentNumber || String(document.id), "DELETE", {
+            message: `Moved "${document.title || "document"}" to Trash`,
+          });
           await cancelDocumentNotifications(localId);
-
-          // 2. Hard-delete from local SQLite database immediately
-          await hardDeleteDocument(localId);
-
-          // 3. Delete from cloud backend API if synced
+          const { moveDocumentToTrash } = await import("@/services/localDatabase");
+          await moveDocumentToTrash(localId);
           if (document.cloudId) {
-            const token = await SecureStore.getItemAsync("userToken");
-            if (token) {
-              await api.documents.delete(document.cloudId);
-            }
+            try { await api.documents.delete(document.cloudId); } catch {}
           }
-
-          // 🔔 Emit event to update dashboard & lists in real time
           DeviceEventEmitter.emit("documentVaultChanged");
-
-          feedbackService.success("Document permanently deleted.");
+          feedbackService.success("Document moved to Trash.");
           router.back();
         } catch (err: any) {
-          console.error("Failed to delete document:", err);
-          feedbackService.error(
-            "Could not complete document deletion. Please try again.",
-          );
+          console.error("Failed to move document to trash:", err);
+          feedbackService.error("Could not move document to Trash. Please try again.");
         } finally {
           if (mountedRef.current) setIsDeleting(false);
         }
@@ -557,6 +537,13 @@ export default function DocumentDetailsScreen() {
           </View>
         </Card>
 
+        {Array.isArray((document as any)?.tags) && (document as any).tags.length > 0 ? (
+          <Card style={styles.notesCard}>
+            <Text style={styles.notesTitle}>Tags</Text>
+            <DocumentTags tags={(document as any).tags} />
+          </Card>
+        ) : null}
+
         {document?.notes ? (
           <Card style={styles.notesCard}>
             <View style={styles.notesHeader}>
@@ -692,6 +679,19 @@ export default function DocumentDetailsScreen() {
             <Ionicons name="create" size={20} color={colors.buttonPrimaryText} />
             <Text style={[styles.actionButtonText, { color: colors.buttonPrimaryText }]}>
               Edit Document
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.actionButton, styles.actionSecondary]}
+            onPress={() =>
+              document?.id &&
+              router.push({ pathname: "/document-viewer" as any, params: { id: String(document.id) } } as any)
+            }
+            disabled={!document || isDownloading || isVerifying || isDeleting}
+          >
+            <Ionicons name="eye-outline" size={20} color={colors.primary} />
+            <Text style={[styles.actionButtonText, { color: colors.primary }]}>
+              View File
             </Text>
           </TouchableOpacity>
           <TouchableOpacity

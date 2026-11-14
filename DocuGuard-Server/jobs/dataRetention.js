@@ -58,30 +58,19 @@ async function purgeUserDocuments(userId, deletedTtlDays, expiredTtlDays) {
     [userId, now, deletedTtlDays],
   );
 
-  // Expired documents (expiry_date in the past) past their TTL.
-  // A document is eligible when its expiry date is older than the TTL window.
-  const expiredResult = await db.query(
-    `
-    DELETE FROM documents
-    WHERE user_id = $1
-      AND status <> 'deleted'
-      AND expiry_date IS NOT NULL
-      AND expiry_date != ''
-      AND expiry_date < (CURRENT_DATE - ($2 || ' days')::interval)
-    RETURNING id
-    `,
-    [userId, expiredTtlDays],
-  );
+  // Expired documents are intentionally NOT auto-deleted.
+  // Keeping expired records is required for expiry tracking/history; users must
+  // renew or delete them explicitly.
+  const expiredResult = { rows: [] };
 
-  const purged =
-    (deletedResult.rows.length || 0) + (expiredResult.rows.length || 0);
+  const purged = deletedResult.rows.length || 0;
 
   if (purged > 0) {
-    info("DataRetention", "Purged expired/deleted documents", {
+    info("DataRetention", "Purged soft-deleted documents", {
       userId,
       purged,
       deleted: deletedResult.rows.length,
-      expired: expiredResult.rows.length,
+      expiredAutoDeleted: 0,
     });
   }
 

@@ -130,16 +130,44 @@ export default function BiometricLoginScreen() {
 
     const checkBiometricSupport = async () => {
       try {
-        const compatible = await LocalAuthentication.hasHardwareAsync();
+        const [compatible, enrolled, storedCredentials, activeUserIdRaw] = await Promise.all([
+          LocalAuthentication.hasHardwareAsync(),
+          LocalAuthentication.isEnrolledAsync(),
+          SecureStore.getItemAsync("secure_user_credentials"),
+          SecureStore.getItemAsync("docuguard.localUserId"),
+        ]);
 
-        const enrolled = await LocalAuthentication.isEnrolledAsync();
+        const activeUserId = activeUserIdRaw ? Number(activeUserIdRaw) : NaN;
+        const activeId =
+          Number.isSafeInteger(activeUserId) && activeUserId > 0 ? activeUserId : null;
 
-        const biometricSetting =
-          await SecureStore.getItemAsync("biometricEnabled");
+        let biometricSetting: string | null = null;
+        if (activeId !== null) {
+          biometricSetting = await SecureStore.getItemAsync(
+            `docuguard.security.biometricEnabled.user.${activeId}`,
+          );
+        }
+
+        let credentialsForCurrentUser = false;
+        if (storedCredentials) {
+          try {
+            const parsed = JSON.parse(storedCredentials) as { userId?: number };
+            credentialsForCurrentUser =
+              typeof parsed?.userId === "number" &&
+              Number.isSafeInteger(parsed.userId) &&
+              parsed.userId > 0 &&
+              (activeId === null || parsed.userId === activeId);
+          } catch {
+            credentialsForCurrentUser = false;
+          }
+        }
 
         if (isActive) {
           setIsBiometricSupported(
-            compatible && enrolled && biometricSetting === "true",
+            compatible &&
+              enrolled &&
+              credentialsForCurrentUser &&
+              (biometricSetting === "true" || activeId !== null),
           );
         }
       } catch (error) {
@@ -209,6 +237,20 @@ export default function BiometricLoginScreen() {
 
         await establishAuthenticatedSession(response.token, userId);
 
+        // Securely cache credentials for biometrics if password is provided.
+        try {
+          await SecureStore.setItemAsync(
+            "secure_user_credentials",
+            JSON.stringify({
+              email: normalizedValues.email,
+              password: values.password,
+              userId,
+            }),
+          );
+        } catch (error) {
+          console.warn("[BiometricLogin] Failed to save biometric credentials.", error);
+        }
+
         // Remember only the email, never the password.
         try {
           if (values.rememberMe) {
@@ -274,30 +316,83 @@ export default function BiometricLoginScreen() {
         return;
       }
 
-      const token = await SecureStore.getItemAsync("userToken");
+      const storedCredentials = await SecureStore.getItemAsync(
+        "secure_user_credentials",
+      );
 
-      if (!token) {
+      if (!storedCredentials) {
         feedbackService.alert({
-          title: "Session Expired",
+          title: "Session Reset",
           message:
-            "Please sign in with your password first to re-establish your secure session.",
+            "Please sign in with your password once to re-enable biometric login.",
           type: "warning",
         });
         return;
       }
 
-      // Biometrics unlock an existing session; they cannot renew an expired one.
-      const sessionValid = await api.validateStoredSession(token);
-
-      if (!sessionValid) {
+      let parsedCredentials: { email?: string; password?: string; userId?: number };
+      try {
+        parsedCredentials = JSON.parse(storedCredentials);
+      } catch {
+        await SecureStore.deleteItemAsync("secure_user_credentials");
         feedbackService.alert({
-          title: "Session Expired",
+          title: "Session Reset",
           message:
-            "Your secure session is no longer valid. Please sign in with your password.",
+            "Please sign in with your password once to re-enable biometric login.",
           type: "warning",
         });
         return;
       }
+
+      const { email, password, userId: cachedUserId } = parsedCredentials;
+      if (typeof email !== "string" || typeof password !== "string") {
+        await SecureStore.deleteItemAsync("secure_user_credentials");
+        feedbackService.alert({
+          title: "Session Reset",
+          message:
+            "Please sign in with your password once to re-enable biometric login.",
+          type: "warning",
+        });
+        return;
+      }
+
+      const response = await api.auth.login({ email, password });
+
+      if (response?.requiresTwoFactor) {
+        router.push({
+          pathname: "/(auth)/verify-2fa" as any,
+          params: { email: email.trim().toLowerCase(), password },
+        });
+        return;
+      }
+
+      const userId = response?.user?.id;
+      if (
+        !response?.token ||
+        typeof userId !== "number" ||
+        !Number.isSafeInteger(userId) ||
+        userId <= 0
+      ) {
+        throw new Error("Could not refresh session via biometrics.");
+      }
+
+      if (
+        typeof cachedUserId === "number" &&
+        Number.isSafeInteger(cachedUserId) &&
+        cachedUserId > 0 &&
+        cachedUserId !== userId
+      ) {
+        await SecureStore.deleteItemAsync("secure_user_credentials");
+        throw new Error(
+          "Biometric credentials are no longer valid for this account. Please sign in with your password.",
+        );
+      }
+
+      await establishAuthenticatedSession(response.token, userId);
+      await SecureStore.setItemAsync(
+        "secure_user_credentials",
+        JSON.stringify({ email, password, userId }),
+      );
 
       router.replace("/(tabs)/documents" as any);
     } catch (error) {

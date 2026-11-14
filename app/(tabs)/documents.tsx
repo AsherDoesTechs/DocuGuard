@@ -17,7 +17,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
-import { Card, StatusBadge, EmptyState } from "../../components/ui";
+import { Card, StatusBadge, EmptyState, TagFilter } from "../../components/ui";
 import SearchBar from "@/components/ui/SearchBar";
 import { DOCUMENT_CATEGORIES } from "../../constants";
 import { useTheme } from "@/context/ThemeContext";
@@ -31,6 +31,12 @@ import {
   getDashboardSummary,
   updateDocumentStatus,
   hardDeleteDocument,
+  moveDocumentToTrash,
+  restoreDocumentFromTrash,
+  archiveDocument,
+  getTrashedDocuments,
+  getArchivedDocuments,
+  getAllTags,
   type LocalDocument,
   type DocumentDashboardSummary,
 } from "../../services/localDatabase";
@@ -131,6 +137,7 @@ const statusMatches = (
 interface DocumentItemProps {
   doc: LocalDocument;
   COLORS: any;
+  viewMode: "active" | "archived" | "trash";
   onPress: (id: string | number) => void;
   maskNumber: (num?: string) => string;
   getSyncIcon: (doc: LocalDocument) => {
@@ -138,11 +145,27 @@ interface DocumentItemProps {
     color: string;
     label: string;
   };
+  onArchiveToggle?: (id: number, archive: boolean) => void;
+  onMoveToTrash?: (id: number) => void;
+  onRestore?: (id: number) => void;
+  onPermanentDelete?: (id: number) => void;
 }
 
 const DocumentItem = React.memo(
-  ({ doc, COLORS, onPress, maskNumber, getSyncIcon }: DocumentItemProps) => {
+  ({
+    doc,
+    COLORS,
+    viewMode,
+    onPress,
+    maskNumber,
+    getSyncIcon,
+    onArchiveToggle,
+    onMoveToTrash,
+    onRestore,
+    onPermanentDelete,
+  }: DocumentItemProps) => {
     const syncIcon = getSyncIcon(doc);
+    const localId = typeof doc.id === "number" ? doc.id : null;
 
     return (
       <TouchableOpacity
@@ -217,32 +240,34 @@ const DocumentItem = React.memo(
                   ID: {maskNumber(doc.documentNumber)}
                 </Text>
 
-                <View
-                  style={{
-                    flexDirection: "row",
-                    alignItems: "center",
-                    gap: 4,
-                    maxWidth: "100%",
-                  }}
-                  accessibilityLabel={syncIcon.label}
-                >
-                  <Ionicons
-                    name={syncIcon.name}
-                    size={14}
-                    color={syncIcon.color}
-                  />
-                  <Text
+                {viewMode !== "trash" ? (
+                  <View
                     style={{
-                      fontSize: 11,
-                      fontWeight: "500",
-                      color: syncIcon.color,
-                      flexShrink: 1,
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 4,
+                      maxWidth: "100%",
                     }}
-                    numberOfLines={1}
+                    accessibilityLabel={syncIcon.label}
                   >
-                    {syncIcon.label}
-                  </Text>
-                </View>
+                    <Ionicons
+                      name={syncIcon.name}
+                      size={14}
+                      color={syncIcon.color}
+                    />
+                    <Text
+                      style={{
+                        fontSize: 11,
+                        fontWeight: "500",
+                        color: syncIcon.color,
+                        flexShrink: 1,
+                      }}
+                      numberOfLines={1}
+                    >
+                      {syncIcon.label}
+                    </Text>
+                  </View>
+                ) : null}
 
                 <View
                   style={{ flexDirection: "row", alignItems: "center", gap: 4 }}
@@ -257,6 +282,194 @@ const DocumentItem = React.memo(
                   </Text>
                 </View>
               </View>
+
+              {Array.isArray(doc.tags) && doc.tags.length > 0 ? (
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+                  {doc.tags.slice(0, 4).map((tag) => (
+                    <View
+                      key={tag}
+                      style={{
+                        backgroundColor: COLORS.primaryLight,
+                        paddingHorizontal: 8,
+                        paddingVertical: 3,
+                        borderRadius: 10,
+                      }}
+                    >
+                      <Text style={{ fontSize: 11, color: COLORS.primary, fontWeight: "500" }}>
+                        {tag}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              ) : null}
+
+              {localId != null ? (
+                <View
+                  style={{
+                    flexDirection: "row",
+                    flexWrap: "wrap",
+                    gap: 8,
+                    marginTop: 10,
+                  }}
+                >
+                  {viewMode === "active" ? (
+                    <>
+                      <TouchableOpacity
+                        accessibilityRole="button"
+                        accessibilityLabel={`Archive ${doc.title || "document"}`}
+                        onPress={(e) => {
+                          e.stopPropagation?.();
+                          onArchiveToggle?.(localId, true);
+                        }}
+                        style={{
+                          flexDirection: "row",
+                          alignItems: "center",
+                          gap: 4,
+                          paddingHorizontal: 10,
+                          paddingVertical: 6,
+                          borderRadius: 8,
+                          borderWidth: 1,
+                          borderColor: COLORS.border,
+                          backgroundColor: COLORS.background,
+                        }}
+                      >
+                        <Ionicons name="archive-outline" size={14} color={COLORS.textSecondary} />
+                        <Text style={{ fontSize: 12, color: COLORS.textSecondary, fontWeight: "600" }}>
+                          Archive
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        accessibilityRole="button"
+                        accessibilityLabel={`Move ${doc.title || "document"} to trash`}
+                        onPress={(e) => {
+                          e.stopPropagation?.();
+                          onMoveToTrash?.(localId);
+                        }}
+                        style={{
+                          flexDirection: "row",
+                          alignItems: "center",
+                          gap: 4,
+                          paddingHorizontal: 10,
+                          paddingVertical: 6,
+                          borderRadius: 8,
+                          borderWidth: 1,
+                          borderColor: COLORS.error,
+                          backgroundColor: COLORS.background,
+                        }}
+                      >
+                        <Ionicons name="trash-outline" size={14} color={COLORS.error} />
+                        <Text style={{ fontSize: 12, color: COLORS.error, fontWeight: "600" }}>
+                          Trash
+                        </Text>
+                      </TouchableOpacity>
+                    </>
+                  ) : null}
+                  {viewMode === "archived" ? (
+                    <>
+                      <TouchableOpacity
+                        accessibilityRole="button"
+                        accessibilityLabel={`Unarchive ${doc.title || "document"}`}
+                        onPress={(e) => {
+                          e.stopPropagation?.();
+                          onArchiveToggle?.(localId, false);
+                        }}
+                        style={{
+                          flexDirection: "row",
+                          alignItems: "center",
+                          gap: 4,
+                          paddingHorizontal: 10,
+                          paddingVertical: 6,
+                          borderRadius: 8,
+                          borderWidth: 1,
+                          borderColor: COLORS.primary,
+                          backgroundColor: COLORS.background,
+                        }}
+                      >
+                        <Ionicons name="arrow-up-circle-outline" size={14} color={COLORS.primary} />
+                        <Text style={{ fontSize: 12, color: COLORS.primary, fontWeight: "600" }}>
+                          Unarchive
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        accessibilityRole="button"
+                        accessibilityLabel={`Move ${doc.title || "document"} to trash`}
+                        onPress={(e) => {
+                          e.stopPropagation?.();
+                          onMoveToTrash?.(localId);
+                        }}
+                        style={{
+                          flexDirection: "row",
+                          alignItems: "center",
+                          gap: 4,
+                          paddingHorizontal: 10,
+                          paddingVertical: 6,
+                          borderRadius: 8,
+                          borderWidth: 1,
+                          borderColor: COLORS.error,
+                          backgroundColor: COLORS.background,
+                        }}
+                      >
+                        <Ionicons name="trash-outline" size={14} color={COLORS.error} />
+                        <Text style={{ fontSize: 12, color: COLORS.error, fontWeight: "600" }}>
+                          Trash
+                        </Text>
+                      </TouchableOpacity>
+                    </>
+                  ) : null}
+                  {viewMode === "trash" ? (
+                    <>
+                      <TouchableOpacity
+                        accessibilityRole="button"
+                        accessibilityLabel={`Restore ${doc.title || "document"}`}
+                        onPress={(e) => {
+                          e.stopPropagation?.();
+                          onRestore?.(localId);
+                        }}
+                        style={{
+                          flexDirection: "row",
+                          alignItems: "center",
+                          gap: 4,
+                          paddingHorizontal: 10,
+                          paddingVertical: 6,
+                          borderRadius: 8,
+                          borderWidth: 1,
+                          borderColor: COLORS.primary,
+                          backgroundColor: COLORS.background,
+                        }}
+                      >
+                        <Ionicons name="refresh-outline" size={14} color={COLORS.primary} />
+                        <Text style={{ fontSize: 12, color: COLORS.primary, fontWeight: "600" }}>
+                          Restore
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        accessibilityRole="button"
+                        accessibilityLabel={`Delete ${doc.title || "document"} permanently`}
+                        onPress={(e) => {
+                          e.stopPropagation?.();
+                          onPermanentDelete?.(localId);
+                        }}
+                        style={{
+                          flexDirection: "row",
+                          alignItems: "center",
+                          gap: 4,
+                          paddingHorizontal: 10,
+                          paddingVertical: 6,
+                          borderRadius: 8,
+                          borderWidth: 1,
+                          borderColor: COLORS.error,
+                          backgroundColor: COLORS.background,
+                        }}
+                      >
+                        <Ionicons name="trash" size={14} color={COLORS.error} />
+                        <Text style={{ fontSize: 12, color: COLORS.error, fontWeight: "600" }}>
+                          Delete permanently
+                        </Text>
+                      </TouchableOpacity>
+                    </>
+                  ) : null}
+                </View>
+              ) : null}
             </View>
 
             <StatusBadge status={doc.status} />
@@ -294,11 +507,17 @@ export default function DocumentsScreen() {
   const [search, setSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [selectedStatus, setSelectedStatus] = useState<string>("all");
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [allTags, setAllTags] = useState<string[]>([]);
 
   const [categoryModalVisible, setCategoryModalVisible] = useState(false);
   const [statusModalVisible, setStatusModalVisible] = useState(false);
+  const [ocrSearchIds, setOcrSearchIds] = useState<Set<number> | null>(null);
+  const [viewMode, setViewMode] = useState<"active" | "archived" | "trash">("active");
 
   const [documents, setDocuments] = useState<LocalDocument[]>([]);
+  const [archivedDocs, setArchivedDocs] = useState<LocalDocument[]>([]);
+  const [trashedDocs, setTrashedDocs] = useState<LocalDocument[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
 
@@ -321,11 +540,18 @@ export default function DocumentsScreen() {
         }
       }
 
-      const localDocs = await getAllDocuments();
+      const [localDocs, localArchived, localTrashed, summary, tags] = await Promise.all([
+        getAllDocuments(),
+        getArchivedDocuments(),
+        getTrashedDocuments(),
+        getDashboardSummary(),
+        getAllTags(),
+      ]);
       setDocuments(localDocs);
-
-      const summary = await getDashboardSummary();
+      setArchivedDocs(localArchived);
+      setTrashedDocs(localTrashed);
       setDashboardSummary(summary);
+      setAllTags(tags);
     } catch (err: unknown) {
       console.error("Failed to fetch local documents:", err);
       setLoadError(true);
@@ -344,11 +570,19 @@ export default function DocumentsScreen() {
         }
       }
 
-      const refreshedDocs = await getAllDocuments();
+      const [refreshedDocs, refreshedArchived, refreshedTrashed, refreshedSummary, refreshedTags] =
+        await Promise.all([
+          getAllDocuments(),
+          getArchivedDocuments(),
+          getTrashedDocuments(),
+          getDashboardSummary(),
+          getAllTags(),
+        ]);
       setDocuments(refreshedDocs);
-
-      const refreshedSummary = await getDashboardSummary();
+      setArchivedDocs(refreshedArchived);
+      setTrashedDocs(refreshedTrashed);
       setDashboardSummary(refreshedSummary);
+      setAllTags(refreshedTags);
     } catch (cloudError) {
       console.warn(
         "Background cloud document pull failed; continuing with local documents:",
@@ -398,6 +632,47 @@ export default function DocumentsScreen() {
     }
   };
 
+  const handleArchiveDocument = async (documentId: number, archive: boolean) => {
+    try {
+      await archiveDocument(documentId, archive);
+      DeviceEventEmitter.emit("documentVaultChanged");
+    } catch (error) {
+      console.error("Failed to archive document:", error);
+    }
+  };
+
+  const handleMoveToTrash = async (documentId: number) => {
+    try {
+      await moveDocumentToTrash(documentId);
+      DeviceEventEmitter.emit("documentVaultChanged");
+    } catch (error) {
+      console.error("Failed to move document to trash:", error);
+    }
+  };
+
+  const handleRestoreDocument = async (documentId: number) => {
+    try {
+      await restoreDocumentFromTrash(documentId);
+      DeviceEventEmitter.emit("documentVaultChanged");
+    } catch (error) {
+      console.error("Failed to restore document:", error);
+    }
+  };
+
+  const handlePermanentDelete = async (documentId: number) => {
+    try {
+      await hardDeleteDocument(documentId);
+      try {
+        await api.documents.delete(documentId);
+      } catch {
+        // local permanent delete already applied; cloud tombstone may sync later
+      }
+      DeviceEventEmitter.emit("documentVaultChanged");
+    } catch (error) {
+      console.error("Failed to permanently delete document:", error);
+    }
+  };
+
   const handleDataReload = useCallback(async () => {
     await fetchDocuments();
   }, [fetchDocuments]);
@@ -417,41 +692,58 @@ export default function DocumentsScreen() {
     [],
   );
 
+  useEffect(() => {
+    const q = search.trim();
+    if (q.length < 2) { setOcrSearchIds(null); return; }
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        const res = await api.documents.searchDocuments(q);
+        if (!cancelled) {
+          const ids = new Set<number>((res?.results || []).map((r: any) => Number(r?.id)).filter((n: number) => Number.isFinite(n)));
+          setOcrSearchIds(ids);
+        }
+      } catch { if (!cancelled) setOcrSearchIds(null); }
+    }, 350);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [search]);
+
   const filtered = useMemo(() => {
     const query = normalizeFilterValue(search);
-
-    return documents.filter((doc) => {
+    const base: LocalDocument[] = viewMode === "archived" ? archivedDocs : viewMode === "trash" ? trashedDocs : documents;
+    const selectedTagSet = selectedTags.map((t) => normalizeFilterValue(t));
+    return base.filter((doc: LocalDocument) => {
       const title = normalizeFilterValue(doc.title);
       const issuer = normalizeFilterValue(doc.issuer);
       const documentNumber = normalizeFilterValue(doc.documentNumber);
-
+      const tags = Array.isArray(doc.tags) ? doc.tags.map((t) => normalizeFilterValue(t)) : [];
       const matchesSearch =
         !query ||
         title.includes(query) ||
         issuer.includes(query) ||
-        documentNumber.includes(query);
-
-      const matchesCategory = categoryMatches(
-        doc.category,
-        selectedCategory,
-        doc.title,
-      );
+        documentNumber.includes(query) ||
+        tags.some((t) => t.includes(query)) ||
+        (ocrSearchIds ? ocrSearchIds.has(Number(doc.id)) : false);
+      const matchesCategory = categoryMatches(doc.category, selectedCategory, doc.title);
       const matchesStatus = statusMatches(doc.expiryDate, selectedStatus);
-
-      return matchesSearch && matchesCategory && matchesStatus;
+      const matchesTags =
+        selectedTagSet.length === 0 ||
+        selectedTagSet.every((tag) => tags.includes(tag));
+      return matchesSearch && matchesCategory && matchesStatus && matchesTags;
     });
-  }, [documents, search, selectedCategory, selectedStatus]);
+  }, [documents, archivedDocs, trashedDocs, viewMode, search, selectedCategory, selectedStatus, selectedTags, ocrSearchIds]);
 
   const hasActiveFilters =
     search.trim().length > 0 ||
     selectedCategory !== "all" ||
-    selectedStatus !== "all";
+    selectedStatus !== "all" ||
+    selectedTags.length > 0;
 
   const pendingSyncCount = documents.filter((doc) => doc.needsSync).length;
 
   const maskDocumentNumber = (num?: string) => {
-    if (!num || num.length <= 4) return "••••";
-    return `••••${num.slice(-4)}`;
+    if (!num || num.length <= 4) return "â€¢â€¢â€¢â€¢";
+    return `â€¢â€¢â€¢â€¢${num.slice(-4)}`;
   };
 
   const currentCategoryLabel =
@@ -469,6 +761,7 @@ export default function DocumentsScreen() {
     setSearch("");
     setSelectedCategory("all");
     setSelectedStatus("all");
+    setSelectedTags([]);
   }, []);
 
   const openAddDocument = useCallback(() => {
@@ -551,16 +844,48 @@ export default function DocumentsScreen() {
           </View>
 
           <Text style={styles.subtitle}>
-            {filtered.length} {filtered.length === 1 ? "document" : "documents"}
-            {" • "}
-            {pendingSyncCount} pending sync
+            {viewMode === "active"
+              ? "Active"
+              : viewMode === "archived"
+                ? "Archived"
+                : "Trash"}
+            : {filtered.length} {filtered.length === 1 ? "document" : "documents"}
+            {viewMode === "active" ? ` • ${pendingSyncCount} pending sync` : ""}
           </Text>
+
+          <View style={styles.viewModeRow}>
+            {(["active", "archived", "trash"] as const).map((mode) => (
+              <TouchableOpacity
+                key={mode}
+                style={[
+                  styles.viewModeChip,
+                  viewMode === mode && styles.viewModeChipActive,
+                ]}
+                onPress={() => setViewMode(mode)}
+                accessibilityRole="button"
+                accessibilityState={{ selected: viewMode === mode }}
+              >
+                <Text
+                  style={[
+                    styles.viewModeChipText,
+                    viewMode === mode && styles.viewModeChipTextActive,
+                  ]}
+                >
+                  {mode === "active"
+                    ? "Active"
+                    : mode === "archived"
+                      ? "Archived"
+                      : "Trash"}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
         </View>
 
         {/* Search */}
         <View style={styles.searchContainer}>
           <SearchBar
-            placeholder="Search title, issuer, or document ID"
+            placeholder="Search title, issuer, ID, or document text"
             value={search}
             onChangeText={setSearch}
           />
@@ -623,6 +948,22 @@ export default function DocumentsScreen() {
           </TouchableOpacity>
         </View>
 
+        {allTags.length > 0 ? (
+          <View style={styles.tagFilterContainer}>
+            <TagFilter
+              selectedTags={selectedTags}
+              allTags={allTags}
+              onTagToggle={(tag) =>
+                setSelectedTags((prev) =>
+                  prev.includes(tag)
+                    ? prev.filter((t) => t !== tag)
+                    : [...prev, tag],
+                )
+              }
+            />
+          </View>
+        ) : null}
+
         {/* Clear filters */}
         {hasActiveFilters && (
           <TouchableOpacity
@@ -661,15 +1002,19 @@ export default function DocumentsScreen() {
                 title={
                   hasActiveFilters
                     ? "No matching documents"
-                    : "Your vault is empty"
+                    : viewMode === "archived" ? "No archived documents" : viewMode === "trash" ? "Trash is empty" : "Your vault is empty"
                 }
                 message={
                   hasActiveFilters
                     ? "Try another search or clear your filters to see more documents."
-                    : "Add your first document to start building your secure vault."
+                    : viewMode === "archived"
+                      ? "Archived documents appear here."
+                      : viewMode === "trash"
+                        ? "Deleted documents can be restored or permanently removed from Trash."
+                        : "Add your first document to start building your secure vault."
                 }
                 actionLabel={
-                  hasActiveFilters ? "Clear filters" : "Add document"
+                  hasActiveFilters ? "Clear filters" : viewMode === "active" ? "Add document" : undefined
                 }
                 onAction={() => {
                   if (hasActiveFilters) {
@@ -686,9 +1031,14 @@ export default function DocumentsScreen() {
                   key={doc.id ?? doc.documentNumber}
                   doc={doc}
                   COLORS={COLORS}
+                  viewMode={viewMode}
                   onPress={handleOpenDocument}
                   maskNumber={maskDocumentNumber}
                   getSyncIcon={getSyncIcon}
+                  onArchiveToggle={handleArchiveDocument}
+                  onMoveToTrash={handleMoveToTrash}
+                  onRestore={handleRestoreDocument}
+                  onPermanentDelete={handlePermanentDelete}
                 />
               ))
             )}
@@ -910,6 +1260,32 @@ const createStyles = (COLORS: any) =>
       borderRadius: 10,
     },
 
+    viewModeRow: {
+      flexDirection: "row",
+      gap: 8,
+      marginTop: 12,
+    },
+    viewModeChip: {
+      flex: 1,
+      alignItems: "center",
+      paddingVertical: 8,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: COLORS.border,
+      backgroundColor: COLORS.surface,
+    },
+    viewModeChipActive: {
+      backgroundColor: COLORS.primaryLight,
+      borderColor: COLORS.primary,
+    },
+    viewModeChipText: {
+      fontSize: 13,
+      fontWeight: "600",
+      color: COLORS.textSecondary,
+    },
+    viewModeChipTextActive: {
+      color: COLORS.primary,
+    },
     searchContainer: {
       marginBottom: 16,
     },
@@ -1062,6 +1438,10 @@ const createStyles = (COLORS: any) =>
     modalItemTextSelected: {
       fontWeight: "600",
       color: COLORS.primary,
+    },
+
+    tagFilterContainer: {
+      marginBottom: 12,
     },
 
     floatingAddButton: {

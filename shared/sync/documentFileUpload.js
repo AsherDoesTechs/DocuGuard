@@ -25,7 +25,7 @@ const ALLOWED_FILE_TYPES = [
 ];
 
 /** The upload limit of the storage bucket. */
-const MAX_FILE_BYTES = 15 * 1024 * 1024;
+const MAX_FILE_BYTES = 5 * 1024 * 1024;
 
 /**
  * Normalises a mime type the way the server does.

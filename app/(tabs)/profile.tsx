@@ -33,6 +33,7 @@ import {
 import {
   getUserProfile,
   getAllDocuments,
+  getActiveLocalUserIdStrict,
   getLocalDataOwnerIdForSessionExpiration,
   purgeLocalDataForUser,
   saveUserProfile,
@@ -141,6 +142,11 @@ const OCCUPATION_LIST = [
   "Electrician / Plumber",
   "Others",
 ];
+
+const getBiometricEnabledKey = (userId: number) =>
+  `docuguard.security.biometricEnabled.user.${userId}`;
+const getAppLockEnabledKey = (userId: number) =>
+  `docuguard.security.appLockEnabled.user.${userId}`;
 
 const SettingRow = ({
   colors,
@@ -291,6 +297,8 @@ export default function ProfileScreen() {
   >("totp");
   const [disabling2FA, setDisabling2FA] = useState(false);
 
+  const [securityOwnerId, setSecurityOwnerId] = useState<number | null>(null);
+
   const [biometric, setBiometric] = useState<BiometricState>({
     available: false,
     enrolled: false,
@@ -369,10 +377,13 @@ export default function ProfileScreen() {
 
   const checkBiometrics = useCallback(async () => {
     try {
-      const hasHardware = await LocalAuthentication.hasHardwareAsync();
-      const isEnrolled = await LocalAuthentication.isEnrolledAsync();
-      const supportedTypes =
-        await LocalAuthentication.supportedAuthenticationTypesAsync();
+      const [hasHardware, isEnrolled, supportedTypes, activeUserId] =
+        await Promise.all([
+          LocalAuthentication.hasHardwareAsync(),
+          LocalAuthentication.isEnrolledAsync(),
+          LocalAuthentication.supportedAuthenticationTypesAsync(),
+          getActiveLocalUserIdStrict(),
+        ]);
 
       let bioType: BiometricState["type"] = "unknown";
       if (
@@ -393,25 +404,52 @@ export default function ProfileScreen() {
         bioType = "iris";
       }
 
-      const storedBiometric =
-        await SecureStore.getItemAsync("biometricEnabled");
-      const storedAppLock = await SecureStore.getItemAsync(
-        "docuguard.appLock.enabled",
-      );
+      let storedBiometric: string | null = null;
+      let storedAppLock: string | null = null;
+      if (activeUserId !== null) {
+        [storedBiometric, storedAppLock] = await Promise.all([
+          SecureStore.getItemAsync(getBiometricEnabledKey(activeUserId)),
+          SecureStore.getItemAsync(getAppLockEnabledKey(activeUserId)),
+        ]);
+      }
 
+      setSecurityOwnerId(activeUserId);
       setBiometric({
         available: hasHardware,
         enrolled: isEnrolled,
-        enabled: storedBiometric === "true" && hasHardware && isEnrolled,
+        enabled:
+          activeUserId !== null &&
+          storedBiometric === "true" &&
+          hasHardware &&
+          isEnrolled,
         type: bioType,
       });
-      setAppLockEnabled(storedAppLock === "true");
+      setAppLockEnabled(
+        activeUserId !== null && storedAppLock === "true",
+      );
     } catch (err) {
       console.warn("Biometric check failed:", err);
     }
   }, []);
 
   const fetchProfile = useCallback(async () => {
+    const activeUserId = await getActiveLocalUserIdStrict();
+    setSecurityOwnerId(activeUserId);
+
+    // Reset account-specific security/2FA UI immediately to avoid showing
+    // another account's enabled state while remote data loads.
+    setTwoFactor(false);
+    setTwoFactorSetup(null);
+    setRecoveryCodes(null);
+    setTwoFactorCode("");
+    setTwoFactorDisablePassword("");
+    setTwoFactorDisableCode("");
+    setTwoFactorDisableMode("totp");
+    if (activeUserId === null) {
+      setBiometric((prev) => ({ ...prev, enabled: false }));
+      setAppLockEnabled(false);
+    }
+
     try {
       // 1. Instantly pull local cached profile & documents so UI renders immediately
       const localProfile = (await getUserProfile()) as any;
@@ -466,6 +504,8 @@ export default function ProfileScreen() {
     } catch (err) {
       console.error("Failed to load local profile cache:", err);
     }
+
+    await checkBiometrics();
 
     // 2. Run remote cloud synchronization silently in the background without blocking the UI
     try {
@@ -793,6 +833,12 @@ export default function ProfileScreen() {
   };
 
   const handleToggleBiometric = async (value: boolean) => {
+    const ownerId = securityOwnerId ?? (await getActiveLocalUserIdStrict());
+    if (ownerId === null) {
+      feedbackService.error("Please sign in to manage biometric settings.");
+      return;
+    }
+
     if (value) {
       if (!biometric.available || !biometric.enrolled) {
         feedbackService.alert({
@@ -812,7 +858,11 @@ export default function ProfileScreen() {
       }
     }
     try {
-      await SecureStore.setItemAsync("biometricEnabled", String(value));
+      await SecureStore.setItemAsync(
+        getBiometricEnabledKey(ownerId),
+        String(value),
+      );
+      setSecurityOwnerId(ownerId);
       setBiometric((prev) => ({ ...prev, enabled: value }));
       DeviceEventEmitter.emit("docuguard.securityPreferencesChanged");
       feedbackService.success(
@@ -824,11 +874,14 @@ export default function ProfileScreen() {
   };
 
   const handleToggleAppLock = async (value: boolean) => {
+    const ownerId = securityOwnerId ?? (await getActiveLocalUserIdStrict());
+    if (ownerId === null) {
+      feedbackService.error("Please sign in to manage app lock settings.");
+      return;
+    }
     try {
-      await SecureStore.setItemAsync(
-        "docuguard.appLock.enabled",
-        String(value),
-      );
+      await SecureStore.setItemAsync(getAppLockEnabledKey(ownerId), String(value));
+      setSecurityOwnerId(ownerId);
       setAppLockEnabled(value);
       DeviceEventEmitter.emit("docuguard.securityPreferencesChanged");
       feedbackService.success(
@@ -1096,6 +1149,7 @@ export default function ProfileScreen() {
     try {
       await api.client.delete("/profile", {
         headers: { Authorization: `Bearer ${token}` },
+        data: { password },
       });
     } catch (err: any) {
       feedbackService.error(
@@ -1179,33 +1233,44 @@ export default function ProfileScreen() {
       confirmText: "Sign Out",
       cancelText: "Cancel",
       destructive: true,
-      onConfirm: async () => {
-        try {
-          // 1. Immediately wipe local auth state and redirect away from protected screens first
-          await SecureStore.deleteItemAsync("userToken");
-          await SecureStore.deleteItemAsync("refreshToken");
-          await SecureStore.deleteItemAsync("biometric_credentials");
+        onConfirm: async () => {
+          try {
+            const [token, ownerId] = await Promise.all([
+              api.getStoredToken(),
+              getLocalDataOwnerIdForSessionExpiration(),
+            ]);
 
-          router.replace("/(auth)/login" as any);
+            // Remove biometric credentials so a future biometric sign-in cannot
+            // authenticate as this account after sign-out or account changes.
+            await Promise.all([
+              SecureStore.deleteItemAsync("secure_user_credentials"),
+              SecureStore.deleteItemAsync("biometric_credentials"),
+              SecureStore.deleteItemAsync("refreshToken"),
+            ]);
 
-          // 2. Perform server session cleanup & push-token removal in the background
-          const [token, ownerId] = await Promise.all([
-            api.getStoredToken(),
-            getLocalDataOwnerIdForSessionExpiration(),
-          ]);
+            if (token && ownerId && ownerId > 0) {
+              await removePushTokenFromBackend(token).catch(() => {});
+              await api.auth.logout(token, ownerId).catch((err) => {
+                console.warn("Server session revocation failed or offline:", err);
+              });
+            } else {
+              await SecureStore.deleteItemAsync("userToken");
+            }
 
-          if (token && ownerId && ownerId > 0) {
-            await api.auth.logout(token, ownerId).catch((err) => {
-              console.warn("Server session revocation failed or offline:", err);
-            });
-            await removePushTokenFromBackend(token).catch(() => {});
+            router.replace("/(auth)/login" as any);
+          } catch (error) {
+            console.error("Failed to sign out cleanly:", error);
+            try {
+              await Promise.all([
+                SecureStore.deleteItemAsync("userToken"),
+                SecureStore.deleteItemAsync("secure_user_credentials"),
+                SecureStore.deleteItemAsync("biometric_credentials"),
+                SecureStore.deleteItemAsync("refreshToken"),
+              ]);
+            } catch {}
+            router.replace("/(auth)/login" as any);
           }
-        } catch (error) {
-          console.error("Failed to sign out cleanly:", error);
-          // Fallback redirect just in case
-          router.replace("/(auth)/login" as any);
-        }
-      },
+        },
       onCancel: () => {},
     });
   };
@@ -1978,17 +2043,32 @@ export default function ProfileScreen() {
                       <Text style={styles.inputLabel}>
                         Alert Lead Time (Days Before Expiry)
                       </Text>
-                      <TextInput
-                        style={styles.input}
-                        placeholder="30"
-                        placeholderTextColor={colors.textMuted}
-                        keyboardType="numeric"
-                        value={expiryLeadDays}
-                        onChangeText={setExpiryLeadDays}
-                        onEndEditing={() => {
-                          void handleExpiryLeadDaysSave();
-                        }}
-                      />
+                      <View style={styles.selectorRow}>
+                        {[7, 15, 30].map((days) => {
+                          const active = Number(expiryLeadDays) === days;
+                          return (
+                            <TouchableOpacity
+                              key={days}
+                              style={[styles.selectorChip, active && styles.selectorChipActive]}
+                              onPress={() => {
+                                setExpiryLeadDays(String(days));
+                                void (async () => {
+                                  try {
+                                    const token = await SecureStore.getItemAsync("userToken");
+                                    if (!token) { feedbackService.error("Please sign in to save this setting."); return; }
+                                    await api.profile.updateSettings({ reminderBeforeDays: days });
+                                    feedbackService.success("Reminder lead time saved.");
+                                  } catch (err: any) {
+                                    feedbackService.error(getApiErrorMessage(err, "Failed to save reminder lead time"));
+                                  }
+                                })();
+                              }}
+                            >
+                              <Text style={[styles.selectorChipText, active && styles.selectorChipTextActive]}>{days} days</Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
                     </View>
                   )}
 
@@ -2039,19 +2119,20 @@ export default function ProfileScreen() {
                       <Text style={styles.inputLabel}>
                         Default Expiry Buffer (Days)
                       </Text>
-                      <TextInput
-                        style={styles.input}
-                        placeholder="30"
-                        placeholderTextColor={colors.textMuted}
-                        keyboardType="number-pad"
-                        value={String(docPreferences.expiryReminderDays)}
-                        onChangeText={(val) =>
-                          setDocPreferences({
-                            ...docPreferences,
-                            expiryReminderDays: val === "" ? 30 : Number(val),
-                          })
-                        }
-                      />
+                      <View style={styles.selectorRow}>
+                        {[7, 15, 30].map((days) => {
+                          const active = Number(docPreferences.expiryReminderDays) === days;
+                          return (
+                            <TouchableOpacity
+                              key={days}
+                              style={[styles.selectorChip, active && styles.selectorChipActive]}
+                              onPress={() => setDocPreferences({ ...docPreferences, expiryReminderDays: days })}
+                            >
+                              <Text style={[styles.selectorChipText, active && styles.selectorChipTextActive]}>{days} days</Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
                     </View>
                   )}
 

@@ -407,7 +407,7 @@ export default function HomeScreen() {
     if (summary.expiringDocuments > 0) {
       return {
         color: COLORS.warning,
-        label: "Upcoming Expirations",
+        label: "Expiring Soon",
         action: `${summary.expiringDocuments} document${
           summary.expiringDocuments !== 1 ? "s" : ""
         } expiring soon.`,

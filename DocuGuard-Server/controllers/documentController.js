@@ -1363,14 +1363,18 @@ exports.updateDocument = async (req, res) => {
 
   try {
     const encryptedIssuer =
-      issuer !== undefined && issuer !== null
-        ? encryptFields({ issuer }, PII_FIELDS).issuer
-        : null;
+      issuer !== undefined
+        ? issuer === null
+          ? null
+          : encryptFields({ issuer }, PII_FIELDS).issuer
+        : undefined;
     const encryptedDocumentNumber =
-      documentNumber !== undefined && documentNumber !== null
-        ? encryptFields({ document_number: documentNumber }, PII_FIELDS)
-            .document_number
-        : null;
+      documentNumber !== undefined
+        ? documentNumber === null
+          ? null
+          : encryptFields({ document_number: documentNumber }, PII_FIELDS)
+              .document_number
+        : undefined;
 
     const updates = [];
     const values = [];
@@ -1394,22 +1398,19 @@ exports.updateDocument = async (req, res) => {
     }
     if (issueDate !== undefined) {
       updates.push(`issue_date = $${idx++}::date`);
-      values.push(issueDate === null ? null : issueDate);
+      values.push(issueDate ?? null);
     }
     if (expiryDate !== undefined) {
       updates.push(`expiry_date = $${idx++}::date`);
-      values.push(expiryDate === null ? null : expiryDate);
+      values.push(expiryDate ?? null);
     }
     if (notes !== undefined) {
       updates.push(`notes = $${idx++}::text`);
-      values.push(typeof notes === "string" ? notes.trim() : notes);
+      values.push(typeof notes === "string" ? notes.trim() : notes ?? null);
     }
-    if (enableAlerts !== undefined && enableAlerts !== null) {
+    if (enableAlerts !== undefined) {
       updates.push(`enable_alerts = $${idx++}::boolean`);
-      values.push(enableAlerts === true);
-    } else if (enableAlerts === null) {
-      updates.push(`enable_alerts = $${idx++}::boolean`);
-      values.push(null);
+      values.push(enableAlerts === null ? null : enableAlerts === true);
     }
 
     if (updates.length === 0) {
@@ -1421,7 +1422,6 @@ exports.updateDocument = async (req, res) => {
 
     updates.push(`updated_at = clock_timestamp()`);
 
-    // Capture exact dynamic parameter indices for WHERE clause clauses
     const docIdParam = idx++;
     const userIdParam = idx++;
     const baseRevParam = idx++;
@@ -1429,10 +1429,9 @@ exports.updateDocument = async (req, res) => {
 
     values.push(Number(docId));
     values.push(Number(userId));
-    values.push(baseRevision || null);
+    values.push(baseRevision ?? null);
     values.push(exactRevision === true);
 
-    // Build revision match SQL dynamically matching the exact runtime parameter slots
     const dynamicRevisionMatchSql = buildRevisionMatchSql(
       baseRevParam,
       exactRevParam,
@@ -1441,7 +1440,7 @@ exports.updateDocument = async (req, res) => {
     const updated = await db.query(
       `UPDATE documents
        SET ${updates.join(", ")}
-       WHERE id = $${docIdParam} AND user_id = $${userIdParam}
+       WHERE id = $${docIdParam}::int AND user_id = $${userIdParam}::int
          AND ($${baseRevParam}::timestamptz IS NULL OR ${dynamicRevisionMatchSql})
        RETURNING id, title, category, issuer, document_number AS "documentNumber",
                   issue_date AS "issueDate", expiry_date AS "expiryDate", notes, status, enable_alerts AS "enableAlerts",

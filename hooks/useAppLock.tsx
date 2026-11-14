@@ -4,6 +4,7 @@ import * as LocalAuthentication from "expo-local-authentication";
 import * as SecureStore from "expo-secure-store";
 import { api } from "../services/api";
 import {
+  getActiveLocalUserIdStrict,
   getLocalDataOwnerIdForSessionExpiration,
   getUserProfile,
   switchLocalUser,
@@ -33,9 +34,14 @@ import { COLORS, Spacing } from "@/constants";
 const DEFAULT_APP_LOCK_DELAY = 30_000;
 const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
 
-const APP_LOCK_ENABLED_KEY = "docuguard.appLock.enabled";
+const APP_LOCK_ENABLED_KEY = "docuguard.appLock.enabled"; // legacy/global
 const APP_LOCK_TIMEOUT_KEY = "docuguard.appLock.timeout";
 const SESSION_BACKGROUND_AT_KEY = "docuguard.session.backgroundAt";
+
+const getBiometricEnabledKey = (userId: number) =>
+  `docuguard.security.biometricEnabled.user.${userId}`;
+const getAppLockEnabledKey = (userId: number) =>
+  `docuguard.security.appLockEnabled.user.${userId}`;
 
 export function useAppLock() {
   const [sessionCheckComplete, setSessionCheckComplete] = useState(false);
@@ -127,18 +133,24 @@ export function useAppLock() {
 
     const loadPreferences = async () => {
       try {
-        const [storedEnabled, storedTimeout] = await Promise.all([
-          SecureStore.getItemAsync(APP_LOCK_ENABLED_KEY),
-          SecureStore.getItemAsync(APP_LOCK_TIMEOUT_KEY),
-        ]);
+        const activeUserId = await getActiveLocalUserIdStrict();
+        const storedTimeout = await SecureStore.getItemAsync(
+          APP_LOCK_TIMEOUT_KEY,
+        );
+        const storedEnabled =
+          activeUserId !== null
+            ? await SecureStore.getItemAsync(getAppLockEnabledKey(activeUserId))
+            : null;
 
         if (cancelled || !mountedRef.current) return;
 
         if (storedEnabled !== null) {
           const enabled = storedEnabled === "true";
-
           setAppLockEnabled(enabled);
           appLockEnabledRef.current = enabled;
+        } else {
+          setAppLockEnabled(false);
+          appLockEnabledRef.current = false;
         }
 
         // App Lock uses the confirmed fixed 30-second background delay.
@@ -160,9 +172,9 @@ export function useAppLock() {
         sessionVerificationFailedRef.current = true;
 
         if (mountedRef.current) {
-          setAppLockEnabled(true);
-          appLockEnabledRef.current = true;
-          setIsLocked(true);
+          setAppLockEnabled(false);
+          appLockEnabledRef.current = false;
+          setIsLocked(false);
         }
       } finally {
         if (!cancelled && mountedRef.current) {
@@ -180,29 +192,33 @@ export function useAppLock() {
 
   const checkBiometricSupport = useCallback(async () => {
     try {
-      const [
-        hasHardware,
-        isEnrolled,
-        token,
-        biometricPreference,
-        appLockPreference,
-      ] = await Promise.all([
-        LocalAuthentication.hasHardwareAsync(),
-        LocalAuthentication.isEnrolledAsync(),
-        SecureStore.getItemAsync("userToken"),
-        SecureStore.getItemAsync("biometricEnabled"),
-        SecureStore.getItemAsync(APP_LOCK_ENABLED_KEY),
-      ]);
+      const activeUserId = await getActiveLocalUserIdStrict();
+      const [hasHardware, isEnrolled, token, biometricPreference, appLockPreference] =
+        await Promise.all([
+          LocalAuthentication.hasHardwareAsync(),
+          LocalAuthentication.isEnrolledAsync(),
+          SecureStore.getItemAsync("userToken"),
+          activeUserId !== null
+            ? SecureStore.getItemAsync(getBiometricEnabledKey(activeUserId))
+            : Promise.resolve(null),
+          activeUserId !== null
+            ? SecureStore.getItemAsync(getAppLockEnabledKey(activeUserId))
+            : Promise.resolve(null),
+        ]);
 
       const enabled =
-        biometricPreference === "true" && hasHardware && isEnrolled && !!token;
+        activeUserId !== null &&
+        biometricPreference === "true" &&
+        hasHardware &&
+        isEnrolled &&
+        !!token;
 
       if (mountedRef.current) {
         setBiometricEnabled(enabled);
         biometricEnabledRef.current = enabled;
-        const appLockEnabled = appLockPreference === "true";
-        setAppLockEnabled(appLockEnabled);
-        appLockEnabledRef.current = appLockEnabled;
+        const appLock = activeUserId !== null && appLockPreference === "true";
+        setAppLockEnabled(appLock);
+        appLockEnabledRef.current = appLock;
       }
 
       return enabled;
@@ -683,6 +699,7 @@ export function useAppLock() {
         return false;
       }
 
+      const activeUserId = await getActiveLocalUserIdStrict();
       const [
         token,
         storedBackgroundAt,
@@ -696,7 +713,9 @@ export function useAppLock() {
         ),
         LocalAuthentication.hasHardwareAsync(),
         LocalAuthentication.isEnrolledAsync(),
-        SecureStore.getItemAsync("biometricEnabled"),
+        activeUserId !== null
+          ? SecureStore.getItemAsync(getBiometricEnabledKey(activeUserId))
+          : Promise.resolve(null),
       ]);
 
       if (
@@ -740,13 +759,16 @@ export function useAppLock() {
 
       // Recheck token and timestamp after the biometric prompt.
       // The session may have expired while authentication was open.
+      const currentUserId = await getActiveLocalUserIdStrict();
       const [currentToken, currentBackgroundAt, currentBiometricPreference] =
         await Promise.all([
           SecureStore.getItemAsync("userToken"),
           runBackgroundTimestampOperation(() =>
             SecureStore.getItemAsync(SESSION_BACKGROUND_AT_KEY),
           ),
-          SecureStore.getItemAsync("biometricEnabled"),
+          currentUserId !== null
+            ? SecureStore.getItemAsync(getBiometricEnabledKey(currentUserId))
+            : Promise.resolve(null),
         ]);
 
       if (currentBiometricPreference !== "true") {
@@ -1012,6 +1034,27 @@ export function useAppLock() {
     [expireSession],
   );
 
+
+  // Inactivity timeout (FR-003): lock after 30 minutes without interaction while app is active
+  useEffect(() => {
+    if (!appLockEnabled) return;
+    const interval = setInterval(() => {
+      if (appStateRef.current !== "active" || isLocked || sessionExpiredRef.current) return;
+      const idleMs = Date.now() - lastActiveTimeRef.current;
+      if (idleMs >= SESSION_TIMEOUT_MS) {
+        setIsLocked(true);
+      }
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [appLockEnabled, isLocked]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (s) => {
+      if (s === "active") lastActiveTimeRef.current = Date.now();
+    });
+    // touch/activity updates can be wired from UI; at minimum update on resume
+    return () => sub.remove();
+  }, []);
   return {
     isLocked,
     appLockEnabled,

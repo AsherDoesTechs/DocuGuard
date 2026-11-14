@@ -537,8 +537,8 @@ export default function RemindersScreen() {
         const overdueDays = Math.abs(days);
 
         return overdueDays === 1
-          ? "1 day overdue"
-          : `${overdueDays} days overdue`;
+          ? "Expired 1 day ago"
+          : `Expired ${overdueDays} days ago`;
       }
 
       if (days === 0) return "Due today";

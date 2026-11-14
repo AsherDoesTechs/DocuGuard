@@ -22,10 +22,11 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import * as SecureStore from "expo-secure-store";
+import * as DocumentPicker from "expo-document-picker";
 
 import { DOCUMENTS_BY_CATEGORY } from "../../constants/documentTypes";
 import { recordAuditLog } from "@/services/auditService";
-import { Card, Input, Button } from "@/components/ui";
+import { Card, Input, Button, TagsInput, DocumentScanner as DocumentScannerComponent } from "@/components/ui";
 import { useColors } from "@/context/ThemeContext";
 import {
   getDocumentById,
@@ -35,6 +36,11 @@ import {
 import { api, API_BASE_URL } from "@/services/api";
 import { documentUpdateSchema, validateSchema } from "@/shared/validation";
 import { canonicalizeServerRevision } from "@/shared/sync/syncPolicy";
+import {
+  buildUploadFileName,
+  needsStorageUpload,
+  validateUploadFile,
+} from "@/shared/sync/documentFileUpload";
 import {
   scheduleRemindersForDocument,
   cancelDocumentNotifications,
@@ -78,6 +84,7 @@ type EditDocumentValues = {
   issueDate: string;
   expiryDate: string | null;
   notes: string;
+  tags: string[];
   enableAlerts: boolean;
   status: string;
   processingStatus: string;
@@ -392,6 +399,13 @@ export default function EditDocumentScreen() {
   const [selectedGroup, setSelectedGroup] = useState<DocumentGroup>("other");
   const [typeSearch, setTypeSearch] = useState("");
   const [showAllTypes, setShowAllTypes] = useState(false);
+  const [scannerVisible, setScannerVisible] = useState(false);
+  const [replacementFile, setReplacementFile] = useState<{
+    uri: string;
+    name: string;
+    size?: number;
+    mimeType?: string;
+  } | null>(null);
 
   // Synchronous guard against rapid repeated save taps.
   const saveInProgress = useRef(false);
@@ -415,6 +429,7 @@ export default function EditDocumentScreen() {
       issueDate: "",
       expiryDate: null,
       notes: "",
+      tags: [],
       enableAlerts: true,
       status: "active",
       processingStatus: "completed",
@@ -469,8 +484,8 @@ export default function EditDocumentScreen() {
   );
 
   const hasChanges = useMemo(
-    () => JSON.stringify(values) !== JSON.stringify(initialData),
-    [values, initialData],
+    () => JSON.stringify(values) !== JSON.stringify(initialData) || replacementFile != null,
+    [values, initialData, replacementFile],
   );
 
   const updateValue = useCallback(
@@ -532,6 +547,75 @@ export default function EditDocumentScreen() {
     [],
   );
 
+  const uploadReplacementFile = useCallback(
+    async (file: { uri: string; name: string; size?: number; mimeType?: string }) => {
+      const mimeType = file.mimeType || "application/octet-stream";
+      const invalid = validateUploadFile({ fileType: mimeType, size: file.size });
+      if (invalid) {
+        throw new Error(invalid);
+      }
+
+      if (!needsStorageUpload({ s3Key: null, fileUrl: null })) {
+        return { s3Key: null as string | null, fileUrl: file.uri, fileType: mimeType };
+      }
+
+      const uploadData = await api.documents.getUploadUrl(buildUploadFileName(file), mimeType);
+      if (!uploadData?.uploadUrl) {
+        throw new Error("The server did not return an upload URL for the file.");
+      }
+
+      await api.documents.uploadToS3(uploadData.uploadUrl, file.uri, mimeType);
+      const s3Key = String(uploadData.storagePath || (uploadData as any).s3Key || "").trim();
+      if (!s3Key) {
+        throw new Error("The file was uploaded, but the server did not return a storage key.");
+      }
+
+      return { s3Key, fileUrl: file.uri, fileType: mimeType };
+    },
+    [],
+  );
+
+  const handlePickReplacementFile = useCallback(async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ["application/pdf", "image/*"],
+        copyToCacheDirectory: true,
+        multiple: false,
+      });
+
+      if (result.canceled || !result.assets?.[0]) return;
+      const asset = result.assets[0];
+      setReplacementFile({
+        uri: asset.uri,
+        name: asset.name || "replacement-file",
+        size: asset.size,
+        mimeType: asset.mimeType || undefined,
+      });
+    } catch (error) {
+      console.error("Replacement file pick failed:", error);
+      await feedbackService.alert({
+        title: "File Selection Failed",
+        message: "Could not select the replacement file.",
+        type: "error",
+      });
+    }
+  }, []);
+
+  const handleScanReplacement = useCallback(() => {
+    setScannerVisible(true);
+  }, []);
+
+  const handleReplacementScanSuccess = useCallback((data: any) => {
+    const uri = data?.images?.[0]?.uri;
+    if (!uri) return;
+    setReplacementFile({
+      uri,
+      name: `scan-${Date.now()}.jpg`,
+      mimeType: "image/jpeg",
+    });
+    setScannerVisible(false);
+  }, []);
+
   const fetchDocumentData = useCallback(async () => {
     setIsLoading(true);
     setLoadError("");
@@ -575,6 +659,7 @@ export default function EditDocumentScreen() {
           issueDate: normalizeDate(localDocument.issueDate),
           expiryDate: normalizeDate(localDocument.expiryDate),
           notes: localDocument.notes || "",
+          tags: localDocument.tags || [],
           enableAlerts: localDocument.enableAlerts !== false,
           status: localDocument.status || "active",
           processingStatus: localDocument.processingStatus || "completed",
@@ -647,6 +732,7 @@ export default function EditDocumentScreen() {
         issueDate: normalizeDate(data?.issueDate),
         expiryDate: normalizeDate(data?.expiryDate),
         notes: data?.notes || "",
+        tags: Array.isArray(data?.tags) ? data.tags : [],
         enableAlerts: data?.enableAlerts !== false,
         status: data?.status || "active",
         processingStatus: data?.processingStatus || "completed",
@@ -835,19 +921,7 @@ export default function EditDocumentScreen() {
       return;
     }
 
-    type UpdatePayload = Partial<
-      Pick<
-        EditDocumentValues,
-        | "title"
-        | "category"
-        | "issuer"
-        | "documentNumber"
-        | "issueDate"
-        | "expiryDate"
-        | "notes"
-        | "enableAlerts"
-      >
-    >;
+    type UpdatePayload = Partial<LocalDocument> & { baseUpdatedAt?: string };
 
     const payload: UpdatePayload = {};
 
@@ -879,8 +953,33 @@ export default function EditDocumentScreen() {
       payload.notes = values.notes.trim();
     }
 
+    if (JSON.stringify(values.tags) !== JSON.stringify(initialData.tags)) {
+      payload.tags = values.tags;
+    }
+
     if (values.enableAlerts !== initialData.enableAlerts) {
       payload.enableAlerts = values.enableAlerts;
+    }
+
+    if (replacementFile) {
+      try {
+        const uploaded = await uploadReplacementFile(replacementFile);
+        payload.fileUrl = uploaded.fileUrl;
+        payload.fileType = uploaded.fileType ?? values.fileType ?? undefined;
+        payload.s3Key = uploaded.s3Key ?? undefined;
+        payload.processingStatus = "completed";
+      } catch (error) {
+        console.error("Replacement file upload failed:", error);
+        await feedbackService.alert({
+          title: "File Replace Failed",
+          message:
+            error instanceof Error
+              ? error.message
+              : "Could not upload the replacement file.",
+          type: "error",
+        });
+        return;
+      }
     }
 
     const baseRevision = canonicalizeServerRevision(serverRevision);
@@ -950,12 +1049,37 @@ export default function EditDocumentScreen() {
 
       const savedValues: EditDocumentValues = {
         ...values,
-        ...payload,
+        ...(payload.title !== undefined ? { title: payload.title } : {}),
+        ...(payload.category !== undefined ? { category: payload.category } : {}),
+        ...(payload.issuer !== undefined ? { issuer: payload.issuer } : {}),
+        ...(payload.documentNumber !== undefined
+          ? { documentNumber: payload.documentNumber }
+          : {}),
+        ...(payload.issueDate !== undefined ? { issueDate: payload.issueDate } : {}),
+        ...(payload.expiryDate !== undefined
+          ? { expiryDate: payload.expiryDate ?? null }
+          : {}),
+        ...(payload.notes !== undefined ? { notes: payload.notes } : {}),
+        ...(payload.tags !== undefined ? { tags: payload.tags } : {}),
+        ...(payload.enableAlerts !== undefined
+          ? { enableAlerts: payload.enableAlerts }
+          : {}),
+        ...(payload.fileUrl !== undefined
+          ? { fileUrl: payload.fileUrl ?? null }
+          : {}),
+        ...(payload.fileType !== undefined
+          ? { fileType: payload.fileType ?? null }
+          : {}),
+        ...(payload.s3Key !== undefined ? { s3Key: payload.s3Key ?? null } : {}),
+        ...(payload.processingStatus !== undefined
+          ? { processingStatus: payload.processingStatus }
+          : {}),
       };
 
       setValues(savedValues);
       setInitialData(savedValues);
       setNoExpirationDate(!savedValues.expiryDate);
+      setReplacementFile(null);
       setErrors({});
       setTouched({});
 
@@ -1030,8 +1154,10 @@ export default function EditDocumentScreen() {
     documentId,
     initialData,
     isSaving,
+    replacementFile,
     router,
     serverRevision,
+    uploadReplacementFile,
     useLocalData,
     validateForm,
     values,
@@ -1057,6 +1183,7 @@ export default function EditDocumentScreen() {
         setTouched({});
         setTypeSearch("");
         setShowAllTypes(false);
+        setReplacementFile(null);
       },
       onCancel: () => {},
     });
@@ -1546,6 +1673,86 @@ export default function EditDocumentScreen() {
             <View style={styles.sectionHeader}>
               <View style={styles.sectionIcon}>
                 <Ionicons
+                  name="pricetags-outline"
+                  size={20}
+                  color={colors.primary}
+                />
+              </View>
+
+              <View style={styles.sectionHeaderText}>
+                <Text style={styles.sectionTitle}>Tags</Text>
+                <Text style={styles.sectionSubtitle}>
+                  Add tags to organize and filter this document.
+                </Text>
+              </View>
+            </View>
+
+            <TagsInput
+              initialTags={values.tags}
+              onTagsChange={(tags) => updateValue("tags", tags)}
+              placeholder="Add tags (press enter or comma)"
+            />
+          </Card>
+
+          <Card>
+            <View style={styles.sectionHeader}>
+              <View style={styles.sectionIcon}>
+                <Ionicons
+                  name="document-attach-outline"
+                  size={20}
+                  color={colors.primary}
+                />
+              </View>
+
+              <View style={styles.sectionHeaderText}>
+                <Text style={styles.sectionTitle}>Document File</Text>
+                <Text style={styles.sectionSubtitle}>
+                  Replace the stored file by uploading or scanning a new one.
+                </Text>
+              </View>
+            </View>
+
+            <Text style={styles.fileMetaText}>
+              Current: {values.fileType || "Unknown type"}
+              {values.s3Key ? " • Cloud file linked" : values.fileUrl ? " • Local file available" : " • No file attached"}
+            </Text>
+
+            {replacementFile ? (
+              <View style={styles.replacementBox}>
+                <Ionicons name="swap-horizontal-outline" size={18} color={colors.primary} />
+                <Text style={styles.replacementText} numberOfLines={1}>
+                  Replacement: {replacementFile.name}
+                </Text>
+                <TouchableOpacity onPress={() => setReplacementFile(null)} accessibilityRole="button" accessibilityLabel="Remove replacement file">
+                  <Ionicons name="close-circle" size={20} color={colors.textSecondary} />
+                </TouchableOpacity>
+              </View>
+            ) : null}
+
+            <View style={styles.fileActionsRow}>
+              <TouchableOpacity
+                style={styles.fileActionButton}
+                onPress={handlePickReplacementFile}
+                accessibilityRole="button"
+              >
+                <Ionicons name="folder-open-outline" size={18} color={colors.primary} />
+                <Text style={styles.fileActionText}>Pick File</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.fileActionButton}
+                onPress={handleScanReplacement}
+                accessibilityRole="button"
+              >
+                <Ionicons name="scan-outline" size={18} color={colors.primary} />
+                <Text style={styles.fileActionText}>Scan</Text>
+              </TouchableOpacity>
+            </View>
+          </Card>
+
+          <Card>
+            <View style={styles.sectionHeader}>
+              <View style={styles.sectionIcon}>
+                <Ionicons
                   name="information-circle-outline"
                   size={20}
                   color={colors.primary}
@@ -1624,6 +1831,14 @@ export default function EditDocumentScreen() {
 
           <View style={styles.bottomSpacing} />
         </ScrollView>
+
+        {scannerVisible && (
+          <DocumentScannerComponent
+            visible={scannerVisible}
+            onScanSuccess={handleReplacementScanSuccess}
+            onClose={() => setScannerVisible(false)}
+          />
+        )}
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -2059,6 +2274,47 @@ const createStyles = (colors: any) => StyleSheet.create({
     lineHeight: 17,
     color: colors.textSecondary,
     marginTop: 2,
+  },
+
+  fileMetaText: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    marginBottom: 10,
+  },
+  replacementBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    padding: 10,
+    borderRadius: 10,
+    backgroundColor: "rgba(37, 99, 235, 0.06)",
+    marginBottom: 10,
+  },
+  replacementText: {
+    flex: 1,
+    fontSize: 13,
+    color: colors.text,
+  },
+  fileActionsRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  fileActionButton: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  fileActionText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: colors.primary,
   },
 
   notesInput: {

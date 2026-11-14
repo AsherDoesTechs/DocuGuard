@@ -23,21 +23,30 @@ export interface ExtractedDocumentData {
   documentId?: number;
 }
 
-function getFileName(uri: string): string {
-  const cleanUri = uri.split("?")[0];
-  const filename = cleanUri.split("/").pop();
+function getFileName(uri: string, providedName?: string): string {
+  if (typeof providedName === "string" && providedName.trim()) {
+    return providedName.trim();
+  }
+
+  const cleanUri = uri.split("?")[0].split("#")[0];
+  const filename = decodeURIComponent(cleanUri.split("/").pop() || "");
 
   return filename || `document_${Date.now()}.jpg`;
 }
 
-function getMimeType(uri: string): string {
-  const filename = getFileName(uri).toLowerCase();
+function getMimeType(uri: string, providedType?: string, providedName?: string): string {
+  if (typeof providedType === "string" && providedType.trim()) {
+    return providedType.toLowerCase().split(";")[0].trim();
+  }
+
+  const filename = getFileName(uri, providedName).toLowerCase();
 
   if (filename.endsWith(".png")) return "image/png";
   if (filename.endsWith(".pdf")) return "application/pdf";
   if (filename.endsWith(".webp")) return "image/webp";
   if (filename.endsWith(".heic")) return "image/heic";
   if (filename.endsWith(".heif")) return "image/heif";
+  if (filename.endsWith(".jpg") || filename.endsWith(".jpeg")) return "image/jpeg";
 
   return "image/jpeg";
 }
@@ -58,26 +67,21 @@ function normalizeExtractedData(data: any): ExtractedDocumentData {
 }
 
 /**
- * Uploads a scan, creates an OCR draft, and runs Azure OCR.
+ * Uploads a file/image, creates an OCR draft, and runs OCR extraction.
  */
 export async function extractDocumentData(
   imageUri: string,
+  options?: { fileName?: string; mimeType?: string },
 ): Promise<ExtractedDocumentData> {
   if (!imageUri) {
-    throw new Error("No document image was provided.");
+    throw new Error("No document file was provided.");
   }
 
-  const fileName = getFileName(imageUri);
-  const fileType = getMimeType(imageUri);
+  const fileName = getFileName(imageUri, options?.fileName);
+  const fileType = getMimeType(imageUri, options?.mimeType, fileName);
 
-  /*
-   * The storage key of an upload that has not become a document yet.
-   *
-   * The upload runs before the draft exists. When the draft cannot be
-   * created, the uploaded object is left in the bucket with nothing pointing
-   * at it, so the key is remembered for the cleanup in the failure path.
-   */
   let uploadedKey: string | null = null;
+  let draftDocumentId: number | null = null;
 
   try {
     // 1. Request a signed upload URL.
@@ -109,23 +113,13 @@ export async function extractDocumentData(
       fileType,
     });
 
-    /*
-     * The draft id has to be normalised, not just checked for truthiness.
-     *
-     * `documents.id` is a `BIGSERIAL`, so node-postgres returns it as the
-     * string "42". The old code accepted any truthy value here and the caller
-     * then rejected it with `typeof id === "number"`, which silently dropped
-     * the link between the local document and the draft it came from: the
-     * compensating delete could never find the draft, and a deleted document
-     * was hard-deleted locally while the draft survived in the cloud.
-     */
     const documentId = normalizeCloudId(created?.document?.id ?? created?.id);
-
     if (!documentId) {
       throw new Error(
         "The file was uploaded, but the server did not return a document ID.",
       );
     }
+    draftDocumentId = documentId;
 
     // 4. Run OCR against the saved draft.
     const processed = await documents.processDocument(documentId);
@@ -163,16 +157,25 @@ export async function extractDocumentData(
      * leaves the object behind rather than hiding the original error, and the
      * scan itself is still on the device.
      */
-    const compensation = resolveUploadCompensation({
-      uploadedKey: stage === "createOcrDraft" ? uploadedKey : null,
-      documentSaved: false,
-    });
-
-    if (compensation.action === "remove" && compensation.s3Key) {
+    // Never leave a server draft/document if processing was halted or failed.
+    if (draftDocumentId) {
       try {
-        await documents.deleteUploadedObject(compensation.s3Key);
+        await documents.delete(draftDocumentId);
       } catch (cleanupError) {
-        console.warn("OCR upload could not be removed:", cleanupError);
+        console.warn("OCR draft could not be removed:", cleanupError);
+      }
+    } else {
+      const compensation = resolveUploadCompensation({
+        uploadedKey: stage === "createOcrDraft" ? uploadedKey : null,
+        documentSaved: false,
+      });
+
+      if (compensation.action === "remove" && compensation.s3Key) {
+        try {
+          await documents.deleteUploadedObject(compensation.s3Key);
+        } catch (cleanupError) {
+          console.warn("OCR upload could not be removed:", cleanupError);
+        }
       }
     }
 

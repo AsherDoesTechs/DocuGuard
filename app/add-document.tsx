@@ -24,7 +24,7 @@ import * as DocumentPicker from "expo-document-picker";
 import { recordAuditLog } from "@/services/auditService";
 
 import { useColors } from "@/context/ThemeContext";
-import { DocumentScannerComponent } from "@/components/ui/DocumentScanner";
+import { DocumentScanner as DocumentScannerComponent, TagsInput } from "@/components/ui";
 import { verifyDocumentWithOrchestrator } from "@/services/documentVerificationClient";
 import { extractDocumentData } from "../utils/ocr";
 import { LocalDocument } from "../services/localDatabase";
@@ -1003,6 +1003,7 @@ export default function AddDocumentScreen() {
   const [issueDate, setIssueDate] = useState<string>("");
   const [expiryDate, setExpiryDate] = useState<string>("");
   const [notes, setNotes] = useState<string>("");
+  const [tags, setTags] = useState<string[]>([]);
   const [reminderIntervals, setReminderIntervals] = useState<number[]>([30]);
   const [enableAlerts, setEnableAlerts] = useState<boolean>(true);
 
@@ -1023,6 +1024,9 @@ export default function AddDocumentScreen() {
     documentId?: number;
   } | null>(null);
   const scanRequestIdRef = React.useRef<number>(0);
+  const captureSourceRef = React.useRef<"scan" | "upload" | null>(null);
+  const savedRef = React.useRef(false);
+  const ocrDraftIdRef = React.useRef<number | null>(null);
   const [datePicker, setDatePicker] = useState<
     "issueDate" | "expiryDate" | null
   >(null);
@@ -1039,16 +1043,35 @@ export default function AddDocumentScreen() {
     return DOCUMENTS_BY_CATEGORY[category.id] || [];
   }, [category]);
 
-  function resetOcrState() {
+  const discardOcrDraft = async (documentId?: number | null) => {
+    const id = documentId ?? ocrDraftIdRef.current;
+    if (!id) return;
+    try {
+      await api.documents.delete(id);
+    } catch (error) {
+      console.warn("Unsaved OCR draft could not be removed:", error);
+    } finally {
+      if (ocrDraftIdRef.current === id) {
+        ocrDraftIdRef.current = null;
+      }
+    }
+  };
+
+  function resetOcrState(options?: { discardDraft?: boolean }) {
+    if (options?.discardDraft) {
+      void discardOcrDraft(ocrDraftIdRef.current);
+    }
     scanRequestIdRef.current += 1;
     setOcrLoading(false);
     setExtractedData(null);
     setOcrUploadMeta(null);
     uploadedFileRef.current = null;
+    captureSourceRef.current = null;
+    ocrDraftIdRef.current = null;
   }
 
   function selectDocumentType(type: "legal" | "non-legal") {
-    resetOcrState();
+    resetOcrState({ discardDraft: true });
     setSelectedFile(null);
     setTitle("");
     setDocumentNumber("");
@@ -1067,7 +1090,7 @@ export default function AddDocumentScreen() {
   }
 
   function selectCategory(item: CategoryItem) {
-    resetOcrState();
+    resetOcrState({ discardDraft: true });
     setSelectedFile(null);
     setTitle("");
     setDocumentNumber("");
@@ -1085,7 +1108,7 @@ export default function AddDocumentScreen() {
   }
 
   function selectSpecificDocument(item: SpecificDocumentItem) {
-    resetOcrState();
+    resetOcrState({ discardDraft: true });
     setSelectedFile(null);
     setTitle(item.title);
     setDocumentNumber("");
@@ -1117,8 +1140,8 @@ export default function AddDocumentScreen() {
         selectedFile?.name !== asset.name ||
         selectedFile?.size !== asset.size;
 
-      resetOcrState();
       if (fileIdentityChanged) {
+        resetOcrState({ discardDraft: true });
         setTitle(specificDocument?.title || "");
         setDocumentNumber("");
         setIssuer(specificDocument?.defaultIssuer || "");
@@ -1129,6 +1152,8 @@ export default function AddDocumentScreen() {
         setFieldErrors({});
         setExtractedData(null);
         setOcrUploadMeta(null);
+      } else {
+        resetOcrState();
       }
 
       const fileData = {
@@ -1138,12 +1163,14 @@ export default function AddDocumentScreen() {
         mimeType: asset.mimeType ?? undefined,
       };
       setSelectedFile(fileData);
+      captureSourceRef.current = "upload";
 
       setStep(4);
-      await processScan(
+      void processScan(
         asset.uri,
         asset.mimeType ||
           (asset.name?.toLowerCase().endsWith(".pdf") ? "application/pdf" : "image/jpeg"),
+        asset.name,
       );
     } catch {
       feedbackService.error("Failed to pick document.");
@@ -1243,12 +1270,16 @@ export default function AddDocumentScreen() {
     }
   }
 
-  const processScan = async (uri: string, mimeType = "image/jpeg") => {
+  const processScan = async (
+    uri: string,
+    mimeType = "image/jpeg",
+    fileName?: string,
+  ) => {
     const requestId = ++scanRequestIdRef.current;
     setOcrLoading(true);
 
     try {
-      const raw: any = await extractDocumentData(uri);
+      const raw: any = await extractDocumentData(uri, { mimeType, fileName });
 
       if (requestId !== scanRequestIdRef.current) {
         return;
@@ -1278,6 +1309,13 @@ export default function AddDocumentScreen() {
       });
 
       if (!verification.allow_processing) {
+        const draftId = normalizeCloudId(raw?.documentId) ?? ocrDraftIdRef.current;
+        if (draftId) {
+          await discardOcrDraft(draftId);
+        }
+        setExtractedData(null);
+        setOcrUploadMeta(null);
+        ocrDraftIdRef.current = null;
         feedbackService.warning(
           verification.message ||
             "The document could not be processed confidently. Please review it manually or rescan.",
@@ -1291,11 +1329,13 @@ export default function AddDocumentScreen() {
       // ==========================================
       const extracted = normalizeExtractedData(raw);
       setExtractedData(extracted);
+      const draftId = normalizeCloudId(raw?.documentId);
+      ocrDraftIdRef.current = draftId;
       setOcrUploadMeta({
         fileUrl: raw?.fileUrl,
         s3Key: raw?.s3Key,
         storagePath: raw?.storagePath,
-        documentId: raw?.documentId,
+        documentId: draftId ?? raw?.documentId,
       });
 
       const {
@@ -1330,13 +1370,18 @@ export default function AddDocumentScreen() {
       setStep(4);
 
       feedbackService.success(
-        `Document scanned and verified successfully (${extracted.confidence}% extraction completeness)`,
+        captureSourceRef.current === "upload"
+          ? `Document uploaded and processed successfully (${extracted.confidence}% extraction completeness)`
+          : `Document scanned and processed successfully (${extracted.confidence}% extraction completeness)`,
       );
     } catch (error: any) {
       if (requestId !== scanRequestIdRef.current) {
         return;
       }
       console.error("Document OCR error:", error);
+      setExtractedData(null);
+      setOcrUploadMeta(null);
+      ocrDraftIdRef.current = null;
 
       feedbackService.warning(
         (error?.code ?? error?.errorCode) === "DOCUMENT_CLASSIFICATION_REVIEW"
@@ -1352,6 +1397,15 @@ export default function AddDocumentScreen() {
     }
   };
 
+  useEffect(() => {
+    return () => {
+      if (!savedRef.current && ocrDraftIdRef.current) {
+        void discardOcrDraft(ocrDraftIdRef.current);
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function handleScanSuccess(data: {
     images: Array<{ uri: string }> | { uri: string };
   }) {
@@ -1366,6 +1420,7 @@ export default function AddDocumentScreen() {
       size: 0,
       mimeType: "image/jpeg",
     });
+    captureSourceRef.current = "scan";
     // Reset form fields for fresh scan
     setTitle(specificDocument?.title || "");
     setDocumentNumber("");
@@ -1373,8 +1428,11 @@ export default function AddDocumentScreen() {
     setIssueDate("");
     setExpiryDate("");
     setHasNoExpirationDate(false);
+    setEnableAlerts(true);
     setFieldErrors({});
-    await processScan(firstImage.uri);
+
+    setStep(4);
+    void processScan(firstImage.uri, "image/jpeg", "scanned-document.jpg");
   }
 
   function openDatePicker(field: "issueDate" | "expiryDate") {
@@ -1556,6 +1614,7 @@ export default function AddDocumentScreen() {
         issueDate,
         expiryDate: hasNoExpirationDate ? null : expiryDate,
         notes: notes.trim(),
+        tags,
         status: "active",
         enableAlerts: enableAlerts,
         reminderIntervalDays: reminderIntervals[0] || 7,
@@ -1576,6 +1635,8 @@ export default function AddDocumentScreen() {
        * document.
        */
       const result = await saveDocumentToVault(payload);
+      savedRef.current = true;
+      ocrDraftIdRef.current = null; // linked draft is now the saved document
 
       // Ã°Å¸â€â€ EMIT EVENT HERE TO UPDATE DASHBOARD STATS INSTANTLY
       DeviceEventEmitter.emit("documentVaultChanged");
@@ -1670,19 +1731,21 @@ export default function AddDocumentScreen() {
 
   function goBackStep() {
     if (step === 0) {
+      void discardOcrDraft(ocrDraftIdRef.current);
       router.back();
       return;
     }
     if (step === 3) {
-      // Going back from scan step - reset scan state
-      resetOcrState();
+      // Going back from scan step - reset scan state and discard unsaved draft
+      resetOcrState({ discardDraft: true });
       setSelectedFile(null);
       setExtractedData(null);
       setOcrUploadMeta(null);
     }
     if (step === 4) {
-      // Going back from review - clear extracted data to prevent stale state
-      resetOcrState();
+      // Going back from review - clear extracted data and discard unsaved draft
+      resetOcrState({ discardDraft: true });
+      setSelectedFile(null);
       setExtractedData(null);
       setOcrUploadMeta(null);
     }
@@ -1816,7 +1879,7 @@ export default function AddDocumentScreen() {
   function renderScanStep() {
     return (
       <View>
-        <Text style={styles.questionTitle}>Scan or Upload</Text>
+        <Text style={styles.questionTitle}>Scan or Upload Document</Text>
         <Text style={styles.questionSubtitle}>
           Scan the document with your camera or upload an existing PDF or image.
         </Text>
@@ -1825,8 +1888,13 @@ export default function AddDocumentScreen() {
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color={colors.primary} />
             <Text style={styles.loadingText}>Extracting document data...</Text>
+            <Text style={styles.questionSubtitle}>
+              You can continue to Review while we process.
+            </Text>
           </View>
-        ) : (
+        ) : null}
+
+        {!ocrLoading ? (
           <>
             <TouchableOpacity
               style={styles.scanOption}
@@ -1882,6 +1950,13 @@ export default function AddDocumentScreen() {
               </Text>
             </TouchableOpacity>
           </>
+        ) : (
+          <TouchableOpacity
+            style={styles.skipButton}
+            onPress={() => setStep(4)}
+          >
+            <Text style={styles.skipButtonText}>Go to Review & Edit</Text>
+          </TouchableOpacity>
         )}
 
         {selectedFile ? (
@@ -1903,7 +1978,7 @@ export default function AddDocumentScreen() {
                 {getFileTypeLabel(selectedFile.mimeType)}
               </Text>
             </View>
-            <TouchableOpacity onPress={() => setSelectedFile(null)}>
+            <TouchableOpacity onPress={() => { void discardOcrDraft(); setSelectedFile(null); resetOcrState(); }}>
               <Ionicons name="close-circle" size={23} color={colors.error} />
             </TouchableOpacity>
           </View>
@@ -1928,10 +2003,36 @@ export default function AddDocumentScreen() {
               resizeMode="contain"
             />
           </View>
+        ) : selectedFile?.uri &&
+          selectedFile.mimeType === "application/pdf" ? (
+          <View style={styles.pdfPreviewCard}>
+            <Ionicons name="document-text-outline" size={42} color={colors.primary} />
+            <Text style={styles.fileName} numberOfLines={2}>
+              {selectedFile.name || "PDF document"}
+            </Text>
+            <Text style={styles.fileType}>
+              PDF document{selectedFile.size ? ` • ${Math.max(1, Math.round(selectedFile.size / 1024))} KB` : ""}
+            </Text>
+            <Text style={styles.extractionNote}>
+              PDF preview is shown here as the selected file (content summary). Open the saved document to view full pages. Image-only PDFs may not yield extractable text.
+            </Text>
+          </View>
         ) : null}
 
-        {extractedData ? (
-          <View style={styles.extractionCard}>
+      {ocrLoading ? (
+        <View style={styles.extractionCard}>
+          <View style={styles.extractionHeader}>
+            <ActivityIndicator size="small" color={colors.primary} />
+            <Text style={styles.extractionTitle}>Extracting information…</Text>
+          </View>
+          <Text style={styles.extractionNote}>
+            Processing the selected file. You can review/edit fields now; detected values will fill in when ready.
+          </Text>
+        </View>
+      ) : null}
+
+      {extractedData ? (
+        <View style={styles.extractionCard}>
             <View style={styles.extractionHeader}>
               <Ionicons name="sparkles" size={20} color={colors.primary} />
               <Text style={styles.extractionTitle}>Automatic Extraction</Text>
@@ -2124,6 +2225,15 @@ export default function AddDocumentScreen() {
         />
 
         <View style={styles.field}>
+          <Text style={styles.fieldLabel}>Tags</Text>
+          <TagsInput
+            initialTags={tags}
+            onTagsChange={setTags}
+            placeholder="Add tags (press enter or comma)"
+          />
+        </View>
+
+        <View style={styles.field}>
           <Text style={styles.fieldLabel}>Alerts & Reminders</Text>
           <View style={styles.switchRow}>
             <Text style={styles.switchLabel}>Enable expiration alerts</Text>
@@ -2230,7 +2340,7 @@ export default function AddDocumentScreen() {
       {scannerVisible && (
         <DocumentScannerComponent
           visible={scannerVisible}
-          onScanSuccess={(data) => {
+          onScanSuccess={(data: any) => {
             if (data.images && data.images.length > 0) {
               handleScanSuccess({ images: [{ uri: data.images[0].uri }] });
             }
@@ -2639,6 +2749,17 @@ const createStyles = (colors: any) => StyleSheet.create({
     overflow: "hidden",
     justifyContent: "center",
     alignItems: "center",
+  },
+  pdfPreviewCard: {
+    minHeight: 180,
+    backgroundColor: colors.surfaceSecondary,
+    borderRadius: 10,
+    overflow: "hidden",
+    marginBottom: 18,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 16,
+    gap: 8,
   },
   previewImage: {
     width: "100%",

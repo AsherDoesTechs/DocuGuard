@@ -26,7 +26,7 @@ const ALLOWED_FILE_TYPES = new Set([
   "image/heif",
 ]);
 
-const MAX_FILE_BYTES = 15 * 1024 * 1024;
+const MAX_FILE_BYTES = 5 * 1024 * 1024;
 
 exports.ALLOWED_FILE_TYPES = ALLOWED_FILE_TYPES;
 exports.MAX_FILE_BYTES = MAX_FILE_BYTES;

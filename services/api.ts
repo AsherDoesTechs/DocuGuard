@@ -538,6 +538,11 @@ export const documents = {
     const response = await apiClient.delete(`/documents/${id}`);
     return response.data;
   },
+
+  searchDocuments: async (query: string): Promise<{ query: string; results: any[]; count: number }> => {
+    const response = await apiClient.get("/api/search", { params: { q: query } });
+    return response.data;
+  },
 };
 
 export const cloud = {

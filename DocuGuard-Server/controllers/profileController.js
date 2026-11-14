@@ -1055,8 +1055,28 @@ exports.exportUserData = async (req, res) => {
 // Delete account
 exports.deleteAccount = async (req, res) => {
   const userId = req.user.userId;
+  const { password } = req.body || {};
+
+  if (!password || typeof password !== "string") {
+    return res.status(400).json({ error: "Current password is required." });
+  }
 
   try {
+    const userRes = await db.query(
+      "SELECT password_hash FROM users WHERE id = $1",
+      [userId],
+    );
+    const user = userRes.rows[0];
+
+    if (!user?.password_hash) {
+      return res.status(400).json({ error: "Unable to verify account password." });
+    }
+
+    const validPassword = await bcrypt.compare(password, user.password_hash);
+    if (!validPassword) {
+      return res.status(400).json({ error: "Incorrect current password." });
+    }
+
     // All-or-nothing: a mid-sequence failure previously left a half-deleted
     // account that could no longer be deleted, and orphaned children.
     await db.withTransaction(async (client) => {
