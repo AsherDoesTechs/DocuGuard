@@ -20,7 +20,7 @@ exports.getProfile = async (req, res) => {
   const userId = req.user.userId;
   try {
     const userRes = await db.query(
-      `SELECT name, email, occupation, security_level AS "securityLevel", notifications_enabled AS "notifyPush",
+      `SELECT name, email, occupation, phone, security_level AS "securityLevel", notifications_enabled AS "notifyPush",
        email_alerts AS "notifyEmail", expiry_alerts AS "notifyExpiry", two_factor AS "twoFactor",
        two_factor_secret AS "twoFactorSecret",
        two_factor_enabled_at AS "twoFactorEnabledAt",
@@ -815,6 +815,7 @@ exports.updateProfile = async (req, res) => {
     name: z.string().min(1, "Name is required").max(100).optional(),
     email: z.string().email("Invalid email address").optional(),
     occupation: z.string().max(100).optional(),
+    phone: z.string().max(30).optional(),
   });
 
   const validation = validateSchema(profileUpdateSchema, req.body);
@@ -826,7 +827,7 @@ exports.updateProfile = async (req, res) => {
     });
   }
 
-  const { name, email, occupation } = validation.data;
+  const { name, email, occupation, phone } = validation.data;
 
   try {
     const fields = [];
@@ -853,6 +854,10 @@ exports.updateProfile = async (req, res) => {
       fields.push(`occupation = $${idx++}`);
       values.push(occupation);
     }
+    if (phone !== undefined) {
+      fields.push(`phone = $${idx++}`);
+      values.push(phone || null);
+    }
 
     if (fields.length === 0) {
       return res.json({ message: "No changes to save" });
@@ -870,7 +875,7 @@ exports.updateProfile = async (req, res) => {
       return res.status(404).json({ error: "User not found" });
     }
 
-    await syncProfile(userId, { name, email, occupation });
+    await syncProfile(userId, { name, email, occupation, phone });
 
     res.json({ message: "Profile updated successfully" });
   } catch (err) {

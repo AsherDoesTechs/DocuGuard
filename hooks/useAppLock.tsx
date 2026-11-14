@@ -247,7 +247,6 @@ export function useAppLock() {
       const enabled =
         activeUserId !== null &&
         resolvedBiometricPreference === "true" &&
-        resolvedBiometricEnrollment === "true" &&
         hasHardware &&
         isEnrolled &&
         !!token;
@@ -787,7 +786,6 @@ export function useAppLock() {
 
       if (
         biometricPreference !== "true" ||
-        biometricEnrollment !== "true" ||
         !hasHardware ||
         !isEnrolled
       )
@@ -818,7 +816,7 @@ export function useAppLock() {
             : Promise.resolve(null),
         ]);
 
-      if (currentBiometricPreference !== "true" || currentBiometricEnrollment !== "true") {
+      if (currentBiometricPreference !== "true") {
         if (mountedRef.current) {
           setBiometricEnabled(false);
           biometricEnabledRef.current = false;

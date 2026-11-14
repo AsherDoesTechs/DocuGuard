@@ -12,6 +12,7 @@ import {
   DeviceEventEmitter,
 } from "react-native";
 import { LayoutAnimation } from "react-native";
+import Animated, { FadeInDown } from "react-native-reanimated";
 import { api } from "../../services/api";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useFocusEffect } from "expo-router";
@@ -1026,20 +1027,24 @@ export default function DocumentsScreen() {
                 actionIcon={hasActiveFilters ? "close-circle-outline" : "add"}
               />
             ) : (
-              filtered.map((doc: LocalDocument) => (
-                <DocumentItem
+              filtered.map((doc: LocalDocument, index) => (
+                <Animated.View
                   key={doc.id ?? doc.documentNumber}
-                  doc={doc}
-                  COLORS={COLORS}
-                  viewMode={viewMode}
-                  onPress={handleOpenDocument}
-                  maskNumber={maskDocumentNumber}
-                  getSyncIcon={getSyncIcon}
-                  onArchiveToggle={handleArchiveDocument}
-                  onMoveToTrash={handleMoveToTrash}
-                  onRestore={handleRestoreDocument}
-                  onPermanentDelete={handlePermanentDelete}
-                />
+                  entering={FadeInDown.delay(Math.min(index, 10) * 30).duration(240)}
+                >
+                  <DocumentItem
+                    doc={doc}
+                    COLORS={COLORS}
+                    viewMode={viewMode}
+                    onPress={handleOpenDocument}
+                    maskNumber={maskDocumentNumber}
+                    getSyncIcon={getSyncIcon}
+                    onArchiveToggle={handleArchiveDocument}
+                    onMoveToTrash={handleMoveToTrash}
+                    onRestore={handleRestoreDocument}
+                    onPermanentDelete={handlePermanentDelete}
+                  />
+                </Animated.View>
               ))
             )}
           </View>

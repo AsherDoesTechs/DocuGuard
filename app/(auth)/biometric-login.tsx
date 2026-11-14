@@ -162,16 +162,10 @@ export default function BiometricLoginScreen() {
         const effectiveId = activeId ?? credentialUserId ?? lastSignedOutId;
 
         let biometricSetting: string | null = null;
-        let biometricEnrollment: string | null = null;
         if (effectiveId !== null) {
-          [biometricSetting, biometricEnrollment] = await Promise.all([
-            SecureStore.getItemAsync(
-              `docuguard.security.biometricEnabled.user.${effectiveId}`,
-            ),
-            SecureStore.getItemAsync(
-              `docuguard.security.biometricEnrolled.user.${effectiveId}`,
-            ),
-          ]);
+          biometricSetting = await SecureStore.getItemAsync(
+            `docuguard.security.biometricEnabled.user.${effectiveId}`,
+          );
           if (biometricSetting === null) {
             const legacy = await SecureStore.getItemAsync(
               "docuguard.security.biometricEnabled",
@@ -184,21 +178,13 @@ export default function BiometricLoginScreen() {
               biometricSetting = legacy;
             }
           }
-          if (biometricEnrollment === null && biometricSetting === "true") {
-            biometricEnrollment = "true";
-            await SecureStore.setItemAsync(
-              `docuguard.security.biometricEnrolled.user.${effectiveId}`,
-              "true",
-            );
-          }
         }
 
         if (isActive) {
           setIsBiometricSupported(
             compatible &&
               enrolled &&
-              biometricSetting === "true" &&
-              biometricEnrollment === "true",
+              biometricSetting === "true",
           );
         }
       } catch (error) {

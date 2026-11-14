@@ -1703,13 +1703,6 @@ export default function EditDocumentScreen() {
                   color={colors.primary}
                 />
               </View>
-
-              <View style={styles.sectionHeaderText}>
-                <Text style={styles.sectionTitle}>Document File</Text>
-                <Text style={styles.sectionSubtitle}>
-                  Replace the stored file by uploading or scanning a new one.
-                </Text>
-              </View>
             </View>
 
             <Text style={styles.fileMetaText}>

@@ -69,6 +69,7 @@ export function TagsInput({
     const newTags = [...tags, trimmed];
     setTags(newTags);
     setInputValue("");
+    setShowSuggestions(false);
     onTagsChange?.(newTags);
     trigger("selection", { sound: false, haptic: true });
     if (documentId) {
@@ -93,12 +94,12 @@ export function TagsInput({
     if (text.includes(",")) {
       const parts = text.split(",").filter((p) => p.trim());
       parts.forEach((part) => addTag(part));
+      setShowSuggestions(true);
     }
   };
 
   const handleBlur = () => {
     setTimeout(() => setShowSuggestions(false), 200);
-    if (inputValue.trim()) addTag(inputValue);
   };
 
   const handleKeyPress = ({ nativeEvent }: any) => {
@@ -106,7 +107,13 @@ export function TagsInput({
   };
 
   const filteredSuggestions = suggestions
-    .filter((s) => !tags.includes(s) && s.toLowerCase().includes(inputValue.toLowerCase()))
+    .filter((s) => {
+      if (tags.includes(s)) return false;
+      const q = inputValue.trim().toLowerCase();
+      if (!q) return false;
+      const tag = s.toLowerCase();
+      return tag.includes(q) || q.includes(tag) || tag.startsWith(q);
+    })
     .slice(0, 5);
 
   return (

@@ -165,16 +165,10 @@ export default function LoginScreen() {
               credentialUserId === effectiveUserId);
 
           let biometricSetting: string | null = null;
-          let biometricEnrollment: string | null = null;
           if (effectiveUserId !== null) {
-            [biometricSetting, biometricEnrollment] = await Promise.all([
-              SecureStore.getItemAsync(
-                `docuguard.security.biometricEnabled.user.${effectiveUserId}`,
-              ),
-              SecureStore.getItemAsync(
-                `docuguard.security.biometricEnrolled.user.${effectiveUserId}`,
-              ),
-            ]);
+            biometricSetting = await SecureStore.getItemAsync(
+              `docuguard.security.biometricEnabled.user.${effectiveUserId}`,
+            );
             // Migrate legacy/global biometric preference for this account.
             if (biometricSetting === null) {
               const legacy = await SecureStore.getItemAsync(
@@ -188,14 +182,6 @@ export default function LoginScreen() {
                 biometricSetting = legacy;
               }
             }
-            if (biometricEnrollment === null && biometricSetting === "true") {
-              biometricEnrollment = "true";
-              await SecureStore.setItemAsync(
-                `docuguard.security.biometricEnrolled.user.${effectiveUserId}`,
-                "true",
-              );
-            }
-            // Only migrate explicit legacy preference; do not auto-enable for a different/new account.
           } else {
             biometricSetting = await SecureStore.getItemAsync(
               "docuguard.security.biometricEnabled",
@@ -206,8 +192,7 @@ export default function LoginScreen() {
             setIsBiometricSupported(
               hasHardware &&
                 isEnrolled &&
-                biometricSetting === "true" &&
-                biometricEnrollment === "true",
+                biometricSetting === "true",
             );
           }
         } catch (error) {
@@ -581,18 +566,7 @@ export default function LoginScreen() {
       textAlign: "center",
     },
     passwordWrapper: {
-      position: "relative",
       width: "100%",
-    },
-    eyeIcon: {
-      position: "absolute",
-      right: 14,
-      top: 0,
-      bottom: 0,
-      width: 36,
-      alignItems: "center",
-      justifyContent: "center",
-      zIndex: 10,
     },
     row: {
       flexDirection: "row",
@@ -834,22 +808,11 @@ export default function LoginScreen() {
               secureTextEntry={!showPassword}
               autoComplete="current-password"
               textContentType="password"
-            />
-
-            <TouchableOpacity
-              style={styles.eyeIcon}
-              onPress={() => setShowPassword((previous) => !previous)}
-              accessibilityRole="button"
-              accessibilityLabel={
-                showPassword ? "Hide password" : "Show password"
+              rightIcon={showPassword ? "eye-off" : "eye"}
+              onRightIconPress={() =>
+                setShowPassword((previous) => !previous)
               }
-            >
-              <Ionicons
-                name={showPassword ? "eye-off" : "eye"}
-                size={22}
-                color={colors.textSecondary}
-              />
-            </TouchableOpacity>
+            />
           </View>
 
           <View style={styles.row}>

@@ -18,7 +18,11 @@ function readablePii(value) {
     return value;
   }
 
-  return decrypt(value);
+  try {
+    return decrypt(value);
+  } catch (_err) {
+    return null;
+  }
 }
 
 const UPDATED_AT_ISO_SQL = `to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;

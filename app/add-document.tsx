@@ -1363,6 +1363,7 @@ export default function AddDocumentScreen() {
       if (noExp) {
         setHasNoExpirationDate(true);
         setExpiryDate("");
+        setEnableAlerts(false);
       } else if (verifiedExpiry) {
         setExpiryDate(verifiedExpiry);
       }
@@ -2174,6 +2175,7 @@ export default function AddDocumentScreen() {
 
                 if (next) {
                   setExpiryDate("");
+                  setEnableAlerts(false);
                   setFieldErrors((errors) => ({
                     ...errors,
                     expiryDate: undefined,

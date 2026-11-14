@@ -61,6 +61,7 @@ export interface LocalUserProfile {
   name: string;
   email: string;
   occupation?: string;
+  phone?: string;
   documentCount: number;
   expiringCount: number;
   expiredCount: number;

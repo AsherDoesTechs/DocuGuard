@@ -328,6 +328,8 @@ export const reminderSchema = z.object({
 export const profileSchema = z.object({
   name: nameSchema,
   email: emailSchema.optional(),
+  phone: z.string().max(30).trim().optional(),
+  occupation: z.string().max(100).trim().optional(),
   notificationsEnabled: z.boolean().default(true),
   notifyEmail: z.boolean().default(true),
   notifyExpiry: z.boolean().default(true),

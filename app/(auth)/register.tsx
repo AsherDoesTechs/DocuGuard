@@ -27,7 +27,6 @@ export default function RegisterScreen() {
   const colors = useColors();
 
   const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
   const [hasAttemptedSubmit, setHasAttemptedSubmit] = useState(false);
 
@@ -413,9 +412,9 @@ export default function RegisterScreen() {
           }}
           onBlur={form.handleBlur("confirmPassword")}
           error={showFieldError("confirmPassword")}
-          secureTextEntry={!showConfirmPassword}
-          rightIcon={showConfirmPassword ? "eye-off-outline" : "eye-outline"}
-          onRightIconPress={() => setShowConfirmPassword((prev) => !prev)}
+          secureTextEntry={!showPassword}
+          rightIcon={showPassword ? "eye-off-outline" : "eye-outline"}
+          onRightIconPress={() => setShowPassword((prev) => !prev)}
           returnKeyType="done"
           blurOnSubmit
           onSubmitEditing={handleRegisterPress}

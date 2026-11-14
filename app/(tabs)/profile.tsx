@@ -120,6 +120,45 @@ interface SettingRowProps {
   isWarning?: boolean;
 }
 
+const PHONE_COUNTRIES = [
+  { code: "PH", name: "Philippines", dialCode: "+63", flag: "🇵🇭", maxLength: 10 },
+  { code: "US", name: "United States", dialCode: "+1", flag: "🇺🇸", maxLength: 10 },
+  { code: "SG", name: "Singapore", dialCode: "+65", flag: "🇸🇬", maxLength: 8 },
+  { code: "AE", name: "UAE", dialCode: "+971", flag: "🇦🇪", maxLength: 9 },
+  { code: "SA", name: "Saudi Arabia", dialCode: "+966", flag: "🇸🇦", maxLength: 9 },
+  { code: "JP", name: "Japan", dialCode: "+81", flag: "🇯🇵", maxLength: 10 },
+  { code: "AU", name: "Australia", dialCode: "+61", flag: "🇦🇺", maxLength: 9 },
+  { code: "GB", name: "United Kingdom", dialCode: "+44", flag: "🇬🇧", maxLength: 10 },
+  { code: "CA", name: "Canada", dialCode: "+1", flag: "🇨🇦", maxLength: 10 },
+  { code: "QA", name: "Qatar", dialCode: "+974", flag: "🇶🇦", maxLength: 8 },
+];
+
+const DEFAULT_PHONE_COUNTRY = PHONE_COUNTRIES[0];
+
+const getCountryByDialCode = (phone?: string) => {
+  if (!phone) return DEFAULT_PHONE_COUNTRY;
+  const normalized = phone.replace(/\s+/g, "");
+  return (
+    PHONE_COUNTRIES.slice()
+      .sort((a, b) => b.dialCode.length - a.dialCode.length)
+      .find((country) => normalized.startsWith(country.dialCode)) ||
+    DEFAULT_PHONE_COUNTRY
+  );
+};
+
+const splitPhoneNumber = (phone?: string) => {
+  const country = getCountryByDialCode(phone);
+  const normalized = (phone || "").replace(/[^\d+]/g, "");
+  let local = normalized.startsWith(country.dialCode)
+    ? normalized.slice(country.dialCode.length)
+    : normalized.replace(/^\+/, "");
+  local = local.replace(/\D/g, "").slice(0, country.maxLength);
+  return { country, local };
+};
+
+const formatPhoneNumber = (dialCode: string, local: string) =>
+  local ? `${dialCode}${local}` : "";
+
 const OCCUPATION_LIST = [
   "Student",
   "OFW",
@@ -323,6 +362,9 @@ export default function ProfileScreen() {
     phone: "",
     occupation: "",
   });
+  const [phoneCountry, setPhoneCountry] = useState(DEFAULT_PHONE_COUNTRY);
+  const [phoneLocalNumber, setPhoneLocalNumber] = useState("");
+  const [phoneCountryModalVisible, setPhoneCountryModalVisible] = useState(false);
   const [savingPersonal, setSavingPersonal] = useState(false);
   const [maskPersonalData, setMaskPersonalData] = useState(true);
 
@@ -431,8 +473,8 @@ export default function ProfileScreen() {
             );
           }
         }
+        // Treat enabled as enrolled for this account/device; OS biometrics remain device-level.
         if (storedBiometricEnrollment === null && storedBiometric === "true") {
-          // One-time migration for previously enabled accounts on this device.
           storedBiometricEnrollment = "true";
           await SecureStore.setItemAsync(
             getBiometricEnrolledKey(activeUserId),
@@ -464,7 +506,6 @@ export default function ProfileScreen() {
         enabled:
           activeUserId !== null &&
           storedBiometric === "true" &&
-          appEnrolled &&
           hasHardware &&
           isEnrolled,
         type: bioType,
@@ -540,6 +581,9 @@ export default function ProfileScreen() {
           phone: localProfile.phone || "",
           occupation: initialOcc,
         });
+        const splitPhone = splitPhoneNumber(localProfile.phone || "");
+        setPhoneCountry(splitPhone.country);
+        setPhoneLocalNumber(splitPhone.local);
 
         setTwoFactor(localProfile.twoFactor ?? false);
         setNotifyEmail(localProfile.notifyEmail ?? true);
@@ -601,6 +645,9 @@ export default function ProfileScreen() {
           phone: res.data.phone || "",
           occupation: remoteOcc,
         });
+        const remoteSplitPhone = splitPhoneNumber(res.data.phone || "");
+        setPhoneCountry(remoteSplitPhone.country);
+        setPhoneLocalNumber(remoteSplitPhone.local);
 
         if (res.data.twoFactor !== undefined) {
           setTwoFactor(res.data.twoFactor);
@@ -894,13 +941,6 @@ export default function ProfileScreen() {
         return;
       }
 
-      if (!biometric.appEnrolled) {
-        feedbackService.warning(
-          "Enroll this account's fingerprint in DocuGuard first before turning on fingerprint login.",
-        );
-        return;
-      }
-
       // Biometric login requires cached credentials for this account.
       try {
         const storedCredentials = await SecureStore.getItemAsync(
@@ -925,14 +965,12 @@ export default function ProfileScreen() {
           }
         }
         if (!validCached) {
-          await SecureStore.setItemAsync(
-            getBiometricEnabledKey(ownerId),
-            "false",
-          );
-          setBiometric((prev) => ({ ...prev, enabled: false }));
+          await SecureStore.setItemAsync(getBiometricEnabledKey(ownerId), "false");
+          await SecureStore.setItemAsync(getBiometricEnrolledKey(ownerId), "false");
+          setBiometric((prev) => ({ ...prev, enabled: false, appEnrolled: false }));
           DeviceEventEmitter.emit("docuguard.securityPreferencesChanged");
           feedbackService.warning(
-            "Sign in with your password once on this device to enable biometric login.",
+            "Sign in with your password once on this device to enable biometric login for this account.",
           );
           return;
         }
@@ -944,7 +982,8 @@ export default function ProfileScreen() {
       }
 
       const auth = await LocalAuthentication.authenticateAsync({
-        promptMessage: "Authenticate to enable biometric login for this account",
+        promptMessage:
+          "Confirm with biometrics to enable login for this DocuGuard account",
         fallbackLabel: "Use Passcode",
       });
       if (!auth.success) {
@@ -953,15 +992,15 @@ export default function ProfileScreen() {
       }
     }
     try {
-      await SecureStore.setItemAsync(
-        getBiometricEnabledKey(ownerId),
-        String(value),
-      );
+      await Promise.all([
+        SecureStore.setItemAsync(getBiometricEnabledKey(ownerId), String(value)),
+        SecureStore.setItemAsync(getBiometricEnrolledKey(ownerId), String(value)),
+      ]);
       setSecurityOwnerId(ownerId);
-      setBiometric((prev) => ({ ...prev, enabled: value }));
+      setBiometric((prev) => ({ ...prev, enabled: value, appEnrolled: value }));
       DeviceEventEmitter.emit("docuguard.securityPreferencesChanged");
       feedbackService.success(
-        value ? "Biometrics enabled" : "Biometrics disabled",
+        value ? "Biometric login enabled for this account" : "Biometric login disabled",
       );
     } catch {
       feedbackService.error("Failed to update biometric preference");
@@ -1107,12 +1146,23 @@ export default function ProfileScreen() {
       feedbackService.error("Name and email cannot be empty.");
       return;
     }
+    const normalizedPhone = formatPhoneNumber(
+      phoneCountry.dialCode,
+      phoneLocalNumber.replace(/\D/g, "").slice(0, phoneCountry.maxLength),
+    );
     try {
       setSavingPersonal(true);
       const token = await SecureStore.getItemAsync("userToken");
 
+      const payload = {
+        name: personalInfo.name,
+        email: personalInfo.email,
+        occupation: personalInfo.occupation,
+        phone: normalizedPhone,
+      };
+
       // 1. Save to backend/Supabase via API
-      await api.client.patch("/profile", personalInfo, {
+      await api.client.patch("/profile", payload, {
         headers: { Authorization: `Bearer ${token}` },
       });
 
@@ -1124,11 +1174,14 @@ export default function ProfileScreen() {
           name: personalInfo.name,
           email: personalInfo.email,
           occupation: personalInfo.occupation,
-          phone: personalInfo.phone, // Cast or include if local database supports it
+          phone: normalizedPhone,
         } as any);
       }
 
-      setUser((prev) => (prev ? { ...prev, ...personalInfo } : null));
+      setPersonalInfo((prev) => ({ ...prev, phone: normalizedPhone }));
+      setUser((prev) =>
+        prev ? { ...prev, ...payload, phone: normalizedPhone } : null,
+      );
       feedbackService.success("Personal information updated securely.");
     } catch (err: any) {
       feedbackService.error(
@@ -1683,16 +1736,45 @@ export default function ProfileScreen() {
                       <Text style={styles.inputLabel}>
                         Phone Number (Optional)
                       </Text>
-                      <TextInput
-                        style={styles.input}
-                        placeholder="+63 900 000 0000"
-                        placeholderTextColor={colors.textMuted}
-                        keyboardType="phone-pad"
-                        value={personalInfo.phone}
-                        onChangeText={(text) =>
-                          setPersonalInfo({ ...personalInfo, phone: text })
-                        }
-                      />
+                      <View style={styles.phoneRow}>
+                        <TouchableOpacity
+                          style={styles.countrySelectorButton}
+                          onPress={() => setPhoneCountryModalVisible(true)}
+                          accessibilityRole="button"
+                          accessibilityLabel="Select country code"
+                        >
+                          <Text style={styles.countryFlag}>{phoneCountry.flag}</Text>
+                          <Text style={styles.countryDialCode}>{phoneCountry.dialCode}</Text>
+                          <Ionicons
+                            name="chevron-down"
+                            size={16}
+                            color={colors.textSecondary}
+                          />
+                        </TouchableOpacity>
+                        <View style={styles.phoneInputWrap}>
+                          <View style={styles.phonePrefixBox}>
+                            <Text style={styles.phonePrefixText}>
+                              {phoneCountry.dialCode}
+                            </Text>
+                          </View>
+                          <TextInput
+                            style={styles.phoneNumberInput}
+                            placeholder={"9".repeat(Math.min(phoneCountry.maxLength, 10))}
+                            placeholderTextColor={colors.textMuted}
+                            keyboardType="phone-pad"
+                            value={phoneLocalNumber}
+                            maxLength={phoneCountry.maxLength}
+                            onChangeText={(text) =>
+                              setPhoneLocalNumber(
+                                text.replace(/\D/g, "").slice(0, phoneCountry.maxLength),
+                              )
+                            }
+                          />
+                        </View>
+                      </View>
+                      <Text style={styles.phoneHintText}>
+                        Select country first. Country code is fixed and saved with the number.
+                      </Text>
                       <TouchableOpacity
                         style={styles.saveButton}
                         onPress={handleSavePersonalInfo}
@@ -2066,54 +2148,20 @@ export default function ProfileScreen() {
                       </Text>
                       <View style={styles.rowBetween}>
                         <Text style={styles.label}>
-                          {biometric.appEnrolled
-                            ? "Fingerprint Enrolled for This Account"
-                            : "Enroll Fingerprint for This Account"}
-                        </Text>
-                        {biometric.appEnrolled ? (
-                          <TouchableOpacity
-                            style={[
-                              styles.verifyButton,
-                              { paddingVertical: 8, paddingHorizontal: 12 },
-                            ]}
-                            onPress={handleRemoveBiometricEnrollment}
-                          >
-                            <Text style={styles.saveButtonText}>Remove</Text>
-                          </TouchableOpacity>
-                        ) : (
-                          <TouchableOpacity
-                            style={[
-                              styles.verifyButton,
-                              { paddingVertical: 8, paddingHorizontal: 12 },
-                              (!biometric.available || !biometric.enrolled) && {
-                                opacity: 0.6,
-                              },
-                            ]}
-                            onPress={handleEnrollBiometric}
-                            disabled={!biometric.available || !biometric.enrolled}
-                          >
-                            <Text style={styles.saveButtonText}>Enroll</Text>
-                          </TouchableOpacity>
-                        )}
-                      </View>
-                      <Text style={[styles.totpInstructions, { marginTop: 4 }]}>
-                        Fingerprint login is bound to this DocuGuard account on
-                        this device. Enroll it here before enabling login.
-                      </Text>
-                      <View style={styles.rowBetween}>
-                        <Text style={styles.label}>
                           Use {biometric.type} for Login
                         </Text>
                         <Switch
-                          disabled={
-                            !biometric.available ||
-                            !biometric.enrolled ||
-                            !biometric.appEnrolled
-                          }
+                          disabled={!biometric.available || !biometric.enrolled}
                           value={biometric.enabled}
                           onValueChange={handleToggleBiometric}
                         />
                       </View>
+                      <Text style={[styles.totpInstructions, { marginTop: 4 }]}>
+                        Biometric login is enabled per DocuGuard account on this
+                        device using your saved credentials. Any fingerprint or
+                        biometric enrolled on this device can be used to
+                        authenticate, but it will only sign in to this account.
+                      </Text>
 
                       <Text style={[styles.sectionSubtitle, { marginTop: 15 }]}>
                         App Protection
@@ -2809,6 +2857,52 @@ export default function ProfileScreen() {
       </Modal>
 
       <Modal
+        visible={phoneCountryModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setPhoneCountryModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContainer, { height: "60%" }]}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>Select Country</Text>
+              <TouchableOpacity
+                onPress={() => setPhoneCountryModalVisible(false)}
+              >
+                <Ionicons name="close" size={24} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+            <FlatList
+              data={PHONE_COUNTRIES}
+              keyExtractor={(item) => item.code}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={styles.dropdownItemRow}
+                  onPress={() => {
+                    setPhoneCountry(item);
+                    setPhoneLocalNumber((prev) =>
+                      prev.replace(/\D/g, "").slice(0, item.maxLength),
+                    );
+                    setPhoneCountryModalVisible(false);
+                  }}
+                >
+                  <View style={styles.countryRowLeft}>
+                    <Text style={styles.countryFlag}>{item.flag}</Text>
+                    <Text style={styles.dropdownItemText}>
+                      {item.name} ({item.dialCode})
+                    </Text>
+                  </View>
+                  {phoneCountry.code === item.code && (
+                    <Ionicons name="checkmark" size={18} color={colors.primary} />
+                  )}
+                </TouchableOpacity>
+              )}
+            />
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
         visible={categoryModalVisible}
         transparent
         animationType="slide"
@@ -3277,6 +3371,57 @@ const createStyles = (COLORS: ColorScheme) =>
       marginTop: 10,
       textAlignVertical: "top",
     },
+    phoneRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      marginBottom: 6,
+    },
+    countrySelectorButton: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+      borderWidth: 1,
+      borderColor: COLORS.border,
+      backgroundColor: COLORS.surface,
+      borderRadius: 10,
+      paddingHorizontal: 10,
+      paddingVertical: 12,
+      minHeight: 48,
+    },
+    countryFlag: { fontSize: 18 },
+    countryDialCode: { fontSize: 14, color: COLORS.text, fontWeight: "600" },
+    phoneInputWrap: {
+      flex: 1,
+      flexDirection: "row",
+      alignItems: "center",
+      borderWidth: 1,
+      borderColor: COLORS.border,
+      backgroundColor: COLORS.surface,
+      borderRadius: 10,
+      minHeight: 48,
+      overflow: "hidden",
+    },
+    phonePrefixBox: {
+      paddingHorizontal: 12,
+      paddingVertical: 12,
+      borderRightWidth: 1,
+      borderRightColor: COLORS.border,
+      backgroundColor: COLORS.surfaceSecondary,
+    },
+    phonePrefixText: { color: COLORS.textSecondary, fontWeight: "600" },
+    phoneNumberInput: {
+      flex: 1,
+      paddingHorizontal: 12,
+      paddingVertical: 12,
+      color: COLORS.text,
+    },
+    phoneHintText: {
+      fontSize: 12,
+      color: COLORS.textSecondary,
+      marginBottom: 12,
+    },
+    countryRowLeft: { flexDirection: "row", alignItems: "center", gap: 10, flex: 1 },
     actionButton: {
       backgroundColor: COLORS.buttonPrimary,
       paddingVertical: 12,

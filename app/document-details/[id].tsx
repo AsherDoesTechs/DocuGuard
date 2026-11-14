@@ -447,6 +447,7 @@ export default function DocumentDetailsScreen() {
                 }
                 activeOpacity={0.7}
                 disabled={!document?.documentNumber}
+                style={{ alignItems: "center" }}
               >
                 <Ionicons name="file-tray" size={24} color={colors.primary} />
                 <Text style={styles.metaLabel}>Document Number</Text>
