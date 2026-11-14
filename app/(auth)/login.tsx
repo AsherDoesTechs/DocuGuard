@@ -23,6 +23,8 @@ import {
   useFeedbackService,
 } from "../../services/feedbackService";
 
+const LOGIN_LOCKOUT_UNTIL_KEY = "docuguard.auth.loginLockoutUntil";
+
 export default function LoginScreen() {
   const router = useRouter();
   const colors = useColors();
@@ -82,18 +84,47 @@ export default function LoginScreen() {
 
   const startLockoutCountdown = (seconds?: number | null) => {
     const secs = Math.max(1, Math.min(60 * 60, Math.ceil(seconds ?? 60)));
-    setLockoutUntil(Date.now() + secs * 1000);
+    const until = Date.now() + secs * 1000;
+    setLockoutUntil(until);
+    void SecureStore.setItemAsync(LOGIN_LOCKOUT_UNTIL_KEY, String(until)).catch(
+      () => {},
+    );
   };
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const stored = await SecureStore.getItemAsync(LOGIN_LOCKOUT_UNTIL_KEY);
+        if (!stored || !mounted) return;
+        const until = Number(stored);
+        if (Number.isFinite(until) && until > Date.now()) {
+          setLockoutUntil(until);
+        } else {
+          await SecureStore.deleteItemAsync(LOGIN_LOCKOUT_UNTIL_KEY).catch(() => {});
+        }
+      } catch {
+        // ignore restore failures
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!lockoutUntil) {
       setLockoutSecondsLeft(0);
+      void SecureStore.deleteItemAsync(LOGIN_LOCKOUT_UNTIL_KEY).catch(() => {});
       return;
     }
     const tick = () => {
       const remaining = Math.max(0, Math.ceil((lockoutUntil - Date.now()) / 1000));
       setLockoutSecondsLeft(remaining);
-      if (remaining <= 0) setLockoutUntil(null);
+      if (remaining <= 0) {
+        setLockoutUntil(null);
+        void SecureStore.deleteItemAsync(LOGIN_LOCKOUT_UNTIL_KEY).catch(() => {});
+      }
     };
     tick();
     const id = setInterval(tick, 1000);
