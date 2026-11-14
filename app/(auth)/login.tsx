@@ -369,6 +369,12 @@ export default function LoginScreen() {
         const message = "Too many attempts. Please wait before trying again.";
         setTwoFactorError(message);
         feedbackService.warning(message);
+      } else if (/too many (login )?attempts|rate limit/i.test(String(err?.response?.data?.error || ""))) {
+        const retryAfter = parseRetryAfterSeconds(err);
+        startLockoutCountdown(retryAfter);
+        const message = "Too many attempts. Please wait before trying again.";
+        setTwoFactorError(message);
+        feedbackService.warning(message);
       } else if (!err?.response) {
         const message =
           "Network error. Check your internet connection and try again.";
@@ -450,6 +456,10 @@ export default function LoginScreen() {
           errorMessage =
             "Network error. Please check your internet connection and try again.";
         } else if (status === 429) {
+          const retryAfter = parseRetryAfterSeconds(err);
+          startLockoutCountdown(retryAfter);
+          errorMessage = "Too many attempts. Please wait before trying again.";
+        } else if (/too many (login )?attempts|rate limit/i.test(String(err?.response?.data?.error || ""))) {
           const retryAfter = parseRetryAfterSeconds(err);
           startLockoutCountdown(retryAfter);
           errorMessage = "Too many attempts. Please wait before trying again.";
@@ -1007,6 +1017,16 @@ export default function LoginScreen() {
             </>
           )}
         </Card>
+      )}
+
+      {isLockedOut && (
+        <Text
+          style={styles.lockoutText}
+          accessibilityRole="alert"
+          accessibilityLiveRegion="polite"
+        >
+          Too many attempts. Try again in {formatLockoutTime(lockoutSecondsLeft)}.
+        </Text>
       )}
 
       {!pendingTwoFactor && (
