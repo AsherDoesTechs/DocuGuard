@@ -117,48 +117,81 @@ export default function LoginScreen() {
 
       const checkBiometricSupport = async () => {
         try {
-            const [hasHardware, isEnrolled, token, storedCredentials, activeUserId] =
-              await Promise.all([
-                LocalAuthentication.hasHardwareAsync(),
-                LocalAuthentication.isEnrolledAsync(),
-                SecureStore.getItemAsync("userToken"),
-                SecureStore.getItemAsync("secure_user_credentials"),
-                (async () => {
-                  const raw = await SecureStore.getItemAsync("docuguard.localUserId");
-                  const n = raw ? Number(raw) : NaN;
-                  return Number.isSafeInteger(n) && n > 0 ? n : null;
-                })(),
-              ]);
+          const [hasHardware, isEnrolled, token, storedCredentials, activeUserId] =
+            await Promise.all([
+              LocalAuthentication.hasHardwareAsync(),
+              LocalAuthentication.isEnrolledAsync(),
+              SecureStore.getItemAsync("userToken"),
+              SecureStore.getItemAsync("secure_user_credentials"),
+              (async () => {
+                const raw = await SecureStore.getItemAsync("docuguard.localUserId");
+                const n = raw ? Number(raw) : NaN;
+                return Number.isSafeInteger(n) && n > 0 ? n : null;
+              })(),
+            ]);
 
-            let biometricSetting: string | null = null;
-            if (activeUserId !== null) {
-              biometricSetting = await SecureStore.getItemAsync(
-                `docuguard.security.biometricEnabled.user.${activeUserId}`,
-              );
+          let parsedCredentials: { email?: string; password?: string; userId?: number } | null = null;
+          if (storedCredentials) {
+            try {
+              parsedCredentials = JSON.parse(storedCredentials);
+            } catch {
+              parsedCredentials = null;
             }
+          }
 
-            let credentialsForCurrentUser = false;
-            if (storedCredentials) {
-              try {
-                const parsed = JSON.parse(storedCredentials) as { userId?: number };
-                credentialsForCurrentUser =
-                  typeof parsed?.userId === "number" &&
-                  Number.isSafeInteger(parsed.userId) &&
-                  parsed.userId > 0 &&
-                  (activeUserId === null || parsed.userId === activeUserId);
-              } catch {
-                credentialsForCurrentUser = false;
+          const credentialUserId =
+            parsedCredentials &&
+            typeof parsedCredentials.userId === "number" &&
+            Number.isSafeInteger(parsedCredentials.userId) &&
+            parsedCredentials.userId > 0
+              ? parsedCredentials.userId
+              : null;
+
+          const effectiveUserId = activeUserId ?? credentialUserId;
+          const hasUsableCredentials =
+            !!parsedCredentials &&
+            typeof parsedCredentials.email === "string" &&
+            typeof parsedCredentials.password === "string";
+
+          let biometricSetting: string | null = null;
+          if (effectiveUserId !== null) {
+            biometricSetting = await SecureStore.getItemAsync(
+              `docuguard.security.biometricEnabled.user.${effectiveUserId}`,
+            );
+            // Migrate legacy/global biometric preference for this account.
+            if (biometricSetting === null) {
+              const legacy = await SecureStore.getItemAsync(
+                "docuguard.security.biometricEnabled",
+              );
+              if (legacy !== null) {
+                await SecureStore.setItemAsync(
+                  `docuguard.security.biometricEnabled.user.${effectiveUserId}`,
+                  legacy,
+                );
+                biometricSetting = legacy;
               }
             }
+          } else {
+            biometricSetting = await SecureStore.getItemAsync(
+              "docuguard.security.biometricEnabled",
+            );
+          }
 
-            if (active) {
-              setIsBiometricSupported(
-                hasHardware &&
-                  isEnrolled &&
-                  ((biometricSetting === "true" && credentialsForCurrentUser) ||
-                    (activeUserId !== null && credentialsForCurrentUser && Boolean(token))),
-              );
-            }
+          const credentialsMatchAccount =
+            hasUsableCredentials &&
+            (credentialUserId === null ||
+              effectiveUserId === null ||
+              credentialUserId === effectiveUserId);
+
+          if (active) {
+            setIsBiometricSupported(
+              hasHardware &&
+                isEnrolled &&
+                credentialsMatchAccount &&
+                (biometricSetting === "true" ||
+                  (effectiveUserId !== null && Boolean(token))),
+            );
+          }
         } catch (error) {
           console.warn("Unable to check biometric availability:", error);
 

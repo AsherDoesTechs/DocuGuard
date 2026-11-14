@@ -157,10 +157,14 @@ async function syncTokenToBackend(tokens: {
   deviceToken?: string;
 }) {
   try {
-    await api.client.post("/api/notifications/push-token", {
-      expoPushToken: tokens.expoToken,
-      devicePushToken: tokens.deviceToken,
-    });
+    await api.client.post(
+      "/api/notifications/push-token",
+      {
+        expoPushToken: tokens.expoToken,
+        devicePushToken: tokens.deviceToken,
+      },
+      { timeout: 10000 },
+    );
   } catch (error: any) {
     console.error("Push token backend synchronization failed:", {
       message: error?.message,
@@ -224,12 +228,10 @@ export async function removePushTokenFromBackend(
   }
 
   try {
-    await api.client.delete(
-      "/api/notifications/push-token",
-      {
-        headers: { Authorization: `Bearer ${token}` },
-      },
-    );
+    await api.client.delete("/api/notifications/push-token", {
+      headers: { Authorization: `Bearer ${token}` },
+      timeout: 5000,
+    });
     return true;
   } catch (error: any) {
     console.error("Push token removal failed:", {

@@ -411,6 +411,32 @@ export default function ProfileScreen() {
           SecureStore.getItemAsync(getBiometricEnabledKey(activeUserId)),
           SecureStore.getItemAsync(getAppLockEnabledKey(activeUserId)),
         ]);
+
+        // Migrate legacy/global preferences for this account.
+        if (storedBiometric === null) {
+          const legacyBio = await SecureStore.getItemAsync(
+            "docuguard.security.biometricEnabled",
+          );
+          if (legacyBio !== null) {
+            storedBiometric = legacyBio;
+            await SecureStore.setItemAsync(
+              getBiometricEnabledKey(activeUserId),
+              legacyBio,
+            );
+          }
+        }
+        if (storedAppLock === null) {
+          const legacyAppLock = await SecureStore.getItemAsync(
+            "docuguard.appLock.enabled",
+          );
+          if (legacyAppLock !== null) {
+            storedAppLock = legacyAppLock;
+            await SecureStore.setItemAsync(
+              getAppLockEnabledKey(activeUserId),
+              legacyAppLock,
+            );
+          }
+        }
       }
 
       setSecurityOwnerId(activeUserId);
@@ -856,6 +882,42 @@ export default function ProfileScreen() {
         feedbackService.error("Biometric authentication cancelled");
         return;
       }
+
+      // Biometric login requires cached credentials for this account.
+      try {
+        const storedCredentials = await SecureStore.getItemAsync(
+          "secure_user_credentials",
+        );
+        let validCached = false;
+        if (storedCredentials) {
+          const parsed = JSON.parse(storedCredentials) as {
+            email?: string;
+            password?: string;
+            userId?: number;
+          };
+          validCached =
+            typeof parsed?.email === "string" &&
+            typeof parsed?.password === "string" &&
+            parsed?.userId === ownerId;
+        }
+        if (!validCached) {
+          await SecureStore.setItemAsync(
+            getBiometricEnabledKey(ownerId),
+            "false",
+          );
+          setBiometric((prev) => ({ ...prev, enabled: false }));
+          DeviceEventEmitter.emit("docuguard.securityPreferencesChanged");
+          feedbackService.warning(
+            "Sign in with your password once on this device to enable biometric login.",
+          );
+          return;
+        }
+      } catch {
+        feedbackService.error(
+          "Could not verify cached credentials for biometric login.",
+        );
+        return;
+      }
     }
     try {
       await SecureStore.setItemAsync(
@@ -1233,44 +1295,49 @@ export default function ProfileScreen() {
       confirmText: "Sign Out",
       cancelText: "Cancel",
       destructive: true,
-        onConfirm: async () => {
-          try {
-            const [token, ownerId] = await Promise.all([
-              api.getStoredToken(),
-              getLocalDataOwnerIdForSessionExpiration(),
-            ]);
+      onConfirm: async () => {
+        try {
+          const [token, ownerId] = await Promise.all([
+            api.getStoredToken(),
+            getLocalDataOwnerIdForSessionExpiration(),
+          ]);
 
-            // Remove biometric credentials so a future biometric sign-in cannot
-            // authenticate as this account after sign-out or account changes.
+          // Remove biometric credentials so a future biometric sign-in cannot
+          // authenticate as this account after sign-out or account changes.
+          await Promise.all([
+            SecureStore.deleteItemAsync("secure_user_credentials"),
+            SecureStore.deleteItemAsync("biometric_credentials"),
+            SecureStore.deleteItemAsync("refreshToken"),
+          ]);
+
+          if (token) {
+            // Best-effort, bounded: never block navigation on slow/offline network.
+            void removePushTokenFromBackend(token);
+            if (ownerId && ownerId > 0) {
+              void api.auth.logout(token, ownerId).catch((err) => {
+                console.warn("Server session revocation failed or offline:", err);
+              });
+            } else {
+              void SecureStore.deleteItemAsync("userToken").catch(() => {});
+            }
+          } else {
+            await SecureStore.deleteItemAsync("userToken").catch(() => {});
+          }
+
+          router.replace("/(auth)/login" as any);
+        } catch (error) {
+          console.error("Failed to sign out cleanly:", error);
+          try {
             await Promise.all([
+              SecureStore.deleteItemAsync("userToken"),
               SecureStore.deleteItemAsync("secure_user_credentials"),
               SecureStore.deleteItemAsync("biometric_credentials"),
               SecureStore.deleteItemAsync("refreshToken"),
             ]);
-
-            if (token && ownerId && ownerId > 0) {
-              await removePushTokenFromBackend(token).catch(() => {});
-              await api.auth.logout(token, ownerId).catch((err) => {
-                console.warn("Server session revocation failed or offline:", err);
-              });
-            } else {
-              await SecureStore.deleteItemAsync("userToken");
-            }
-
-            router.replace("/(auth)/login" as any);
-          } catch (error) {
-            console.error("Failed to sign out cleanly:", error);
-            try {
-              await Promise.all([
-                SecureStore.deleteItemAsync("userToken"),
-                SecureStore.deleteItemAsync("secure_user_credentials"),
-                SecureStore.deleteItemAsync("biometric_credentials"),
-                SecureStore.deleteItemAsync("refreshToken"),
-              ]);
-            } catch {}
-            router.replace("/(auth)/login" as any);
-          }
-        },
+          } catch {}
+          router.replace("/(auth)/login" as any);
+        }
+      },
       onCancel: () => {},
     });
   };

@@ -134,24 +134,31 @@ export function useAppLock() {
     const loadPreferences = async () => {
       try {
         const activeUserId = await getActiveLocalUserIdStrict();
-        const storedTimeout = await SecureStore.getItemAsync(
-          APP_LOCK_TIMEOUT_KEY,
-        );
-        const storedEnabled =
+        const [storedTimeout, perUserEnabled, legacyEnabled] = await Promise.all([
+          SecureStore.getItemAsync(APP_LOCK_TIMEOUT_KEY),
           activeUserId !== null
-            ? await SecureStore.getItemAsync(getAppLockEnabledKey(activeUserId))
-            : null;
+            ? SecureStore.getItemAsync(getAppLockEnabledKey(activeUserId))
+            : Promise.resolve(null),
+          SecureStore.getItemAsync(APP_LOCK_ENABLED_KEY),
+        ]);
 
         if (cancelled || !mountedRef.current) return;
 
-        if (storedEnabled !== null) {
-          const enabled = storedEnabled === "true";
-          setAppLockEnabled(enabled);
-          appLockEnabledRef.current = enabled;
-        } else {
-          setAppLockEnabled(false);
-          appLockEnabledRef.current = false;
+        let enabled = false;
+        if (perUserEnabled !== null) {
+          enabled = perUserEnabled === "true";
+        } else if (legacyEnabled !== null) {
+          enabled = legacyEnabled === "true";
+          if (activeUserId !== null) {
+            await SecureStore.setItemAsync(
+              getAppLockEnabledKey(activeUserId),
+              String(enabled),
+            );
+          }
         }
+
+        setAppLockEnabled(enabled);
+        appLockEnabledRef.current = enabled;
 
         // App Lock uses the confirmed fixed 30-second background delay.
         // Migrate any older saved timeout so it cannot override this policy.
@@ -167,15 +174,8 @@ export function useAppLock() {
       } catch (error) {
         console.error("Failed to load app-lock preferences:", error);
 
-        // Do not silently disable protection when preferences
-        // cannot be read.
+        // Preserve prior protection state on transient read failures.
         sessionVerificationFailedRef.current = true;
-
-        if (mountedRef.current) {
-          setAppLockEnabled(false);
-          appLockEnabledRef.current = false;
-          setIsLocked(false);
-        }
       } finally {
         if (!cancelled && mountedRef.current) {
           setPreferencesLoaded(true);
@@ -193,7 +193,7 @@ export function useAppLock() {
   const checkBiometricSupport = useCallback(async () => {
     try {
       const activeUserId = await getActiveLocalUserIdStrict();
-      const [hasHardware, isEnrolled, token, biometricPreference, appLockPreference] =
+      const [hasHardware, isEnrolled, token, biometricPreference, appLockPreference, legacyBiometric, legacyAppLock] =
         await Promise.all([
           LocalAuthentication.hasHardwareAsync(),
           LocalAuthentication.isEnrolledAsync(),
@@ -204,11 +204,33 @@ export function useAppLock() {
           activeUserId !== null
             ? SecureStore.getItemAsync(getAppLockEnabledKey(activeUserId))
             : Promise.resolve(null),
+          SecureStore.getItemAsync("docuguard.security.biometricEnabled"),
+          SecureStore.getItemAsync(APP_LOCK_ENABLED_KEY),
         ]);
+
+      let resolvedBiometricPreference = biometricPreference;
+      let resolvedAppLockPreference = appLockPreference;
+
+      if (activeUserId !== null) {
+        if (resolvedBiometricPreference === null && legacyBiometric !== null) {
+          resolvedBiometricPreference = legacyBiometric;
+          await SecureStore.setItemAsync(
+            getBiometricEnabledKey(activeUserId),
+            legacyBiometric,
+          );
+        }
+        if (resolvedAppLockPreference === null && legacyAppLock !== null) {
+          resolvedAppLockPreference = legacyAppLock;
+          await SecureStore.setItemAsync(
+            getAppLockEnabledKey(activeUserId),
+            legacyAppLock,
+          );
+        }
+      }
 
       const enabled =
         activeUserId !== null &&
-        biometricPreference === "true" &&
+        resolvedBiometricPreference === "true" &&
         hasHardware &&
         isEnrolled &&
         !!token;
@@ -216,7 +238,8 @@ export function useAppLock() {
       if (mountedRef.current) {
         setBiometricEnabled(enabled);
         biometricEnabledRef.current = enabled;
-        const appLock = activeUserId !== null && appLockPreference === "true";
+        const appLock =
+          activeUserId !== null && resolvedAppLockPreference === "true";
         setAppLockEnabled(appLock);
         appLockEnabledRef.current = appLock;
       }
@@ -225,12 +248,7 @@ export function useAppLock() {
     } catch (error) {
       console.warn("Biometric availability check failed:", error);
 
-      if (mountedRef.current) {
-        setBiometricEnabled(false);
-        biometricEnabledRef.current = false;
-      }
-
-      return false;
+      return biometricEnabledRef.current;
     }
   }, []);
 
