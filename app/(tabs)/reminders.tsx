@@ -20,6 +20,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import Animated, { FadeInDown, FadeInUp, Layout } from "react-native-reanimated";
 import { Card } from "../../components/ui";
 
 import { formatShortDate, parseLocalDate } from "../../utils";
@@ -48,6 +49,8 @@ import {
   feedbackService,
   useFeedbackService,
 } from "@/services/feedbackService";
+
+const AnimatedTouchableOpacity = Animated.createAnimatedComponent(TouchableOpacity);
 
 type FilterType = "all" | "unread" | "expired" | "expiring";
 type ReminderSeverity = "Expired" | "Expiring Soon" | "Valid";
@@ -345,58 +348,53 @@ export default function RemindersScreen() {
       return;
     }
 
+    const previous = notificationsEnabled;
+    setNotificationsEnabled(value);
     setUpdatingNotifications(true);
 
     try {
       if (value) {
         const permission = await Notifications.requestPermissionsAsync();
-
         const granted =
           permission.granted ||
           permission.ios?.status ===
             Notifications.IosAuthorizationStatus.PROVISIONAL;
 
-        setPermissionGranted(granted);
+        if (mountedRef.current) {
+          setPermissionGranted(granted);
+        }
 
         if (!granted) {
+          if (mountedRef.current) {
+            setNotificationsEnabled(previous);
+          }
+          await persistNotificationsEnabled(previous).catch(() => {});
           await feedbackService.alert({
             title: "Notifications Disabled",
             message:
               "Please enable notifications in your device settings to receive reminder alerts.",
             type: "warning",
           });
-
           return;
         }
+
+        await persistNotificationsEnabled(true);
+        void checkAndScheduleAlerts().catch((err) => {
+          console.error("Failed to schedule alerts after enabling:", err);
+        });
       } else {
-        await Notifications.cancelAllScheduledNotificationsAsync();
-      }
-
-      setNotificationsEnabled(value);
-      await persistNotificationsEnabled(value);
-
-      if (value) {
-        try {
-          await checkAndScheduleAlerts();
-        } catch (err) {
-          console.error("Failed to schedule alerts:", err);
-
-          await feedbackService.alert({
-            title: "Notification Setup Failed",
-            message:
-              "Notifications are enabled, but reminders could not be scheduled.",
-            type: "error",
-          });
-        }
+        await persistNotificationsEnabled(false);
+        void Notifications.cancelAllScheduledNotificationsAsync().catch((err) => {
+          console.error("Failed to cancel scheduled notifications:", err);
+        });
       }
     } catch (err) {
       console.error("Failed to update notification preference:", err);
-
-      await feedbackService.alert({
-        title: "Error",
-        message: "Could not update notification settings.",
-        type: "error",
-      });
+      if (mountedRef.current) {
+        setNotificationsEnabled(previous);
+        setError("Could not update notification settings.");
+      }
+      await persistNotificationsEnabled(previous).catch(() => {});
     } finally {
       if (mountedRef.current) {
         setUpdatingNotifications(false);
@@ -798,13 +796,15 @@ export default function RemindersScreen() {
               </View>
             ) : (
               <View style={styles.remindersList}>
-                {filtered.map((reminder) => {
+                {filtered.map((reminder, index) => {
                   const severityColor = getSeverityColor(reminder.severity);
                   const severityIcon = getSeverityIcon(reminder.severity);
 
                   return (
-                    <TouchableOpacity
+                    <AnimatedTouchableOpacity
                       key={reminder.id}
+                      entering={FadeInDown.delay(Math.min(index, 8) * 35).duration(260)}
+                      layout={Layout.springify().damping(18).stiffness(140)}
                       activeOpacity={0.8}
                       onPress={() => {
                         if (reminder.documentId) {
@@ -964,7 +964,7 @@ export default function RemindersScreen() {
                           </View>
                         </View>
                       </Card>
-                    </TouchableOpacity>
+                    </AnimatedTouchableOpacity>
                   );
                 })}
               </View>

@@ -34,12 +34,14 @@ import { COLORS, Spacing } from "@/constants";
 const DEFAULT_APP_LOCK_DELAY = 30_000;
 const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
 
-const APP_LOCK_ENABLED_KEY = "docuguard.appLock.enabled"; // legacy/global
-const APP_LOCK_TIMEOUT_KEY = "docuguard.appLock.timeout";
+const APP_LOCK_TIMEOUT_KEY = "appLockTimeout";
+const APP_LOCK_ENABLED_KEY = "docuguard.appLock.enabled";
 const SESSION_BACKGROUND_AT_KEY = "docuguard.session.backgroundAt";
-
+const BIOMETRIC_ENABLED_KEY = "biometricEnabled"; // legacy
 const getBiometricEnabledKey = (userId: number) =>
   `docuguard.security.biometricEnabled.user.${userId}`;
+const getBiometricEnrolledKey = (userId: number) =>
+  `docuguard.security.biometricEnrolled.user.${userId}`;
 const getAppLockEnabledKey = (userId: number) =>
   `docuguard.security.appLockEnabled.user.${userId}`;
 
@@ -193,13 +195,16 @@ export function useAppLock() {
   const checkBiometricSupport = useCallback(async () => {
     try {
       const activeUserId = await getActiveLocalUserIdStrict();
-      const [hasHardware, isEnrolled, token, biometricPreference, appLockPreference, legacyBiometric, legacyAppLock] =
+      const [hasHardware, isEnrolled, token, biometricPreference, biometricEnrollment, appLockPreference, legacyBiometric, legacyAppLock] =
         await Promise.all([
           LocalAuthentication.hasHardwareAsync(),
           LocalAuthentication.isEnrolledAsync(),
           SecureStore.getItemAsync("userToken"),
           activeUserId !== null
             ? SecureStore.getItemAsync(getBiometricEnabledKey(activeUserId))
+            : Promise.resolve(null),
+          activeUserId !== null
+            ? SecureStore.getItemAsync(getBiometricEnrolledKey(activeUserId))
             : Promise.resolve(null),
           activeUserId !== null
             ? SecureStore.getItemAsync(getAppLockEnabledKey(activeUserId))
@@ -209,6 +214,7 @@ export function useAppLock() {
         ]);
 
       let resolvedBiometricPreference = biometricPreference;
+      let resolvedBiometricEnrollment = biometricEnrollment;
       let resolvedAppLockPreference = appLockPreference;
 
       if (activeUserId !== null) {
@@ -217,6 +223,16 @@ export function useAppLock() {
           await SecureStore.setItemAsync(
             getBiometricEnabledKey(activeUserId),
             legacyBiometric,
+          );
+        }
+        if (
+          resolvedBiometricEnrollment === null &&
+          resolvedBiometricPreference === "true"
+        ) {
+          resolvedBiometricEnrollment = "true";
+          await SecureStore.setItemAsync(
+            getBiometricEnrolledKey(activeUserId),
+            "true",
           );
         }
         if (resolvedAppLockPreference === null && legacyAppLock !== null) {
@@ -231,6 +247,7 @@ export function useAppLock() {
       const enabled =
         activeUserId !== null &&
         resolvedBiometricPreference === "true" &&
+        resolvedBiometricEnrollment === "true" &&
         hasHardware &&
         isEnrolled &&
         !!token;
@@ -724,6 +741,7 @@ export function useAppLock() {
         hasHardware,
         isEnrolled,
         biometricPreference,
+        biometricEnrollment,
       ] = await Promise.all([
         SecureStore.getItemAsync("userToken"),
         runBackgroundTimestampOperation(() =>
@@ -733,6 +751,9 @@ export function useAppLock() {
         LocalAuthentication.isEnrolledAsync(),
         activeUserId !== null
           ? SecureStore.getItemAsync(getBiometricEnabledKey(activeUserId))
+          : Promise.resolve(null),
+        activeUserId !== null
+          ? SecureStore.getItemAsync(getBiometricEnrolledKey(activeUserId))
           : Promise.resolve(null),
       ]);
 
@@ -764,7 +785,12 @@ export function useAppLock() {
         }
       }
 
-      if (biometricPreference !== "true" || !hasHardware || !isEnrolled)
+      if (
+        biometricPreference !== "true" ||
+        biometricEnrollment !== "true" ||
+        !hasHardware ||
+        !isEnrolled
+      )
         return false;
 
       const authResult = await LocalAuthentication.authenticateAsync({
@@ -778,7 +804,7 @@ export function useAppLock() {
       // Recheck token and timestamp after the biometric prompt.
       // The session may have expired while authentication was open.
       const currentUserId = await getActiveLocalUserIdStrict();
-      const [currentToken, currentBackgroundAt, currentBiometricPreference] =
+      const [currentToken, currentBackgroundAt, currentBiometricPreference, currentBiometricEnrollment] =
         await Promise.all([
           SecureStore.getItemAsync("userToken"),
           runBackgroundTimestampOperation(() =>
@@ -787,9 +813,12 @@ export function useAppLock() {
           currentUserId !== null
             ? SecureStore.getItemAsync(getBiometricEnabledKey(currentUserId))
             : Promise.resolve(null),
+          currentUserId !== null
+            ? SecureStore.getItemAsync(getBiometricEnrolledKey(currentUserId))
+            : Promise.resolve(null),
         ]);
 
-      if (currentBiometricPreference !== "true") {
+      if (currentBiometricPreference !== "true" || currentBiometricEnrollment !== "true") {
         if (mountedRef.current) {
           setBiometricEnabled(false);
           biometricEnabledRef.current = false;

@@ -97,13 +97,49 @@ export default function DocumentViewerScreen() {
   const handleOpenExternal = async () => {
     if (!fileUri) return;
     try {
-      if (Platform.OS !== "web") {
-        const canShare = await Sharing.isAvailableAsync();
-        if (canShare && (fileUri.startsWith("file://") || fileUri.startsWith("content://"))) {
-          await Sharing.shareAsync(fileUri);
-          return;
+      let uri = fileUri;
+
+      if (Platform.OS === "android" && uri.startsWith("file://")) {
+        try {
+          uri = await FileSystem.getContentUriAsync(uri);
+        } catch {
+          // Keep original URI as fallback.
         }
       }
+
+      if (Platform.OS === "android") {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const IntentLauncher = require("expo-intent-launcher");
+          await IntentLauncher.startActivityAsync("android.intent.action.CHOOSER", {
+            data: uri,
+            flags: 1,
+            type: document?.fileType || undefined,
+            extras: {
+              "android.intent.extra.INITIAL_INTENTS": [],
+              "android.intent.extra.TITLE": "Open with",
+            },
+          });
+          return;
+        } catch {
+          // Fall through to share sheet as fallback.
+        }
+      }
+
+      if (Platform.OS !== "web" && (await Sharing.isAvailableAsync())) {
+        await Sharing.shareAsync(fileUri, {
+          mimeType: document?.fileType || undefined,
+          dialogTitle: "Open with",
+          UTI: document?.fileType || undefined,
+        } as any);
+        return;
+      }
+
+      if (/^(https?:|content:)/i.test(uri)) {
+        await Linking.openURL(uri);
+        return;
+      }
+
       await Linking.openURL(fileUri);
     } catch {
       setError("Could not open this file in an external viewer.");
@@ -149,7 +185,7 @@ export default function DocumentViewerScreen() {
           <Text style={styles.mutedSmall}>{document?.fileType || "Unknown file type"}</Text>
           <TouchableOpacity style={styles.button} onPress={handleOpenExternal} accessibilityRole="button">
             <Ionicons name="open-outline" size={18} color={colors.buttonPrimaryText} />
-            <Text style={styles.buttonText}>Open File</Text>
+            <Text style={styles.buttonText}>Open with</Text>
           </TouchableOpacity>
         </View>
       )}

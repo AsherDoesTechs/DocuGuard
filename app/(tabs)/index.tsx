@@ -7,6 +7,7 @@ import {
   Image,
   DeviceEventEmitter,
 } from "react-native";
+import Animated, { FadeInDown, FadeInUp } from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -49,6 +50,8 @@ interface Reminder {
   severity: "info" | "warning" | "urgent";
   read: boolean;
 }
+
+const AnimatedTouchable = Animated.createAnimatedComponent(TouchableOpacity);
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -443,12 +446,13 @@ export default function HomeScreen() {
           ) : (
             <>
               {/* Greeting and dashboard title */}
-              <View style={styles.header}>
+              <Animated.View entering={FadeInDown.duration(420)} style={styles.header}>
                 <Text style={styles.greeting}>{getGreeting()}</Text>
                 <Text style={styles.title}>Your Dashboard</Text>
-              </View>
+              </Animated.View>
 
               {/* Vault Safety Score */}
+              <Animated.View entering={FadeInDown.delay(60).duration(420)}>
               <Card style={styles.heroCard}>
                 <View style={styles.scoreContainer}>
                   <View style={styles.scoreRow}>
@@ -485,54 +489,24 @@ export default function HomeScreen() {
                 </View>
 
                 <View style={styles.statsGrid}>
-                  <View style={styles.statItem}>
-                    <Ionicons
-                      name="document-text"
-                      size={20}
-                      color={COLORS.success}
-                    />
-                    <Text style={styles.statValue}>
-                      {summary.validDocuments}
-                    </Text>
-                    <Text style={styles.statLabel}>Valid</Text>
-                  </View>
-
-                  <View style={styles.statItem}>
-                    <Ionicons name="time" size={20} color={COLORS.warning} />
-                    <Text style={styles.statValue}>
-                      {summary.expiringDocuments}
-                    </Text>
-                    <Text style={styles.statLabel}>Expiring</Text>
-                  </View>
-
-                  <View style={styles.statItem}>
-                    <Ionicons
-                      name="alert-circle"
-                      size={20}
-                      color={COLORS.danger}
-                    />
-                    <Text style={styles.statValue}>
-                      {summary.expiredDocuments}
-                    </Text>
-                    <Text style={styles.statLabel}>Expired</Text>
-                  </View>
-
-                  <View style={styles.statItem}>
-                    <Ionicons
-                      name="notifications"
-                      size={20}
-                      color={COLORS.primary}
-                    />
-                    <Text style={styles.statValue}>
-                      {summary.totalReminders}
-                    </Text>
-                    <Text style={styles.statLabel}>Reminders</Text>
-                  </View>
+                  {[
+                    { icon: "document-text" as const, value: summary.validDocuments, label: "Valid", color: COLORS.success },
+                    { icon: "time" as const, value: summary.expiringDocuments, label: "Expiring", color: COLORS.warning },
+                    { icon: "alert-circle" as const, value: summary.expiredDocuments, label: "Expired", color: COLORS.danger },
+                    { icon: "notifications" as const, value: summary.totalReminders, label: "Reminders", color: COLORS.primary },
+                  ].map((item, idx) => (
+                    <Animated.View key={item.label} entering={FadeInUp.delay(120 + idx * 45).duration(320)} style={styles.statItem}>
+                      <Ionicons name={item.icon} size={20} color={item.color} />
+                      <Text style={styles.statValue}>{item.value}</Text>
+                      <Text style={styles.statLabel}>{item.label}</Text>
+                    </Animated.View>
+                  ))}
                 </View>
               </Card>
+              </Animated.View>
 
               {/* Action Required */}
-              <View style={styles.section}>
+              <Animated.View entering={FadeInDown.delay(140).duration(380)} style={styles.section}>
                 <View style={styles.sectionHeaderRow}>
                   <View>
                     <Text style={styles.sectionTitle}>Action Required</Text>
@@ -559,9 +533,10 @@ export default function HomeScreen() {
                     </Text>
                   </Card>
                 ) : (
-                  urgentReminders.map((reminder: any) => (
-                    <TouchableOpacity
+                  urgentReminders.map((reminder: any, idx) => (
+                    <AnimatedTouchable
                       key={reminder.id}
+                      entering={FadeInDown.delay(180 + idx * 45).duration(300)}
                       accessibilityRole="button"
                       onPress={() => {
                         if (reminder.documentId) {
@@ -607,10 +582,10 @@ export default function HomeScreen() {
                           />
                         </View>
                       </Card>
-                    </TouchableOpacity>
+                    </AnimatedTouchable>
                   ))
                 )}
-              </View>
+              </Animated.View>
 
               {/* Recent Documents */}
               <View style={styles.section}>

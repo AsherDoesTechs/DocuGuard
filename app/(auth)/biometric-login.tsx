@@ -161,18 +161,17 @@ export default function BiometricLoginScreen() {
 
         const effectiveId = activeId ?? credentialUserId ?? lastSignedOutId;
 
-        const credentialsForCurrentUser =
-          !!storedCredentials &&
-          credentialUserId !== null &&
-          (effectiveId === null || credentialUserId === effectiveId) &&
-          typeof (parsed as any)?.email === "string" &&
-          typeof (parsed as any)?.password === "string";
-
         let biometricSetting: string | null = null;
+        let biometricEnrollment: string | null = null;
         if (effectiveId !== null) {
-          biometricSetting = await SecureStore.getItemAsync(
-            `docuguard.security.biometricEnabled.user.${effectiveId}`,
-          );
+          [biometricSetting, biometricEnrollment] = await Promise.all([
+            SecureStore.getItemAsync(
+              `docuguard.security.biometricEnabled.user.${effectiveId}`,
+            ),
+            SecureStore.getItemAsync(
+              `docuguard.security.biometricEnrolled.user.${effectiveId}`,
+            ),
+          ]);
           if (biometricSetting === null) {
             const legacy = await SecureStore.getItemAsync(
               "docuguard.security.biometricEnabled",
@@ -185,12 +184,12 @@ export default function BiometricLoginScreen() {
               biometricSetting = legacy;
             }
           }
-          if (biometricSetting === null && credentialsForCurrentUser) {
+          if (biometricEnrollment === null && biometricSetting === "true") {
+            biometricEnrollment = "true";
             await SecureStore.setItemAsync(
-              `docuguard.security.biometricEnabled.user.${effectiveId}`,
+              `docuguard.security.biometricEnrolled.user.${effectiveId}`,
               "true",
             );
-            biometricSetting = "true";
           }
         }
 
@@ -198,7 +197,8 @@ export default function BiometricLoginScreen() {
           setIsBiometricSupported(
             compatible &&
               enrolled &&
-              biometricSetting === "true",
+              biometricSetting === "true" &&
+              biometricEnrollment === "true",
           );
         }
       } catch (error) {
@@ -278,16 +278,6 @@ export default function BiometricLoginScreen() {
               userId,
             }),
           );
-          const perUserKey = `docuguard.security.biometricEnabled.user.${userId}`;
-          const existingBio = await SecureStore.getItemAsync(perUserKey);
-          if (existingBio === null) {
-            const legacyBio = await SecureStore.getItemAsync(
-              "docuguard.security.biometricEnabled",
-            );
-            if (legacyBio === "true") {
-              await SecureStore.setItemAsync(perUserKey, "true");
-            }
-          }
         } catch (error) {
           console.warn("[BiometricLogin] Failed to save biometric credentials.", error);
         }

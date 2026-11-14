@@ -5,7 +5,7 @@ import React, {
   useCallback,
   useMemo,
 } from "react";
-import { API_BASE_URL } from "../services/api";
+import { API_BASE_URL, api } from "../services/api";
 import {
   feedbackService,
   useFeedbackService,
@@ -23,6 +23,7 @@ import {
   ScrollView,
   KeyboardAvoidingView,
   Platform,
+  TextInput,
 } from "react-native";
 
 import { Ionicons } from "@expo/vector-icons";
@@ -63,6 +64,20 @@ export default function DocuGuardCheckout() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const [sliderUnlocked, setSliderUnlocked] = useState(false);
+
+  const [fallbackAuth, setFallbackAuth] = useState(false);
+  const [fallbackLoading, setFallbackLoading] = useState(false);
+  const [profileEmail, setProfileEmail] = useState("");
+  const [twoFactorEnabled, setTwoFactorEnabled] = useState(false);
+  const [password, setPassword] = useState("");
+  const [twoFactorSetup, setTwoFactorSetup] = useState<{
+    secret: string;
+    otpauthUri?: string;
+  } | null>(null);
+  const [twoFactorCode, setTwoFactorCode] = useState("");
+  const [settingUp2FA, setSettingUp2FA] = useState(false);
+  const [twoFactorVerifiedForCheckout, setTwoFactorVerifiedForCheckout] =
+    useState(false);
 
   const slideAnim = useRef(new RNAnimated.Value(0)).current;
   const slideTextAnim = useRef(new RNAnimated.Value(0)).current;
@@ -167,9 +182,188 @@ export default function DocuGuardCheckout() {
 
   /*
    * ---------------------------------------------------------
-   * BIOMETRIC VERIFICATION
+   * BIOMETRIC / FALLBACK VERIFICATION
    * ---------------------------------------------------------
    */
+
+  const prepareFallbackVerification = useCallback(async () => {
+    setFallbackLoading(true);
+    setErrorMessage(null);
+    try {
+      const token = await SecureStore.getItemAsync("userToken");
+      if (!token) {
+        throw new Error("Your session has expired. Please sign in again.");
+      }
+      const res = await api.client.get("/profile", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const email = res.data?.email || res.data?.user?.email || "";
+      if (!email) {
+        throw new Error("Could not determine your account email for verification.");
+      }
+      setProfileEmail(email);
+      setTwoFactorEnabled(Boolean(res.data?.twoFactor));
+      setFallbackAuth(true);
+      feedbackService.info(
+        "Biometrics unavailable. Confirm your password and enable 2FA to continue.",
+      );
+    } catch (err: any) {
+      const message =
+        err?.response?.data?.error ||
+        err?.message ||
+        "Could not prepare secure verification.";
+      setErrorMessage(message);
+      feedbackService.error(message);
+    } finally {
+      setFallbackLoading(false);
+    }
+  }, []);
+
+  const handleSetup2FAForCheckout = useCallback(async () => {
+    if (settingUp2FA) return;
+    try {
+      setSettingUp2FA(true);
+      setErrorMessage(null);
+      const token = await SecureStore.getItemAsync("userToken");
+      const res = await api.client.post(
+        "/profile/security/2fa/setup",
+        {},
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      setTwoFactorSetup({
+        secret: res.data?.secret || "",
+        otpauthUri: res.data?.otpauthUri,
+      });
+      setTwoFactorVerifiedForCheckout(false);
+      feedbackService.info(
+        "Add this secret to your authenticator app, then enter the 6-digit code.",
+      );
+    } catch (err: any) {
+      const message =
+        err?.response?.data?.error ||
+        err?.message ||
+        "Unable to start 2FA setup.";
+      setErrorMessage(message);
+      feedbackService.error(message);
+    } finally {
+      setSettingUp2FA(false);
+    }
+  }, [settingUp2FA]);
+
+  const handleVerify2FAForCheckout = useCallback(async () => {
+    if (twoFactorCode.length !== 6) {
+      feedbackService.error("Please enter a valid 6-digit code.");
+      return;
+    }
+    try {
+      setFallbackLoading(true);
+      setErrorMessage(null);
+      const token = await SecureStore.getItemAsync("userToken");
+      await api.client.post(
+        "/profile/security/2fa/verify",
+        { code: twoFactorCode },
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      setTwoFactorEnabled(true);
+      setTwoFactorSetup(null);
+      setTwoFactorVerifiedForCheckout(true);
+      setTwoFactorCode("");
+      feedbackService.success(
+        "2FA enabled. Enter your password to activate your subscription.",
+      );
+    } catch (err: any) {
+      const message =
+        err?.response?.data?.error ||
+        err?.message ||
+        "Invalid verification code.";
+      setErrorMessage(message);
+      feedbackService.error(message);
+    } finally {
+      setFallbackLoading(false);
+    }
+  }, [twoFactorCode]);
+
+  const handleFallbackVerification = useCallback(async () => {
+    if (loading || fallbackLoading) return;
+
+    const trimmedPassword = password.trim();
+    if (!trimmedPassword) {
+      feedbackService.error("Enter your account password to continue.");
+      return;
+    }
+
+    if (!profileEmail) {
+      await prepareFallbackVerification();
+      return;
+    }
+
+    if (!twoFactorEnabled) {
+      setErrorMessage(
+        "You must create and verify 2FA before activating your subscription.",
+      );
+      feedbackService.warning(
+        "Set up and verify 2FA first, then enter your password.",
+      );
+      return;
+    }
+
+    const code = twoFactorCode.replace(/\D/g, "").slice(0, 6);
+    if (code.length !== 6) {
+      setErrorMessage("Enter your current 6-digit authenticator code.");
+      feedbackService.warning("A valid authenticator code is required.");
+      return;
+    }
+
+    try {
+      setFallbackLoading(true);
+      setErrorMessage(null);
+
+      const loginRes = await api.client.post("/auth/login", {
+        email: profileEmail.trim().toLowerCase(),
+        password: trimmedPassword,
+        totpCode: code,
+      });
+
+      if (loginRes?.data?.requiresTwoFactor) {
+        setErrorMessage(
+          "Password accepted but authenticator code is required or invalid.",
+        );
+        feedbackService.error("Enter a valid current authenticator code.");
+        return;
+      }
+
+      if (!loginRes?.data?.token) {
+        throw new Error("Password/2FA verification failed. Please try again.");
+      }
+
+      await handleFinish();
+    } catch (err: any) {
+      const status = err?.response?.status;
+      let message =
+        err?.response?.data?.error ||
+        err?.message ||
+        "Could not verify your password and 2FA.";
+
+      if (status === 401) {
+        message = "Incorrect password or authenticator code.";
+      } else if (status === 400 && err?.response?.data?.error) {
+        message = err.response.data.error;
+      }
+
+      setErrorMessage(message);
+      feedbackService.error(message);
+    } finally {
+      setFallbackLoading(false);
+    }
+  }, [
+    loading,
+    fallbackLoading,
+    password,
+    profileEmail,
+    twoFactorEnabled,
+    twoFactorCode,
+    prepareFallbackVerification,
+  ]);
 
   const handleBiometricVerification = useCallback(async () => {
     if (loading) return;
@@ -178,25 +372,16 @@ export default function DocuGuardCheckout() {
       setErrorMessage(null);
 
       const hasHardware = await LocalAuthentication.hasHardwareAsync();
-
       const isEnrolled = await LocalAuthentication.isEnrolledAsync();
 
-      if (!hasHardware) {
+      if (!hasHardware || !isEnrolled) {
         await feedbackService.alert({
           title: "Biometrics Unavailable",
-          message: "This device does not support biometric authentication.",
-          type: "error",
-        });
-        return;
-      }
-
-      if (!isEnrolled) {
-        await feedbackService.alert({
-          title: "Biometrics Not Set Up",
           message:
-            "Please enroll a fingerprint or other biometric security method on your device first.",
+            "Biometric verification is not available on this device. You must verify with your password and enable 2FA to continue.",
           type: "warning",
         });
+        await prepareFallbackVerification();
         return;
       }
 
@@ -216,10 +401,9 @@ export default function DocuGuardCheckout() {
       console.error("Biometric error:", err);
 
       setErrorMessage("Could not complete biometric verification.");
-
       feedbackService.error("Biometric verification failed.");
     }
-  }, [loading]);
+  }, [loading, prepareFallbackVerification]);
 
   /*
    * ---------------------------------------------------------
@@ -540,6 +724,122 @@ export default function DocuGuardCheckout() {
                       </RNAnimated.Text>
                     </View>
                   </View>
+                ) : fallbackAuth ? (
+                  <Animated.View
+                    entering={FadeIn.duration(300)}
+                    style={styles.fallbackContainer}
+                  >
+                    <View style={styles.fingerprintCircle}>
+                      <Ionicons name="lock-closed" size={48} color={DG.emerald} />
+                    </View>
+
+                    <Text style={styles.gateTitle}>Password & 2FA Verification</Text>
+                    <Text style={styles.gateText}>
+                      Biometrics are unavailable. Enter your password and complete
+                      2FA verification to activate your subscription.
+                    </Text>
+
+                    {fallbackLoading && !twoFactorEnabled && !twoFactorSetup ? (
+                      <ActivityIndicator color={DG.emerald} />
+                    ) : (
+                      <>
+                        {!twoFactorEnabled ? (
+                          <View style={styles.fallbackBlock}>
+                            <Text style={styles.fallbackLabel}>
+                              2FA is required before subscription activation.
+                            </Text>
+                            {!twoFactorSetup ? (
+                              <TouchableOpacity
+                                style={[styles.nextBtn, settingUp2FA && styles.confirmBtnDisabled]}
+                                onPress={handleSetup2FAForCheckout}
+                                disabled={settingUp2FA || fallbackLoading}
+                              >
+                                <Text style={styles.btnText}>
+                                  {settingUp2FA ? "STARTING..." : "SET UP 2FA"}
+                                </Text>
+                              </TouchableOpacity>
+                            ) : (
+                              <>
+                                <Text style={styles.fallbackHint}>
+                                  Secret: {twoFactorSetup.secret}
+                                </Text>
+                                <TextInput
+                                  style={styles.fallbackInput}
+                                  placeholder="Enter 6-digit authenticator code"
+                                  placeholderTextColor={colors.textMuted}
+                                  keyboardType="number-pad"
+                                  maxLength={6}
+                                  value={twoFactorCode}
+                                  onChangeText={(v) =>
+                                    setTwoFactorCode(v.replace(/\D/g, "").slice(0, 6))
+                                  }
+                                />
+                                <TouchableOpacity
+                                  style={[
+                                    styles.nextBtn,
+                                    (fallbackLoading || twoFactorCode.length !== 6) &&
+                                      styles.confirmBtnDisabled,
+                                  ]}
+                                  onPress={handleVerify2FAForCheckout}
+                                  disabled={fallbackLoading || twoFactorCode.length !== 6}
+                                >
+                                  <Text style={styles.btnText}>VERIFY & ENABLE 2FA</Text>
+                                </TouchableOpacity>
+                              </>
+                            )}
+                          </View>
+                        ) : (
+                          <View style={styles.fallbackBlock}>
+                            <Text style={styles.fallbackLabel}>
+                              Account: {profileEmail}
+                            </Text>
+                            <TextInput
+                              style={styles.fallbackInput}
+                              placeholder="Current password"
+                              placeholderTextColor={colors.textMuted}
+                              secureTextEntry
+                              value={password}
+                              onChangeText={setPassword}
+                              autoCapitalize="none"
+                            />
+                            <TextInput
+                              style={styles.fallbackInput}
+                              placeholder="Current 6-digit authenticator code"
+                              placeholderTextColor={colors.textMuted}
+                              keyboardType="number-pad"
+                              maxLength={6}
+                              value={twoFactorCode}
+                              onChangeText={(v) => {
+                                setTwoFactorCode(v.replace(/\D/g, "").slice(0, 6));
+                              }}
+                            />
+                            <TouchableOpacity
+                              style={[
+                                styles.confirmBtn,
+                                (loading || fallbackLoading) && styles.confirmBtnDisabled,
+                              ]}
+                              onPress={handleFallbackVerification}
+                              disabled={loading || fallbackLoading}
+                              activeOpacity={0.85}
+                            >
+                              {loading || fallbackLoading ? (
+                                <>
+                                  <ActivityIndicator color={colors.buttonPrimaryText} />
+                                  <Text style={[styles.btnText, { marginLeft: 10 }]}>
+                                    VERIFYING...
+                                  </Text>
+                                </>
+                              ) : (
+                                <Text style={styles.btnText}>
+                                  VERIFY PASSWORD & ACTIVATE PRO
+                                </Text>
+                              )}
+                            </TouchableOpacity>
+                          </View>
+                        )}
+                      </>
+                    )}
+                  </Animated.View>
                 ) : (
                   <Animated.View
                     entering={FadeIn.duration(300)}
@@ -1037,6 +1337,44 @@ const createStyles = (DG: any, colors: any) =>
       alignItems: "center",
       width: "100%",
       marginTop: 10,
+    },
+
+    fallbackContainer: {
+      alignItems: "center",
+      width: "100%",
+      marginTop: 10,
+    },
+
+    fallbackBlock: {
+      width: "100%",
+      marginTop: 12,
+      gap: 10,
+    },
+
+    fallbackLabel: {
+      fontSize: 14,
+      fontWeight: "600",
+      color: DG.navy,
+      textAlign: "center",
+    },
+
+    fallbackHint: {
+      fontSize: 12,
+      color: DG.slate,
+      textAlign: "center",
+      fontFamily: Platform.OS === "ios" ? "Courier" : "monospace",
+    },
+
+    fallbackInput: {
+      width: "100%",
+      borderWidth: 1,
+      borderColor: DG.border,
+      borderRadius: 10,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      fontSize: 15,
+      color: DG.navy,
+      backgroundColor: DG.white,
     },
 
     fingerprintCircle: {

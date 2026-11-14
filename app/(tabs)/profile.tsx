@@ -102,7 +102,8 @@ interface LoginSession {
 
 interface BiometricState {
   available: boolean;
-  enrolled: boolean;
+  enrolled: boolean; // device biometric enrollment
+  appEnrolled: boolean; // per-account in-app biometric enrollment for this device
   enabled: boolean;
   type: "fingerprint" | "face" | "iris" | "unknown";
 }
@@ -145,6 +146,8 @@ const OCCUPATION_LIST = [
 
 const getBiometricEnabledKey = (userId: number) =>
   `docuguard.security.biometricEnabled.user.${userId}`;
+const getBiometricEnrolledKey = (userId: number) =>
+  `docuguard.security.biometricEnrolled.user.${userId}`;
 const getAppLockEnabledKey = (userId: number) =>
   `docuguard.security.appLockEnabled.user.${userId}`;
 
@@ -302,6 +305,7 @@ export default function ProfileScreen() {
   const [biometric, setBiometric] = useState<BiometricState>({
     available: false,
     enrolled: false,
+    appEnrolled: false,
     enabled: false,
     type: "unknown",
   });
@@ -405,10 +409,12 @@ export default function ProfileScreen() {
       }
 
       let storedBiometric: string | null = null;
+      let storedBiometricEnrollment: string | null = null;
       let storedAppLock: string | null = null;
       if (activeUserId !== null) {
-        [storedBiometric, storedAppLock] = await Promise.all([
+        [storedBiometric, storedBiometricEnrollment, storedAppLock] = await Promise.all([
           SecureStore.getItemAsync(getBiometricEnabledKey(activeUserId)),
+          SecureStore.getItemAsync(getBiometricEnrolledKey(activeUserId)),
           SecureStore.getItemAsync(getAppLockEnabledKey(activeUserId)),
         ]);
 
@@ -425,6 +431,14 @@ export default function ProfileScreen() {
             );
           }
         }
+        if (storedBiometricEnrollment === null && storedBiometric === "true") {
+          // One-time migration for previously enabled accounts on this device.
+          storedBiometricEnrollment = "true";
+          await SecureStore.setItemAsync(
+            getBiometricEnrolledKey(activeUserId),
+            "true",
+          );
+        }
         if (storedAppLock === null) {
           const legacyAppLock = await SecureStore.getItemAsync(
             "docuguard.appLock.enabled",
@@ -439,13 +453,18 @@ export default function ProfileScreen() {
         }
       }
 
+      const appEnrolled =
+        activeUserId !== null && storedBiometricEnrollment === "true";
+
       setSecurityOwnerId(activeUserId);
       setBiometric({
         available: hasHardware,
         enrolled: isEnrolled,
+        appEnrolled,
         enabled:
           activeUserId !== null &&
           storedBiometric === "true" &&
+          appEnrolled &&
           hasHardware &&
           isEnrolled,
         type: bioType,
@@ -874,12 +893,11 @@ export default function ProfileScreen() {
         });
         return;
       }
-      const auth = await LocalAuthentication.authenticateAsync({
-        promptMessage: "Authenticate to enable biometric protection",
-        fallbackLabel: "Use Passcode",
-      });
-      if (!auth.success) {
-        feedbackService.error("Biometric authentication cancelled");
+
+      if (!biometric.appEnrolled) {
+        feedbackService.warning(
+          "Enroll this account's fingerprint in DocuGuard first before turning on fingerprint login.",
+        );
         return;
       }
 
@@ -924,6 +942,15 @@ export default function ProfileScreen() {
         );
         return;
       }
+
+      const auth = await LocalAuthentication.authenticateAsync({
+        promptMessage: "Authenticate to enable biometric login for this account",
+        fallbackLabel: "Use Passcode",
+      });
+      if (!auth.success) {
+        feedbackService.error("Biometric authentication cancelled");
+        return;
+      }
     }
     try {
       await SecureStore.setItemAsync(
@@ -938,6 +965,82 @@ export default function ProfileScreen() {
       );
     } catch {
       feedbackService.error("Failed to update biometric preference");
+    }
+  };
+
+  const handleEnrollBiometric = async () => {
+    const ownerId = securityOwnerId ?? (await getActiveLocalUserIdStrict());
+    if (ownerId === null) {
+      feedbackService.error("Please sign in to enroll biometrics for this account.");
+      return;
+    }
+
+    if (!biometric.available || !biometric.enrolled) {
+      feedbackService.alert({
+        title: "Biometrics Unavailable",
+        message: "Biometrics are not set up on this device.",
+        type: "error",
+      });
+      return;
+    }
+
+    try {
+      const storedCredentials = await SecureStore.getItemAsync("secure_user_credentials");
+      let validCached = false;
+      let parsed: { email?: string; password?: string; userId?: number } | null = null;
+      if (storedCredentials) {
+        parsed = JSON.parse(storedCredentials);
+        validCached =
+          typeof parsed?.email === "string" &&
+          typeof parsed?.password === "string" &&
+          (parsed?.userId === ownerId || typeof parsed?.userId !== "number");
+        if (validCached && parsed && parsed.userId !== ownerId) {
+          parsed.userId = ownerId;
+          await SecureStore.setItemAsync("secure_user_credentials", JSON.stringify(parsed));
+        }
+      }
+
+      if (!validCached) {
+        feedbackService.warning(
+          "Sign in with your password once on this device before enrolling fingerprint for this account.",
+        );
+        return;
+      }
+
+      const auth = await LocalAuthentication.authenticateAsync({
+        promptMessage: "Enroll fingerprint for this DocuGuard account",
+        fallbackLabel: "Use Passcode",
+      });
+      if (!auth.success) {
+        feedbackService.error("Fingerprint enrollment cancelled");
+        return;
+      }
+
+      await SecureStore.setItemAsync(getBiometricEnrolledKey(ownerId), "true");
+      setBiometric((prev) => ({ ...prev, appEnrolled: true }));
+      DeviceEventEmitter.emit("docuguard.securityPreferencesChanged");
+      feedbackService.success(
+        "Fingerprint enrolled for this account. You can now turn on fingerprint login.",
+      );
+    } catch {
+      feedbackService.error("Failed to enroll fingerprint for this account.");
+    }
+  };
+
+  const handleRemoveBiometricEnrollment = async () => {
+    const ownerId = securityOwnerId ?? (await getActiveLocalUserIdStrict());
+    if (ownerId === null) return;
+
+    try {
+      await Promise.all([
+        SecureStore.setItemAsync(getBiometricEnrolledKey(ownerId), "false"),
+        SecureStore.setItemAsync(getBiometricEnabledKey(ownerId), "false"),
+      ]);
+      setBiometric((prev) => ({ ...prev, appEnrolled: false, enabled: false }));
+      DeviceEventEmitter.emit("docuguard.securityPreferencesChanged");
+      feedbackService.success("Fingerprint enrollment removed for this account.");
+    } catch {
+      feedbackService.error("Failed to remove fingerprint enrollment.");
     }
   };
 
@@ -1963,10 +2066,50 @@ export default function ProfileScreen() {
                       </Text>
                       <View style={styles.rowBetween}>
                         <Text style={styles.label}>
+                          {biometric.appEnrolled
+                            ? "Fingerprint Enrolled for This Account"
+                            : "Enroll Fingerprint for This Account"}
+                        </Text>
+                        {biometric.appEnrolled ? (
+                          <TouchableOpacity
+                            style={[
+                              styles.verifyButton,
+                              { paddingVertical: 8, paddingHorizontal: 12 },
+                            ]}
+                            onPress={handleRemoveBiometricEnrollment}
+                          >
+                            <Text style={styles.saveButtonText}>Remove</Text>
+                          </TouchableOpacity>
+                        ) : (
+                          <TouchableOpacity
+                            style={[
+                              styles.verifyButton,
+                              { paddingVertical: 8, paddingHorizontal: 12 },
+                              (!biometric.available || !biometric.enrolled) && {
+                                opacity: 0.6,
+                              },
+                            ]}
+                            onPress={handleEnrollBiometric}
+                            disabled={!biometric.available || !biometric.enrolled}
+                          >
+                            <Text style={styles.saveButtonText}>Enroll</Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                      <Text style={[styles.totpInstructions, { marginTop: 4 }]}>
+                        Fingerprint login is bound to this DocuGuard account on
+                        this device. Enroll it here before enabling login.
+                      </Text>
+                      <View style={styles.rowBetween}>
+                        <Text style={styles.label}>
                           Use {biometric.type} for Login
                         </Text>
                         <Switch
-                          disabled={!biometric.available || !biometric.enrolled}
+                          disabled={
+                            !biometric.available ||
+                            !biometric.enrolled ||
+                            !biometric.appEnrolled
+                          }
                           value={biometric.enabled}
                           onValueChange={handleToggleBiometric}
                         />

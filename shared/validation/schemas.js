@@ -202,7 +202,7 @@ const nullableDateStringSchema = z
 const documentShape = {
   title: z.string().min(1, "Document title is required").max(100, "Maximum 100 characters").trim(),
   category: categorySchema,
-  issuer: z.string().min(1, "Issuer / organization is required").max(150, "Maximum 150 characters").trim(),
+  issuer: z.string().max(150, "Maximum 150 characters").trim().optional().default(""),
   documentNumber: z
     .string()
     .min(1, "Document number is required")
@@ -265,7 +265,7 @@ const documentSyncSchema = z
   .object({
   title: z.string().min(1).max(100).trim(),
   category: categorySchema,
-  issuer: z.string().min(1).max(150).trim(),
+  issuer: z.string().max(150).trim().optional().default(""),
   documentNumber: z.string().min(1).max(50).transform((val) => val.toUpperCase()),
   issueDate: nullableDateStringSchema,
   expiryDate: nullableDateStringSchema,
@@ -280,9 +280,6 @@ const documentSyncSchema = z
   riskScore: z.number().min(0).max(100).nullish().transform((val) => (val === null ? undefined : val)),
   riskLevel: z.enum(["Low", "Medium", "High"]).nullish().transform((val) => (val === null ? undefined : val)),
   cloudId: z.number().int().positive().optional(),
-  // Server revision the client last observed. When present the sync update is
-  // conditional on the row still being at that revision, so a concurrent edit
-  // from another device surfaces as a 409 instead of being overwritten.
   baseUpdatedAt: z.string().min(1).max(64).optional(),
 })
   // Without this, a client could push an expiry date that precedes the issue

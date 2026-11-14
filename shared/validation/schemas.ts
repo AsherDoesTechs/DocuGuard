@@ -209,7 +209,7 @@ const nullableDateStringSchema = z
 const documentShape = {
   title: z.string().min(1, "Document title is required").max(100, "Maximum 100 characters").trim(),
   category: categorySchema,
-  issuer: z.string().min(1, "Issuer / organization is required").max(150, "Maximum 150 characters").trim(),
+  issuer: z.string().max(150, "Maximum 150 characters").trim().optional().default(""),
   documentNumber: z
     .string()
     .min(1, "Document number is required")
@@ -272,7 +272,7 @@ export const documentSyncSchema = z
   .object({
   title: z.string().min(1).max(100).trim(),
   category: categorySchema,
-  issuer: z.string().min(1).max(150).trim(),
+  issuer: z.string().max(150).trim().optional().default(""),
   documentNumber: z.string().min(1).max(50).transform((val) => val.toUpperCase()),
   issueDate: nullableDateStringSchema,
   expiryDate: nullableDateStringSchema,

@@ -742,8 +742,8 @@ export default function DocumentsScreen() {
   const pendingSyncCount = documents.filter((doc) => doc.needsSync).length;
 
   const maskDocumentNumber = (num?: string) => {
-    if (!num || num.length <= 4) return "â€¢â€¢â€¢â€¢";
-    return `â€¢â€¢â€¢â€¢${num.slice(-4)}`;
+    if (!num || num.length <= 4) return "••••";
+    return `••••${num.slice(-4)}`;
   };
 
   const currentCategoryLabel =
