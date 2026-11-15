@@ -12,6 +12,7 @@ import { toLocalDateString, localDateStringAfterDays } from "@/utils";
 import { syncRetryStore } from "./syncRetryStore";
 import { SYNC_FAILURE_KIND } from "@/shared/sync/syncPolicy";
 import { resolveAccountSwitch } from "@/shared/sync/accountSwitch";
+import { canonicalizeServerRevision } from "@/shared/sync/serverRevision";
 import type { BackupData } from "../shared/backup/schema";
 import { normalizeBackupTimestamp } from "../shared/backup/normalizers";
 
@@ -1344,13 +1345,25 @@ export async function reconcileRealtimeDocument(
   }
 
   // Compare revisions when both timestamps are available.
-  const remoteUpdatedAt = remote.updated_at ?? remote.updatedAt ?? null;
+  const rawRemoteUpdatedAt = remote.updated_at ?? remote.updatedAt ?? null;
+  const canonicalRemoteUpdatedAt =
+    typeof rawRemoteUpdatedAt === "string"
+      ? (canonicalizeServerRevision(rawRemoteUpdatedAt) ?? rawRemoteUpdatedAt.trim())
+      : null;
   const remoteTimestamp =
-    typeof remoteUpdatedAt === "string" ? Date.parse(remoteUpdatedAt) : NaN;
+    typeof canonicalRemoteUpdatedAt === "string"
+      ? Date.parse(canonicalRemoteUpdatedAt)
+      : NaN;
 
-  const localTimestamp = local?.serverUpdatedAt
-    ? Date.parse(local.serverUpdatedAt)
-    : NaN;
+  const canonicalLocalUpdatedAt =
+    typeof local?.serverUpdatedAt === "string"
+      ? (canonicalizeServerRevision(local.serverUpdatedAt) ??
+        local.serverUpdatedAt.trim())
+      : null;
+  const localTimestamp =
+    typeof canonicalLocalUpdatedAt === "string"
+      ? Date.parse(canonicalLocalUpdatedAt)
+      : NaN;
 
   if (
     local &&
@@ -1358,8 +1371,7 @@ export async function reconcileRealtimeDocument(
     Number.isFinite(localTimestamp) &&
     remoteTimestamp <= localTimestamp
   ) {
-    // Equal timestamps commonly mean a duplicate realtime notification.
-    // Older timestamps mean this message must not replace newer local data.
+    // Equal/older revisions must not replace newer local state.
     return;
   }
 
@@ -1393,7 +1405,7 @@ export async function reconcileRealtimeDocument(
     needsSync: false,
     syncStatus: "synced",
     cloudId,
-    serverUpdatedAt: remoteUpdatedAt,
+    serverUpdatedAt: canonicalRemoteUpdatedAt,
   };
 
   if (local) {
@@ -1465,7 +1477,7 @@ export async function reconcileRealtimeDocument(
            sync_status = 'synced',
            server_updated_at = ?
        WHERE id = ? AND user_id = ?`,
-      [remoteUpdatedAt, created.id, userId],
+      [canonicalRemoteUpdatedAt, created.id, userId],
     );
   }
 }
@@ -3104,6 +3116,10 @@ export async function markDocumentSyncedWithCloud(
   serverUpdatedAt: string | null,
 ): Promise<void> {
   const userId = await getLocalUserId();
+  const canonicalServerUpdatedAt =
+    typeof serverUpdatedAt === "string"
+      ? (canonicalizeServerRevision(serverUpdatedAt) ?? serverUpdatedAt.trim())
+      : serverUpdatedAt;
   await run(
     `UPDATE documents
      SET cloud_id = COALESCE(?, cloud_id),
@@ -3117,8 +3133,8 @@ export async function markDocumentSyncedWithCloud(
          END
      WHERE id = ? AND ${userId === null ? "1 = 0" : "user_id = ?"}`,
     userId === null
-      ? [cloudId, serverUpdatedAt, id]
-      : [cloudId, serverUpdatedAt, id, userId],
+      ? [cloudId, canonicalServerUpdatedAt, id]
+      : [cloudId, canonicalServerUpdatedAt, id, userId],
   );
 }
 

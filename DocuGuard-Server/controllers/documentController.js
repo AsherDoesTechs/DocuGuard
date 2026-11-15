@@ -484,7 +484,8 @@ exports.processDocument = async (req, res) => {
       UPDATE documents
       SET processing_status = 'processing',
           ocr_status = 'pending',
-          ocr_error = NULL
+          ocr_error = NULL,
+          updated_at = clock_timestamp()
       WHERE id = $1
         AND user_id = $2
       `,
@@ -514,7 +515,8 @@ exports.processDocument = async (req, res) => {
         SET processing_status = 'failed',
             ocr_status = 'failed',
             ocr_error = $3,
-            ocr_completed_at = NOW()
+            ocr_completed_at = NOW(),
+            updated_at = clock_timestamp()
         WHERE id = $1
           AND user_id = $2
         `,
@@ -567,7 +569,8 @@ exports.processDocument = async (req, res) => {
         SET processing_status = 'failed',
             ocr_status = 'failed',
             ocr_error = $3,
-            ocr_completed_at = NOW()
+            ocr_completed_at = NOW(),
+            updated_at = clock_timestamp()
         WHERE id = $1
           AND user_id = $2
         `,
@@ -622,7 +625,8 @@ exports.processDocument = async (req, res) => {
         SET processing_status = 'manual_review',
             ocr_status = 'failed',
             ocr_error = $3,
-            ocr_completed_at = NOW()
+            ocr_completed_at = NOW(),
+            updated_at = clock_timestamp()
         WHERE id = $1
           AND user_id = $2
         `,
@@ -839,7 +843,8 @@ exports.processDocument = async (req, res) => {
           SET processing_status = 'failed',
               ocr_status = 'failed',
               ocr_error = $3,
-              ocr_completed_at = NOW()
+              ocr_completed_at = NOW(),
+              updated_at = clock_timestamp()
           WHERE id = $1
             AND user_id = $2
           `,
@@ -888,7 +893,7 @@ exports.verifyDocument = async (req, res) => {
 
     const result = await db.query(
       `UPDATE documents 
-       SET status = 'verified', updated_at = CURRENT_TIMESTAMP 
+       SET status = 'verified', updated_at = clock_timestamp() 
        WHERE id = $1 AND user_id = $2 AND status <> 'deleted'
        RETURNING id, status`,
       [documentId, userId],
