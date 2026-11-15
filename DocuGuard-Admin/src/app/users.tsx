@@ -144,7 +144,8 @@ export default function AdminUsersScreen() {
       try {
         const token = await getAdminToken();
         if (!token) {
-          Alert.alert("Not signed in", "Please sign in again.");
+          if (typeof window !== "undefined") window.alert("Not signed in. Please sign in again.");
+          else Alert.alert("Not signed in", "Please sign in again.");
           router.replace("/");
           return;
         }
@@ -164,7 +165,7 @@ export default function AdminUsersScreen() {
           );
         }
         if (typeof window !== "undefined") {
-          window.alert(`User ${nextStatus === "suspended" ? "suspended" : "activated"}.`);
+          window.alert(`User ${nextStatus === "suspended" ? "suspended" : "activated"} successfully.`);
         }
       } catch (err: any) {
         const msg =
@@ -180,7 +181,7 @@ export default function AdminUsersScreen() {
     };
 
     if (typeof window !== "undefined") {
-      const ok = window.confirm(`${nextStatus === "suspended" ? "Suspend" : "Activate"} user\n\n${message}`);
+      const ok = window.confirm(`${nextStatus === "suspended" ? "Suspend" : "Activate"} user?\n\n${message}`);
       if (ok) void runUpdate();
       return;
     }
