@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useState } from "react";
+﻿import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -22,11 +22,34 @@ import { getDocumentById, type LocalDocument } from "@/services/localDatabase";
 function isImageType(fileType?: string | null, uri?: string | null) {
   const t = (fileType || "").toLowerCase();
   if (t.startsWith("image/")) return true;
-  if (t.includes("png") || t.includes("jpg") || t.includes("jpeg") || t.includes("webp") || t.includes("heic") || t.includes("heif") || t.includes("gif") || t.includes("bmp")) {
+  if (
+    t.includes("png") ||
+    t.includes("jpg") ||
+    t.includes("jpeg") ||
+    t.includes("webp") ||
+    t.includes("heic") ||
+    t.includes("heif") ||
+    t.includes("gif") ||
+    t.includes("bmp")
+  ) {
     return true;
   }
   const u = (uri || "").toLowerCase();
   return /\.(png|jpe?g|webp|heic|heif|gif|bmp)(\?|#|$)/i.test(u);
+}
+
+function inferExtension(fileType?: string | null, uri?: string | null) {
+  const t = (fileType || "").toLowerCase();
+  if (t.includes("png")) return "png";
+  if (t.includes("webp")) return "webp";
+  if (t.includes("heic")) return "heic";
+  if (t.includes("heif")) return "heif";
+  if (t.includes("gif")) return "gif";
+  if (t.includes("bmp")) return "bmp";
+  if (t.includes("jpeg") || t.includes("jpg") || t.includes("image")) return "jpg";
+  const match = (uri || "").toLowerCase().match(/\.(png|jpe?g|webp|heic|heif|gif|bmp)(\?|#|$)/i);
+  if (!match) return "jpg";
+  return match[1] === "jpeg" ? "jpg" : match[1];
 }
 
 export default function DocumentViewerScreen() {
@@ -40,6 +63,43 @@ export default function DocumentViewerScreen() {
   const [error, setError] = useState<string | null>(null);
   const [document, setDocument] = useState<LocalDocument | null>(null);
   const [fileUri, setFileUri] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState(false);
+
+  const fetchFreshRemoteUri = useCallback(async (doc: LocalDocument) => {
+    const ref = doc.cloudId ?? doc.id;
+    if (ref == null) return null;
+    try {
+      const res = await api.client.get(`/documents/${ref}/file-url`);
+      const url = res?.data?.fileUrl || res?.data?.file_url;
+      return typeof url === "string" && url.trim() ? url.trim() : null;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const resolveInitialUri = useCallback(
+    async (doc: LocalDocument): Promise<string> => {
+      const localUri =
+        doc.fileUrl &&
+        (doc.fileUrl.startsWith("file://") || doc.fileUrl.startsWith("content://"))
+          ? doc.fileUrl
+          : null;
+      if (localUri) {
+        const info = await FileSystem.getInfoAsync(localUri);
+        if (info.exists) return localUri;
+      }
+
+      if (doc.fileUrl && /^https?:\/\//i.test(doc.fileUrl)) {
+        return doc.fileUrl;
+      }
+
+      const remote = await fetchFreshRemoteUri(doc);
+      if (remote) return remote;
+
+      throw new Error("No file available to view for this document.");
+    },
+    [fetchFreshRemoteUri],
+  );
 
   useEffect(() => {
     let mounted = true;
@@ -53,37 +113,8 @@ export default function DocumentViewerScreen() {
         if (!mounted) return;
         setDocument(doc);
 
-        const localUri =
-          doc.fileUrl &&
-          (doc.fileUrl.startsWith("file://") || doc.fileUrl.startsWith("content://"))
-            ? doc.fileUrl
-            : null;
-        if (localUri) {
-          const info = await FileSystem.getInfoAsync(localUri);
-          if (info.exists) {
-            setFileUri(localUri);
-            return;
-          }
-        }
-
-        if (doc.fileUrl && /^https?:\/\//i.test(doc.fileUrl)) {
-          setFileUri(doc.fileUrl);
-          return;
-        }
-
-        const ref = doc.cloudId ?? doc.id;
-        if (ref != null) {
-          try {
-            const res = await api.client.get(`/documents/${ref}/file-url`);
-            const url = res?.data?.fileUrl;
-            if (typeof url === "string" && url) {
-              setFileUri(url);
-              return;
-            }
-          } catch {}
-        }
-
-        throw new Error("No file available to view for this document.");
+        const uri = await resolveInitialUri(doc);
+        if (mounted) setFileUri(uri);
       } catch (e: any) {
         if (mounted) setError(e?.message || "Could not open document file.");
       } finally {
@@ -93,7 +124,7 @@ export default function DocumentViewerScreen() {
     return () => {
       mounted = false;
     };
-  }, [docId]);
+  }, [docId, resolveInitialUri]);
 
   const canRenderImage = isImageType(document?.fileType, fileUri);
 
@@ -149,6 +180,39 @@ export default function DocumentViewerScreen() {
     }
   };
 
+  const handleImageError = async () => {
+    if (!document || retrying) return;
+    setRetrying(true);
+    try {
+      const freshRemote = await fetchFreshRemoteUri(document);
+      const candidate = freshRemote || fileUri;
+      if (candidate && /^https?:\/\//i.test(candidate)) {
+        const ext = inferExtension(document.fileType, candidate);
+        const baseDir = FileSystem.cacheDirectory || FileSystem.documentDirectory;
+        if (baseDir) {
+          const target = `${baseDir}doc_view_${document.id ?? document.cloudId ?? "file"}_${Date.now()}.${ext}`;
+          const result = await FileSystem.downloadAsync(candidate, target);
+          if (result.status >= 200 && result.status < 300 && result.uri) {
+            const info = await FileSystem.getInfoAsync(result.uri);
+            if (info.exists) {
+              setError(null);
+              setFileUri(result.uri);
+              return;
+            }
+          }
+        }
+        if (freshRemote && freshRemote !== fileUri) {
+          setError(null);
+          setFileUri(freshRemote);
+          return;
+        }
+      }
+      setError("Could not load this image file.");
+    } finally {
+      setRetrying(false);
+    }
+  };
+
   return (
     <SafeAreaView style={styles.container} edges={["top", "left", "right"]}>
       <View style={styles.header}>
@@ -170,6 +234,12 @@ export default function DocumentViewerScreen() {
         <View style={styles.center}>
           <Ionicons name="alert-circle-outline" size={42} color={colors.error} />
           <Text style={styles.errorText}>{error || "No file available."}</Text>
+          {fileUri ? (
+            <TouchableOpacity style={styles.button} onPress={handleOpenExternal} accessibilityRole="button">
+              <Ionicons name="open-outline" size={18} color={colors.buttonPrimaryText} />
+              <Text style={styles.buttonText}>Open with</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
       ) : canRenderImage ? (
         <ScrollView
@@ -180,11 +250,18 @@ export default function DocumentViewerScreen() {
           showsVerticalScrollIndicator={false}
         >
           <Image
+            key={fileUri}
             source={{ uri: fileUri }}
             style={styles.image}
             resizeMode="contain"
-            onError={() => setError("Could not load this image file.")}
+            onError={handleImageError}
           />
+          {retrying ? (
+            <View style={styles.retryOverlay}>
+              <ActivityIndicator size="small" color={colors.primary} />
+              <Text style={styles.mutedSmall}>Retrying image...</Text>
+            </View>
+          ) : null}
         </ScrollView>
       ) : (
         <View style={styles.center}>
@@ -221,6 +298,7 @@ const createStyles = (colors: any) =>
     viewer: { flex: 1 },
     imageContainer: { flexGrow: 1, alignItems: "center", justifyContent: "center", padding: 16 },
     image: { width: "100%", height: 600, backgroundColor: colors.surface },
+    retryOverlay: { marginTop: 12, alignItems: "center", gap: 6 },
     button: {
       marginTop: 8,
       flexDirection: "row",
