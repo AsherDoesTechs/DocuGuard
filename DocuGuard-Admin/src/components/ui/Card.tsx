@@ -48,6 +48,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "700",
     color: AdminColors.text,
+    letterSpacing: -0.2,
   },
   subtitle: {
     fontSize: 12,

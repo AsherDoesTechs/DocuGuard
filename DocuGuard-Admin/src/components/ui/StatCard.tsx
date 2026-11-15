@@ -15,8 +15,10 @@ type Props = {
 export function StatCard({ label, value, icon, color = AdminColors.primary, bg = AdminColors.primarySoft, hint }: Props) {
   return (
     <View style={styles.card}>
-      <View style={[styles.iconWrap, { backgroundColor: bg }]}>
-        <Ionicons name={icon} size={18} color={color} />
+      <View style={styles.topRow}>
+        <View style={[styles.iconWrap, { backgroundColor: bg }]}>
+          <Ionicons name={icon} size={17} color={color} />
+        </View>
       </View>
       <Text style={styles.value} numberOfLines={1}>{value}</Text>
       <Text style={styles.label} numberOfLines={1}>{label}</Text>
@@ -35,19 +37,19 @@ const styles = StyleSheet.create({
     borderColor: AdminColors.border,
     padding: 14,
   },
+  topRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 },
   iconWrap: {
-    width: 34,
-    height: 34,
+    width: 32,
+    height: 32,
     borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 10,
   },
   value: {
     fontSize: 22,
     fontWeight: "800",
     color: AdminColors.text,
-    letterSpacing: -0.3,
+    letterSpacing: -0.4,
   },
   label: {
     fontSize: 12,
