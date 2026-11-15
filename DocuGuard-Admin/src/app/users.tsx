@@ -1,11 +1,11 @@
-﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, FlatList, Pressable, RefreshControl, Share, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { getAdminUsers, updateAdminUserStatus, logoutAdmin, type AdminUser } from "../services/adminApi";
 import { getAdminToken, clearAdminToken } from "../services/adminSession";
-import { getAdminUiSettings, setAdminUiSettings, subscribeAdminUiSettings, loadAdminUiSettings, maskEmail } from "../services/adminSettings";
+import { getAdminUiSettings, setAdminUiSettings, subscribeAdminUiSettings, loadAdminUiSettings, maskEmail, maskPerson } from "../services/adminSettings";
 import { AdminBottomNav } from "../components/AdminBottomNav";
 import { AdminSettingsModal } from "../components/AdminSettingsModal";
 import { AdminColors, AdminRadii } from "../theme/adminTheme";
@@ -83,13 +83,13 @@ export default function AdminUsersScreen() {
     ]);
   };
 
-  const exportUsers = async () => { try { const rows = [["id","name","email","role","status","createdAt"].join(",")]; filteredUsers.forEach((u) => rows.push([u.id, u.name||"", ui.privacyMode ? maskEmail(u.email) : (u.email||""), u.role||"user", u.status||"active", (u as any).createdAt||""].map((v)=>`"${String(v).replace(/"/g,'""')}"`).join(","))); await Share.share({ message: rows.join("\n"), title: "Users Export" }); } catch { Alert.alert("Export unavailable", "Could not share export."); } };
+  const exportUsers = async () => { try { const rows = [["id","name","email","role","status","createdAt"].join(",")]; filteredUsers.forEach((u) => rows.push([ui.privacyMode ? maskPerson(u.id) : u.id, ui.privacyMode ? maskPerson(u.name) : (u.name||""), ui.privacyMode ? maskEmail(u.email) : (u.email||""), u.role||"user", u.status||"active", (u as any).createdAt||""].map((v)=>`"${String(v).replace(/"/g,'""')}"`).join(","))); await Share.share({ message: rows.join("\n"), title: "Users Export" }); } catch { Alert.alert("Export unavailable", "Could not share export."); } };
   const signOut = async () => { setSettingsOpen(false); try { const t = await getAdminToken(); if (t) await logoutAdmin(t); else await clearAdminToken(); } catch { await clearAdminToken(); } router.replace("/"); };
   const filters: { key: Filter; label: string }[] = [{ key: "all", label: "All" }, { key: "active", label: "Active" }, { key: "suspended", label: "Suspended" }, { key: "admin", label: "Admins" }];
   const gap = ui.compactMode ? 10 : 14;
 
   const renderItem = ({ item }: { item: AdminUser }) => {
-    const status = String(item.status || "active"); const isActive = status === "active"; const name = item.name || "Unnamed User"; const email = ui.privacyMode ? maskEmail(item.email) : item.email;
+    const status = String(item.status || "active"); const isActive = status === "active"; const name = ui.privacyMode ? (item.name ? maskPerson(item.name) : "User") : (item.name || "Unnamed User"); const email = ui.privacyMode ? maskEmail(item.email) : item.email;
     return (<View style={styles.userCard}><View style={styles.avatar}><Text style={styles.avatarText}>{(name || String(email) || "?").charAt(0).toUpperCase()}</Text></View><View style={{ flex: 1 }}><Text style={styles.userName} numberOfLines={1}>{name}</Text><Text style={styles.userEmail} numberOfLines={1}>{email || "—"}</Text><View style={styles.badgeRow}><Badge label={status} tone={isActive ? "success" : "danger"} /><Badge label={String(item.role || "user")} tone={String(item.role) === "admin" ? "primary" : "neutral"} /></View></View><Pressable style={[styles.actionBtn, isActive ? styles.suspendBtn : styles.activateBtn]} onPress={() => handleToggleStatus(item)}><Text style={[styles.actionText, isActive ? styles.suspendText : styles.activateText]}>{isActive ? "Suspend" : "Activate"}</Text></Pressable></View>);
   };
 

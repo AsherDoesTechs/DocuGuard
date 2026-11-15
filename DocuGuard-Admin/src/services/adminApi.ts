@@ -95,10 +95,29 @@ export type SystemHealthData = {
     totalFiles: number;
   };
   azureOcr: {
-    status: "operational" | "degraded" | "down" | string;
+    status: "operational" | "degraded" | "down" | "not_configured" | "configured" | "unknown" | string;
     pendingQueueCount: number;
     successRate24h: number;
+    configured?: boolean;
+    endpointConfigured?: boolean;
+    keyConfigured?: boolean;
+    completedCount?: number;
+    failedCount?: number;
+    issue?: string | null;
   };
+  subscriptions?: {
+    id: string;
+    name: string;
+    provider: string;
+    purpose: string;
+    configured: boolean;
+    expiresAt: string | null;
+    renewBy: string | null;
+    billing: string;
+    status: "active" | "expiring_soon" | "expired" | "not_configured" | string;
+    note?: string;
+    daysUntilExpiry?: number | null;
+  }[];
   lastChecked: string;
 };
 

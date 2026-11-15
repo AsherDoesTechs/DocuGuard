@@ -293,11 +293,11 @@ exports.getSystemHealth = async (req, res) => {
     const fileSizeExpr = hasColumn(docCols, "file_size")
       ? "COALESCE(SUM(file_size), 0)::bigint"
       : "0::bigint";
-    const ocrWhere = hasColumn(docCols, "ocr_status")
-      ? `ocr_status = 'pending' AND ${whereStatus}`
-      : "FALSE";
+    const hasOcrStatus = hasColumn(docCols, "ocr_status") || hasColumn(docCols, "ocrStatus");
+    const hasCreated = hasColumn(docCols, "created_at");
+    const hasUpdated = hasColumn(docCols, "updated_at");
 
-    const [storageResult, ocrQueueResult] = await Promise.all([
+    const [storageResult, ocrStatsResult] = await Promise.all([
       db.query(
         `SELECT
            COUNT(*)::int AS "totalFiles",
@@ -305,32 +305,147 @@ exports.getSystemHealth = async (req, res) => {
          FROM public.documents
          WHERE ${whereStatus}`,
       ),
-      db.query(
-        `SELECT COUNT(*)::int AS "pendingCount"
-         FROM public.documents
-         WHERE ${ocrWhere}`,
-      ),
+      hasOcrStatus
+        ? db.query(
+            `SELECT
+               COUNT(*) FILTER (WHERE LOWER(COALESCE(ocr_status::text, 'pending')) = 'pending')::int AS "pendingCount",
+               COUNT(*) FILTER (WHERE LOWER(COALESCE(ocr_status::text, '')) = 'completed')::int AS "completedCount",
+               COUNT(*) FILTER (WHERE LOWER(COALESCE(ocr_status::text, '')) NOT IN ('completed','pending','unknown',''))::int AS "failedCount",
+               COUNT(*)::int AS "totalCount",
+               COUNT(*) FILTER (
+                 WHERE LOWER(COALESCE(ocr_status::text, '')) = 'completed'
+                   AND ${hasUpdated ? "COALESCE(updated_at, created_at)" : hasCreated ? "created_at" : "NOW()"} >= NOW() - INTERVAL '24 hours'
+               )::int AS "completed24h",
+               COUNT(*) FILTER (
+                 WHERE LOWER(COALESCE(ocr_status::text, '')) NOT IN ('completed','pending','unknown','')
+                   AND ${hasUpdated ? "COALESCE(updated_at, created_at)" : hasCreated ? "created_at" : "NOW()"} >= NOW() - INTERVAL '24 hours'
+               )::int AS "failed24h"
+             FROM public.documents
+             WHERE ${whereStatus}`,
+          )
+        : Promise.resolve({ rows: [{}] }),
     ]);
+
+    const azureEndpoint = String(process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT || process.env.AZURE_ENDPOINT || "").trim();
+    const azureKey = String(process.env.AZURE_DOCUMENT_INTELLIGENCE_KEY || process.env.AZURE_KEY || "").trim();
+    const azureConfigured = Boolean(azureEndpoint && azureKey);
+    const ocr = ocrStatsResult.rows[0] || {};
+    const pendingQueueCount = Number(ocr.pendingCount || 0);
+    const completedCount = Number(ocr.completedCount || 0);
+    const failedCount = Number(ocr.failedCount || 0);
+    const completed24h = Number(ocr.completed24h || 0);
+    const failed24h = Number(ocr.failed24h || 0);
+    const finished24h = completed24h + failed24h;
+    const finishedAll = completedCount + failedCount;
+    const successRate24h = finished24h > 0 ? Math.round((completed24h / finished24h) * 1000) / 10 : finishedAll > 0 ? Math.round((completedCount / finishedAll) * 1000) / 10 : 0;
+
+    let azureStatus = "unknown";
+    let azureIssue = "";
+    if (!azureConfigured) {
+      azureStatus = "not_configured";
+      azureIssue = "Azure Document Intelligence credentials are not configured on the server (AZURE_ENDPOINT/AZURE_KEY or AZURE_DOCUMENT_INTELLIGENCE_*).";
+    } else if (!hasOcrStatus) {
+      azureStatus = "configured";
+      azureIssue = "Azure credentials are configured, but OCR status tracking is unavailable in the current database schema.";
+    } else if (failedCount > 0 && failedCount >= Math.max(3, Math.ceil((completedCount + failedCount) * 0.2))) {
+      azureStatus = "degraded";
+      azureIssue = "High OCR failure rate detected in recent document processing.";
+    } else if (pendingQueueCount > 25) {
+      azureStatus = "degraded";
+      azureIssue = "OCR processing backlog is elevated.";
+    } else {
+      azureStatus = "operational";
+    }
+
+    const daysUntil = (iso) => {
+      if (!iso) return null;
+      const t = new Date(iso).getTime();
+      if (!Number.isFinite(t)) return null;
+      return Math.ceil((t - Date.now()) / 86400000);
+    };
+    const serviceStatusFromExpiry = (expiresAt, configured = true) => {
+      if (!configured) return "not_configured";
+      const d = daysUntil(expiresAt);
+      if (d == null) return "active";
+      if (d < 0) return "expired";
+      if (d <= 14) return "expiring_soon";
+      return "active";
+    };
+
+    const subscriptions = [
+      {
+        id: "azure-ocr",
+        name: "Azure Document Intelligence",
+        provider: "Microsoft Azure",
+        purpose: "OCR and document extraction",
+        configured: azureConfigured,
+        expiresAt: process.env.AZURE_SUBSCRIPTION_EXPIRES_AT || null,
+        renewBy: process.env.AZURE_SUBSCRIPTION_RENEW_BY || process.env.AZURE_SUBSCRIPTION_EXPIRES_AT || null,
+        billing: process.env.AZURE_BILLING_CYCLE || "monthly",
+        status: serviceStatusFromExpiry(process.env.AZURE_SUBSCRIPTION_EXPIRES_AT || null, azureConfigured),
+        note: azureIssue || (azureConfigured ? "Credentials detected on server." : "Set AZURE_ENDPOINT and AZURE_KEY on the API server."),
+      },
+      {
+        id: "render-api",
+        name: "Render Web Service (API)",
+        provider: "Render",
+        purpose: "DocuGuard backend hosting",
+        configured: true,
+        expiresAt: process.env.RENDER_SUBSCRIPTION_EXPIRES_AT || null,
+        renewBy: process.env.RENDER_SUBSCRIPTION_RENEW_BY || process.env.RENDER_SUBSCRIPTION_EXPIRES_AT || null,
+        billing: process.env.RENDER_BILLING_CYCLE || "monthly",
+        status: serviceStatusFromExpiry(process.env.RENDER_SUBSCRIPTION_EXPIRES_AT || null, true),
+        note: process.env.RENDER_SERVICE_ID ? "Running on Render service." : "Hosted service; set renewal date env vars to track expiry.",
+      },
+      {
+        id: "supabase",
+        name: "Supabase (DB/Auth/Storage)",
+        provider: "Supabase",
+        purpose: "Database, auth, and file storage",
+        configured: Boolean(process.env.SUPABASE_URL || process.env.DATABASE_URL),
+        expiresAt: process.env.SUPABASE_SUBSCRIPTION_EXPIRES_AT || null,
+        renewBy: process.env.SUPABASE_SUBSCRIPTION_RENEW_BY || process.env.SUPABASE_SUBSCRIPTION_EXPIRES_AT || null,
+        billing: process.env.SUPABASE_BILLING_CYCLE || "monthly",
+        status: serviceStatusFromExpiry(process.env.SUPABASE_SUBSCRIPTION_EXPIRES_AT || null, Boolean(process.env.SUPABASE_URL || process.env.DATABASE_URL)),
+        note: "Core data service.",
+      },
+      {
+        id: "resend",
+        name: "Resend Email",
+        provider: "Resend",
+        purpose: "Verification and reminder emails",
+        configured: Boolean(process.env.RESEND_API_KEY),
+        expiresAt: process.env.RESEND_SUBSCRIPTION_EXPIRES_AT || null,
+        renewBy: process.env.RESEND_SUBSCRIPTION_RENEW_BY || process.env.RESEND_SUBSCRIPTION_EXPIRES_AT || null,
+        billing: process.env.RESEND_BILLING_CYCLE || "monthly",
+        status: serviceStatusFromExpiry(process.env.RESEND_SUBSCRIPTION_EXPIRES_AT || null, Boolean(process.env.RESEND_API_KEY)),
+        note: process.env.RESEND_API_KEY ? "API key configured." : "RESEND_API_KEY missing; email delivery unavailable.",
+      },
+    ].map((s) => ({ ...s, daysUntilExpiry: daysUntil(s.expiresAt) }));
 
     return res.json({
       status: "ok",
       health: {
         status: dbStatus === "connected" ? "healthy" : "critical",
         uptime: `${Math.floor(process.uptime())}s`,
-        database: {
-          status: dbStatus,
-          latencyMs,
-        },
+        database: { status: dbStatus, latencyMs },
         supabaseStorage: {
           status: "operational",
           totalFiles: storageResult.rows[0]?.totalFiles || 0,
           bucketUsageBytes: Number(storageResult.rows[0]?.bucketUsageBytes || 0),
         },
         azureOcr: {
-          status: hasColumn(docCols, "ocr_status") ? "operational" : "unknown",
-          pendingQueueCount: ocrQueueResult.rows[0]?.pendingCount || 0,
-          successRate24h: hasColumn(docCols, "ocr_status") ? 99.4 : 0,
+          status: azureStatus,
+          configured: azureConfigured,
+          endpointConfigured: Boolean(azureEndpoint),
+          keyConfigured: Boolean(azureKey),
+          pendingQueueCount,
+          successRate24h,
+          completedCount,
+          failedCount,
+          issue: azureIssue || null,
         },
+        subscriptions,
         lastChecked: new Date().toISOString(),
       },
     });

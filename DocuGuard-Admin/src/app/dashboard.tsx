@@ -3,7 +3,7 @@ import { Alert, Pressable, RefreshControl, ScrollView, Share, StyleSheet, Text, 
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { getAdminDocuments, getAdminLogs, getAdminOverview, getAdminUsers, logoutAdmin, type AdminMetrics, type AuditLogEntry, type VaultDocument, type AdminUser } from "../services/adminApi";
+import { getAdminDocuments, getAdminLogs, getAdminOverview, getAdminSystemHealth, getAdminUsers, logoutAdmin, type AdminMetrics, type AuditLogEntry, type VaultDocument, type AdminUser, type SystemHealthData } from "../services/adminApi";
 import { clearAdminToken, getAdminToken } from "../services/adminSession";
 import { getAdminUiSettings, subscribeAdminUiSettings, loadAdminUiSettings, setAdminUiSettings } from "../services/adminSettings";
 import { AdminBottomNav } from "../components/AdminBottomNav";
@@ -18,6 +18,7 @@ export default function AdminDashboardScreen() {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [docs, setDocs] = useState<VaultDocument[]>([]);
   const [logs, setLogs] = useState<AuditLogEntry[]>([]);
+  const [health, setHealth] = useState<SystemHealthData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -35,13 +36,14 @@ export default function AdminDashboardScreen() {
     try {
       const token = await getAdminToken();
       if (!token) { router.replace("/"); return; }
-      const [overviewRes, usersRes, docsRes, logsRes] = await Promise.allSettled([getAdminOverview(token), getAdminUsers(token), getAdminDocuments(token), getAdminLogs(token)]);
+      const [overviewRes, usersRes, docsRes, logsRes, healthRes] = await Promise.allSettled([getAdminOverview(token), getAdminUsers(token), getAdminDocuments(token), getAdminLogs(token), getAdminSystemHealth(token)]);
       let ok = 0; const failures: string[] = [];
       if (overviewRes.status === "fulfilled") { ok++; setMetrics((overviewRes.value as any).metrics ?? (overviewRes.value as any)); } else failures.push("overview");
       if (usersRes.status === "fulfilled") { ok++; const d = usersRes.value as any; setUsers(Array.isArray(d) ? d : d?.users || []); } else failures.push("users");
       if (docsRes.status === "fulfilled") { ok++; const d = docsRes.value as any; setDocs(Array.isArray(d) ? d : d?.documents || []); } else failures.push("documents");
       if (logsRes.status === "fulfilled") { ok++; const d = logsRes.value as any; setLogs(Array.isArray(d) ? d : d?.logs || []); } else failures.push("logs");
-      if (!ok) { const firstErr = [overviewRes, usersRes, docsRes, logsRes].map((r) => r.status === "rejected" ? r.reason : null).find(Boolean); throw firstErr instanceof Error ? firstErr : new Error("Unable to load admin data."); }
+      if (healthRes.status === "fulfilled") { ok++; setHealth(((healthRes.value as any).health ?? (healthRes.value as any)) as SystemHealthData); } else failures.push("health");
+      if (!ok) { const firstErr = [overviewRes, usersRes, docsRes, logsRes, healthRes].map((r) => r.status === "rejected" ? r.reason : null).find(Boolean); throw firstErr instanceof Error ? firstErr : new Error("Unable to load admin data."); }
       if (failures.length) setPartialMessage(`Partial data: ${failures.join(", ")} unavailable.`);
       setLastSync(new Date());
     } catch (error) { if (!silent) setErrorMessage(error instanceof Error ? error.message : "Unable to load dashboard."); }
@@ -56,11 +58,12 @@ export default function AdminDashboardScreen() {
   }, [ui.autoSync, load]);
 
   const handleSignOut = async () => { setSettingsOpen(false); try { const token = await getAdminToken(); if (token) await logoutAdmin(token); else await clearAdminToken(); } catch { await clearAdminToken(); } router.replace("/"); };
-  const exportSummary = async () => { try { await Share.share({ message: [`DocuGuard Admin Summary - ${new Date().toISOString()}`, `Users: ${metrics?.totalUsers ?? users.length}`, `Documents: ${metrics?.totalDocuments ?? docs.length}`, `Logs loaded: ${logs.length}`, `Last sync: ${lastSync ? lastSync.toISOString() : "n/a"}`].join("\n"), title: "Admin Summary" }); } catch { Alert.alert("Export unavailable", "Could not share summary."); } };
+  const exportSummary = async () => { try { const subs = (health?.subscriptions||[]).map((s)=>`${s.name}: ${s.status}${s.expiresAt?` (expires ${s.expiresAt})`:""}`).join(" | "); await Share.share({ message: [`DocuGuard Admin Summary - ${new Date().toISOString()}`, `Users: ${metrics?.totalUsers ?? users.length}`, `Documents: ${metrics?.totalDocuments ?? docs.length}`, `Logs loaded: ${logs.length}`, `Azure OCR: ${health?.azureOcr?.status || "unknown"}`, `Subscriptions: ${subs || "n/a"}`, `Last sync: ${lastSync ? lastSync.toISOString() : "n/a"}`].join("\n"), title: "Admin Summary" }); } catch { Alert.alert("Export unavailable", "Could not share summary."); } };
 
   const analytics = useMemo(() => {
     const totalUsers = metrics?.totalUsers ?? users.length; const totalDocs = metrics?.totalDocuments ?? docs.length;
     const activeUsers = users.filter((u) => String(u.status || "active") === "active").length;
+    const suspendedUsers = users.filter((u) => String(u.status) === "suspended").length;
     const ocrCompleted = docs.filter((d) => String(d.ocrStatus) === "completed").length;
     const ocrPending = docs.filter((d) => String(d.ocrStatus) === "pending").length;
     const ocrFailed = docs.filter((d) => !["completed", "pending", "unknown"].includes(String(d.ocrStatus))).length;
@@ -79,8 +82,16 @@ export default function AdminDashboardScreen() {
     if (ocrFailed > 0) insights.push(`${ocrFailed} document${ocrFailed>1?"s":""} with OCR issues.`);
     if (critical24h > 0) insights.push(`${critical24h} critical event${critical24h>1?"s":""} in last 24h.`);
     if (!insights.length) insights.push("Operations stable based on loaded data.");
-    return { totalUsers, totalDocs, activeUsers, ocrCompleted, ocrPending, ocrFailed, ocrRate, recentLogs, critical24h, warning24h, last7, categories, riskLevel, riskTone, insights };
+    return { totalUsers, totalDocs, activeUsers, suspendedUsers, ocrCompleted, ocrPending, ocrFailed, ocrRate, recentLogs, critical24h, warning24h, last7, categories, riskLevel, riskTone, insights };
   }, [metrics, users, docs, logs]);
+
+  const serviceSummary = useMemo(() => {
+    const subs = health?.subscriptions || [];
+    const expiring = subs.filter((s) => s.status === "expiring_soon");
+    const expired = subs.filter((s) => s.status === "expired");
+    const azure = health?.azureOcr;
+    return { subs, expiring, expired, azureStatus: String(azure?.status || "unknown"), azureIssue: azure?.issue || null };
+  }, [health]);
 
   const gap = ui.compactMode ? 10 : 14;
   const quickActions = [{ label: "Users", icon: "people-outline" as const, route: "/users" }, { label: "Documents", icon: "folder-open-outline" as const, route: "/documents" }, { label: "Logs", icon: "shield-checkmark-outline" as const, route: "/logs" }, { label: "Health", icon: "pulse-outline" as const, route: "/health" }];
@@ -98,8 +109,24 @@ export default function AdminDashboardScreen() {
           ) : (
             <>
               {!!partialMessage && <Card style={{ paddingVertical: 12 }}><View style={styles.partialRow}><Ionicons name="warning-outline" size={16} color={AdminColors.warning} /><Text style={styles.partialTitle}>{partialMessage}</Text></View></Card>}
-              <View style={[styles.row, { gap: ui.compactMode ? 8 : 12 }]}><StatCard label="Total Users" value={analytics.totalUsers} icon="people-outline" color={AdminColors.primary} bg={AdminColors.primarySoft} hint={`${analytics.activeUsers} active`} /><StatCard label="Documents" value={analytics.totalDocs} icon="folder-open-outline" color={AdminColors.chart4} bg="#F3EEFF" hint={`${analytics.ocrRate}% OCR`} /></View>
+              {ui.privacyMode && <View style={styles.privacyBanner}><Ionicons name="shield-checkmark-outline" size={14} color={AdminColors.primary} /><Text style={styles.privacyBannerText}>Privacy mode on: personal identifiers masked. Admins cannot access user document contents.</Text></View>}
+              <View style={[styles.row, { gap: ui.compactMode ? 8 : 12 }]}><StatCard label="Total Users" value={analytics.totalUsers} icon="people-outline" color={AdminColors.primary} bg={AdminColors.primarySoft} hint={`${analytics.activeUsers} active · ${analytics.suspendedUsers} suspended`} /><StatCard label="Documents" value={analytics.totalDocs} icon="folder-open-outline" color={AdminColors.chart4} bg="#F3EEFF" hint={`${analytics.ocrRate}% OCR`} /></View>
               <View style={[styles.row, { gap: ui.compactMode ? 8 : 12 }]}><StatCard label="OCR Backlog" value={analytics.ocrPending} icon="scan-outline" color={AdminColors.warning} bg={AdminColors.warningSoft} hint={`${analytics.ocrCompleted} done`} /><StatCard label="Events (7d)" value={analytics.recentLogs.length} icon="pulse-outline" color={AdminColors.success} bg={AdminColors.successSoft} hint={`${analytics.critical24h} critical`} /></View>
+
+              <Card title="Services & subscriptions" subtitle="OCR status and paid service renewals" right={<Pressable onPress={() => router.push("/health" as any)}><Text style={styles.link}>Details</Text></Pressable>}>
+                <View style={{ gap: 10 }}>
+                  <View style={styles.serviceLine}><View style={{ flex: 1 }}><Text style={styles.serviceName}>Azure Document Intelligence (OCR)</Text><Text style={styles.serviceMeta}>{serviceSummary.azureIssue || (serviceSummary.azureStatus === "operational" ? "Configured and operational" : serviceSummary.azureStatus === "not_configured" ? "Not detected on server env" : "Check configuration/status")}</Text></View><Badge label={serviceSummary.azureStatus.replace("_"," ")} tone={serviceSummary.azureStatus==="operational"?"success":serviceSummary.azureStatus==="not_configured"?"danger":"warning"} /></View>
+                  {(serviceSummary.expired.length > 0 || serviceSummary.expiring.length > 0) ? (
+                    <View style={styles.alertBox}><Ionicons name="alert-circle-outline" size={16} color={AdminColors.warning} /><Text style={styles.alertText}>{serviceSummary.expired.length} expired, {serviceSummary.expiring.length} expiring soon. Review renewals in Health.</Text></View>
+                  ) : serviceSummary.subs.length ? <Text style={styles.muted}>No subscriptions expiring soon. {serviceSummary.subs.filter((s)=>!s.expiresAt).length} service(s) need renewal dates set on server.</Text> : <Text style={styles.muted}>Subscription data unavailable.</Text>}
+                  {serviceSummary.subs.slice(0,3).map((s) => {
+                    const due = s.daysUntilExpiry == null ? "date not set" : s.daysUntilExpiry < 0 ? `${Math.abs(s.daysUntilExpiry)}d overdue` : `${s.daysUntilExpiry}d left`;
+                    const tone = s.status === "active" ? "success" : s.status === "expiring_soon" ? "warning" : s.status === "expired" ? "danger" : "neutral";
+                    return <View key={s.id} style={styles.subMini}><Text style={styles.subMiniName} numberOfLines={1}>{s.name}</Text><Text style={styles.subMiniMeta}>{s.renewBy ? `Renew by ${new Date(s.renewBy).toLocaleDateString()}` : "Renewal date not set"} · {due}</Text><Badge label={s.status.replace("_"," ")} tone={tone as any} /></View>;
+                  })}
+                </View>
+              </Card>
+
               <Card title="Security posture"><View style={styles.riskHeader}><Text style={styles.riskLabel}>Risk level</Text><Badge label={analytics.riskLevel} tone={analytics.riskTone as any} /></View>{ui.showInsights && <View style={styles.insights}>{analytics.insights.map((ins, i) => (<View key={i} style={styles.insightRow}><Ionicons name="sparkles-outline" size={14} color={AdminColors.primary} /><Text style={styles.insightText}>{ins}</Text></View>))}</View>}</Card>
               <Card title="Audit activity (7 days)">{logs.length ? <BarChart data={analytics.last7} height={110} /> : <Text style={styles.muted}>No log data.</Text>}</Card>
               <Card title="Categories">{analytics.categories.length ? <BreakdownList segments={analytics.categories.map(([label, value], i) => ({ label: label.charAt(0).toUpperCase()+label.slice(1), value, color: [AdminColors.chart1,AdminColors.chart2,AdminColors.chart3,AdminColors.chart4,AdminColors.chart5,AdminColors.chart6][i%6] }))} /> : <Text style={styles.muted}>No category data.</Text>}</Card>
@@ -111,7 +138,7 @@ export default function AdminDashboardScreen() {
         </ScrollView>
         <AdminBottomNav />
       </View>
-      <AdminSettingsModal visible={settingsOpen} onClose={() => setSettingsOpen(false)} ui={ui} lastSync={lastSync} onSyncNow={() => void load(false, true)} onSignOut={handleSignOut} extra={<View><Pressable style={styles.settingAction} onPress={() => { setSettingsOpen(false); exportSummary(); }}><Ionicons name="share-outline" size={16} color={AdminColors.text} /><Text style={styles.settingActionText}>Export dashboard summary</Text></Pressable><Pressable style={styles.settingAction} onPress={() => { setAdminUiSettings({ compactMode: !ui.compactMode }); }}><Ionicons name="resize-outline" size={16} color={AdminColors.text} /><Text style={styles.settingActionText}>Toggle compact layout</Text></Pressable></View>} />
+      <AdminSettingsModal visible={settingsOpen} onClose={() => setSettingsOpen(false)} ui={ui} lastSync={lastSync} onSyncNow={() => void load(false, true)} onSignOut={handleSignOut} extra={<View><Pressable style={styles.settingAction} onPress={() => { setSettingsOpen(false); exportSummary(); }}><Ionicons name="share-outline" size={16} color={AdminColors.text} /><Text style={styles.settingActionText}>Export dashboard summary</Text></Pressable><Pressable style={styles.settingAction} onPress={() => { setSettingsOpen(false); router.push("/health" as any); }}><Ionicons name="card-outline" size={16} color={AdminColors.text} /><Text style={styles.settingActionText}>Open subscriptions & service health</Text></Pressable><Pressable style={styles.settingAction} onPress={() => { setSettingsOpen(false); setAdminUiSettings({ compactMode: !ui.compactMode }); }}><Ionicons name="resize-outline" size={16} color={AdminColors.text} /><Text style={styles.settingActionText}>Toggle compact layout</Text></Pressable><Pressable style={styles.settingAction} onPress={() => setAdminUiSettings({ privacyMode: !ui.privacyMode })}><Ionicons name="eye-off-outline" size={16} color={AdminColors.text} /><Text style={styles.settingActionText}>{ui.privacyMode ? "Disable privacy masking" : "Enable privacy masking"}</Text></Pressable></View>} />
     </SafeAreaView>
   );
 }
@@ -124,6 +151,7 @@ const styles = StyleSheet.create({
   muted: { fontSize: 13, color: AdminColors.textSecondary, lineHeight: 19 }, errorTitle: { fontSize: 16, fontWeight: "700", color: AdminColors.dangerText, marginBottom: 4 },
   partialRow: { flexDirection: "row", alignItems: "center", gap: 6 }, partialTitle: { fontSize: 13, fontWeight: "600", color: AdminColors.warningText },
   retryBtn: { alignSelf: "flex-start", marginTop: 12, backgroundColor: AdminColors.primary, paddingHorizontal: 14, paddingVertical: 10, borderRadius: AdminRadii.sm }, retryText: { color: "#fff", fontWeight: "700", fontSize: 13 },
+  privacyBanner: { flexDirection: "row", alignItems: "center", gap: 8, padding: 10, borderRadius: 10, backgroundColor: AdminColors.primarySoft, borderWidth: 1, borderColor: "#BFDBFE" }, privacyBannerText: { flex: 1, fontSize: 12, color: AdminColors.primaryDark, lineHeight: 17 },
   riskHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }, riskLabel: { fontSize: 14, fontWeight: "700", color: AdminColors.text },
   insights: { gap: 8, borderTopWidth: 1, borderTopColor: AdminColors.border, paddingTop: 10 }, insightRow: { flexDirection: "row", gap: 8, alignItems: "flex-start" }, insightText: { flex: 1, fontSize: 13, color: AdminColors.textSecondary, lineHeight: 18 },
   progressLabelRow: { flexDirection: "row", justifyContent: "space-between" }, progressLabel: { fontSize: 12, color: AdminColors.textSecondary }, progressPct: { fontSize: 12, fontWeight: "700", color: AdminColors.text },
@@ -131,5 +159,9 @@ const styles = StyleSheet.create({
   quickGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   actionCard: { width: "48%", flexGrow: 1, flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: AdminColors.surface, borderWidth: 1, borderColor: AdminColors.border, borderRadius: AdminRadii.lg, padding: 12 },
   actionIcon: { width: 34, height: 34, borderRadius: 10, alignItems: "center", justifyContent: "center", backgroundColor: AdminColors.primarySoft }, actionLabel: { flex: 1, fontSize: 14, fontWeight: "700", color: AdminColors.text },
+  link: { fontSize: 13, fontWeight: "700", color: AdminColors.primary },
+  serviceLine: { flexDirection: "row", alignItems: "flex-start", gap: 10 }, serviceName: { fontSize: 14, fontWeight: "700", color: AdminColors.text }, serviceMeta: { fontSize: 12, color: AdminColors.textSecondary, marginTop: 2, lineHeight: 17 },
+  alertBox: { flexDirection: "row", gap: 8, alignItems: "flex-start", padding: 10, borderRadius: 10, backgroundColor: AdminColors.warningSoft }, alertText: { flex: 1, fontSize: 12, color: AdminColors.warningText, lineHeight: 17 },
+  subMini: { paddingTop: 10, borderTopWidth: 1, borderTopColor: AdminColors.border, gap: 4 }, subMiniName: { fontSize: 13, fontWeight: "700", color: AdminColors.text }, subMiniMeta: { fontSize: 12, color: AdminColors.textSecondary },
   settingAction: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: AdminColors.border }, settingActionText: { fontSize: 14, color: AdminColors.text, fontWeight: "500" },
 });

@@ -1,11 +1,11 @@
-﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, FlatList, Pressable, RefreshControl, Share, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { getAdminDocuments, logoutAdmin, type VaultDocument } from "../services/adminApi";
 import { getAdminToken, clearAdminToken } from "../services/adminSession";
-import { getAdminUiSettings, setAdminUiSettings, subscribeAdminUiSettings, loadAdminUiSettings, maskEmail } from "../services/adminSettings";
+import { getAdminUiSettings, setAdminUiSettings, subscribeAdminUiSettings, loadAdminUiSettings, maskEmail, maskPerson } from "../services/adminSettings";
 import { AdminBottomNav } from "../components/AdminBottomNav";
 import { AdminSettingsModal } from "../components/AdminSettingsModal";
 import { AdminColors, AdminRadii } from "../theme/adminTheme";
@@ -76,13 +76,13 @@ export default function AdminDocumentsScreen() {
     return list;
   }, [documents, searchQuery, ocrFilter, categoryFilter, sort]);
 
-  const exportDocs = async () => { try { const rows = [["id","title","fileName","category","ownerEmail","ocrStatus","fileSize","createdAt"].join(",")]; filteredDocs.forEach((d) => rows.push([d.id, d.title||"", d.fileName||"", (d as any).category||"other", ui.privacyMode ? maskEmail(d.ownerEmail) : (d.ownerEmail||""), d.ocrStatus||"", d.fileSize||0, (d as any).createdAt||""].map((v)=>`"${String(v).replace(/"/g,'""')}"`).join(","))); await Share.share({ message: rows.join("\n"), title: "Documents Export" }); } catch { Alert.alert("Export unavailable", "Could not share export."); } };
+  const exportDocs = async () => { try { const rows = [["id","title","fileName","category","ownerEmail","ocrStatus","fileSize","createdAt"].join(",")]; filteredDocs.forEach((d) => rows.push([ui.privacyMode ? maskPerson(d.id) : d.id, d.title||"", ui.privacyMode ? "restricted" : (d.fileName||""), (d as any).category||"other", ui.privacyMode ? maskPerson(d.ownerEmail) : (d.ownerEmail||""), d.ocrStatus||"", d.fileSize||0, (d as any).createdAt||""].map((v)=>`"${String(v).replace(/"/g,'""')}"`).join(","))); await Share.share({ message: rows.join("\n"), title: "Documents Export" }); } catch { Alert.alert("Export unavailable", "Could not share export."); } };
   const signOut = async () => { setSettingsOpen(false); try { const t = await getAdminToken(); if (t) await logoutAdmin(t); else await clearAdminToken(); } catch { await clearAdminToken(); } router.replace("/"); };
   const gap = ui.compactMode ? 10 : 14;
 
   const renderItem = ({ item }: { item: VaultDocument }) => {
     const ocr = String(item.ocrStatus || "pending"); const tone = ocr === "completed" ? "success" : ocr === "pending" ? "warning" : "danger"; const cat = String((item as any).category || "other").toLowerCase();
-    return (<View style={styles.docCard}><View style={styles.iconBox}><Ionicons name="document-text-outline" size={20} color={AdminColors.primary} /></View><View style={{ flex: 1 }}><Text style={styles.docTitle} numberOfLines={1}>{item.title || item.fileName || "Untitled"}</Text><Text style={styles.docMeta} numberOfLines={1}>{ui.privacyMode ? maskEmail(item.ownerEmail) : (item.ownerEmail || "Unknown owner")} · {fmtBytes(Number(item.fileSize || 0))}</Text><View style={{ flexDirection: "row", gap: 6, marginTop: 6, flexWrap: "wrap" }}><Badge label={ocr} tone={tone as any} /><Badge label={catLabel(cat)} tone="neutral" /></View></View></View>);
+    return (<View style={styles.docCard}><View style={styles.iconBox}><Ionicons name="document-text-outline" size={20} color={AdminColors.primary} /></View><View style={{ flex: 1 }}><Text style={styles.docTitle} numberOfLines={1}>{item.title || item.fileName || "Untitled"}</Text><Text style={styles.docMeta} numberOfLines={1}>{ui.privacyMode ? maskPerson(item.ownerEmail) : (item.ownerEmail || "Unknown owner")} · {fmtBytes(Number(item.fileSize || 0))}</Text><View style={{ flexDirection: "row", gap: 6, marginTop: 6, flexWrap: "wrap" }}><Badge label={ocr} tone={tone as any} /><Badge label={catLabel(cat)} tone="neutral" /></View></View></View>);
   };
 
   return (

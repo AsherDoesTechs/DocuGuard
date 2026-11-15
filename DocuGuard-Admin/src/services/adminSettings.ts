@@ -29,3 +29,12 @@ export function maskEmail(email?: string | null) {
   if (at <= 1) return e ? "•••@•••" : "—";
   return `${e.slice(0, 1)}•••${e.slice(Math.max(1, at - 1), at)}${e.slice(at)}`;
 }
+
+export function maskPerson(value?: string | number | null) {
+  const s = String(value ?? "").trim();
+  if (!s) return "—";
+  if (s.includes("@")) return maskEmail(s);
+  if (/^\d+$/.test(s)) return `ID ••${s.slice(-2)}`;
+  if (s.length <= 2) return "•••";
+  return `${s.slice(0, 1)}•••${s.slice(-1)}`;
+}
