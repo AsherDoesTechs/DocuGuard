@@ -355,7 +355,29 @@ exports.getSystemHealth = async (req, res) => {
           : Promise.resolve({ rows: [{}] }),
     ]);
 
-    const bucketUsageBytes = Number(storageResult.rows[0]?.bucketUsageBytes || 0);
+    let bucketUsageBytes = Number(storageResult.rows[0]?.bucketUsageBytes || 0);
+    if (bucketUsageBytes <= 0 && hasColumn(docCols, "s3_key")) {
+      try {
+        const keysRes = await db.query(
+          `SELECT DISTINCT s3_key FROM public.documents WHERE ${whereStatus} AND s3_key IS NOT NULL AND s3_key <> '' LIMIT 50`,
+        );
+        const { getObjectMetadata } = require("../services/storageService");
+        let total = BigInt(0);
+        for (const r of keysRes.rows) {
+          try {
+            const meta = await getObjectMetadata(r.s3_key);
+            if (meta && typeof meta.size === "number" && Number.isFinite(meta.size) && meta.size >= 0) {
+              total += BigInt(Math.floor(meta.size));
+            }
+          } catch (_e) {
+            /* best effort */
+          }
+        }
+        if (total > BigInt(0)) bucketUsageBytes = Number(total);
+      } catch (_e) {
+        /* ignore */
+      }
+    }
 
     const azureEndpoint = String(process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT || process.env.AZURE_ENDPOINT || "").trim();
     const azureKey = String(process.env.AZURE_DOCUMENT_INTELLIGENCE_KEY || process.env.AZURE_KEY || "").trim();
