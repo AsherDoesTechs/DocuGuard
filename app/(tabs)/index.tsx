@@ -298,6 +298,25 @@ export default function HomeScreen() {
 
       setRecentDocs(sortedRecent);
 
+      const previewResults = await Promise.all(
+        sortedRecent.map(async (doc: any, index: number) => {
+          const key = getRecentDocKey(doc, index);
+          try {
+            const uri = await resolveRecentPreviewUri(doc);
+            return { key, uri };
+          } catch {
+            return { key, uri: null };
+          }
+        }),
+      );
+      setRecentPreviewUris((prev) => {
+        const next: Record<string, string | null> = { ...prev };
+        for (const { key, uri } of previewResults) {
+          next[key] = uri;
+        }
+        return next;
+      });
+
       // ðŸ”” Directly evaluate active documents to guarantee action items appear for expired or expiring docs
       const dynamicUrgentReminders: Reminder[] = [];
 
@@ -681,7 +700,7 @@ export default function HomeScreen() {
                     const isImagePreview =
                       !!resolvedPreviewUri &&
                       (fileType.includes("image") ||
-                        /\.(jpg|jpeg|png|webp|heic|heif)(\?|$)/i.test(
+                        /\.(jpg|jpeg|png|webp|heic|heif|gif|bmp)(\?|$)/i.test(
                           resolvedPreviewUri,
                         ));
 
