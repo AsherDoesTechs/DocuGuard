@@ -162,6 +162,9 @@ exports.getDocuments = async (req, res) => {
     const createdExpr = hasColumn(cols, "created_at")
       ? `d.created_at AS "createdAt"`
       : "NULL::timestamptz AS \"createdAt\"";
+    const categoryExpr = hasColumn(cols, "category")
+      ? `COALESCE(NULLIF(d.category, ''), 'other') AS category`
+      : "'other'::text AS category";
     const ownerExpr = hasColumn(userCols, "email") ? `u.email AS "ownerEmail"` : "NULL::text AS \"ownerEmail\"";
     const whereStatus = hasColumn(cols, "status")
       ? "COALESCE(d.status, 'active') <> 'deleted'"
@@ -176,12 +179,13 @@ exports.getDocuments = async (req, res) => {
          ${fileSizeExpr},
          ${ownerExpr},
          ${ocrExpr},
+         ${categoryExpr},
          ${createdExpr}
        FROM public.documents d
        LEFT JOIN public.users u ON d.user_id = u.id
        WHERE ${whereStatus}
        ORDER BY ${orderBy}
-       LIMIT 100`,
+       LIMIT 200`,
     );
 
     const documents = result.rows.map((d) => ({
@@ -190,6 +194,7 @@ exports.getDocuments = async (req, res) => {
       fileName: d.fileName || d.title || "Untitled",
       fileSize: Number(d.fileSize || 0),
       ocrStatus: String(d.ocrStatus || "unknown"),
+      category: String(d.category || "other").toLowerCase(),
     }));
 
     return res.json({ status: "ok", documents });
@@ -248,7 +253,7 @@ exports.getLogs = async (req, res) => {
          ${timeCol} AS "timestamp"
        FROM public.audit_log
        ORDER BY ${orderCol} DESC NULLS LAST
-       LIMIT 100`,
+       LIMIT 150`,
     );
 
     const logs = result.rows.map((l) => ({

@@ -68,6 +68,7 @@ export type VaultDocument = {
   fileSize: number;
   ownerEmail: string;
   ocrStatus: "completed" | "pending" | "failed" | string;
+  category?: string;
   createdAt: string;
 };
 

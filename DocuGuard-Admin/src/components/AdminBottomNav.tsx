@@ -39,7 +39,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "flex-end",
     justifyContent: "space-around",
-    backgroundColor: "rgba(255,255,255,0.98)",
+    backgroundColor: AdminColors.surface,
     borderTopWidth: 1,
     borderTopColor: AdminColors.border,
     paddingTop: 8,

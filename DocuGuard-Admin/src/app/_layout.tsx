@@ -1,9 +1,10 @@
-import { Stack } from "expo-router";
+﻿import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useEffect, useState } from "react";
 import { Platform } from "react-native";
 import CustomSplashScreen from "../components/CustomSplashScreen";
 import { PhoneLayout } from "../components/PhoneLayout";
+import { AdminColors } from "../theme/adminTheme";
 
 export default function RootLayout() {
   const [showSplash, setShowSplash] = useState(true);
@@ -31,7 +32,7 @@ export default function RootLayout() {
         screenOptions={{
           headerShown: false,
           animation: "slide_from_right",
-          contentStyle: { backgroundColor: "#F3F6FB" },
+          contentStyle: { backgroundColor: AdminColors.background },
         }}
       >
         <Stack.Screen name="index" />
