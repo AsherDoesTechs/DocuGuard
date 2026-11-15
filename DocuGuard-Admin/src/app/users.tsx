@@ -133,46 +133,64 @@ export default function AdminUsersScreen() {
   const handleToggleStatus = (user: AdminUser) => {
     const status = String(user.status || "active");
     const nextStatus = status === "active" ? "suspended" : "active";
+    const label = ui.privacyMode ? "Selected account" : user.email || user.name || "User";
+    const message = `${label} will be ${nextStatus}.`;
+
+    const runUpdate = async () => {
+      setUpdatingId(user.id);
+      try {
+        const token = await getAdminToken();
+        if (!token) {
+          Alert.alert("Not signed in", "Please sign in again.");
+          router.replace("/");
+          return;
+        }
+        const res: any = await updateAdminUserStatus(token, user.id, nextStatus);
+        const updated = res?.user;
+        if (updated && typeof updated === "object") {
+          setUsers((prev) =>
+            prev.map((u) =>
+              String(u.id) === String(user.id)
+                ? { ...u, ...updated, status: String(updated.status || nextStatus) }
+                : u
+            )
+          );
+        } else {
+          setUsers((prev) =>
+            prev.map((u) => (String(u.id) === String(user.id) ? { ...u, status: nextStatus } : u))
+          );
+        }
+        if (typeof window !== "undefined") {
+          window.alert(`User ${nextStatus === "suspended" ? "suspended" : "activated"}.`);
+        }
+      } catch (err: any) {
+        const msg =
+          err?.response?.data?.error || err?.data?.error || err?.message || "Could not update status.";
+        if (typeof window !== "undefined") {
+          window.alert(`Update failed: ${msg}`);
+        } else {
+          Alert.alert("Update failed", msg);
+        }
+      } finally {
+        setUpdatingId(null);
+      }
+    };
+
+    if (typeof window !== "undefined") {
+      const ok = window.confirm(`${nextStatus === "suspended" ? "Suspend" : "Activate"} user\n\n${message}`);
+      if (ok) void runUpdate();
+      return;
+    }
+
     Alert.alert(
       `${nextStatus === "suspended" ? "Suspend" : "Activate"} user`,
-      `${ui.privacyMode ? "Selected account" : user.email || user.name || "User"} will be ${nextStatus}.`,
+      message,
       [
         { text: "Cancel", style: "cancel" },
         {
           text: "Confirm",
           style: nextStatus === "suspended" ? "destructive" : "default",
-          onPress: async () => {
-            setUpdatingId(user.id);
-            try {
-              const token = await getAdminToken();
-              if (!token) {
-                Alert.alert("Not signed in", "Please sign in again.");
-                router.replace("/");
-                return;
-              }
-              const res: any = await updateAdminUserStatus(token, user.id, nextStatus);
-              const updated = res?.user;
-              if (updated && typeof updated === "object") {
-                setUsers((prev) =>
-                  prev.map((u) =>
-                    String(u.id) === String(user.id)
-                      ? { ...u, ...updated, status: String(updated.status || nextStatus) }
-                      : u
-                  )
-                );
-              } else {
-                setUsers((prev) =>
-                  prev.map((u) => (String(u.id) === String(user.id) ? { ...u, status: nextStatus } : u))
-                );
-              }
-            } catch (err: any) {
-              const msg =
-                err?.response?.data?.error || err?.data?.error || err?.message || "Could not update status.";
-              Alert.alert("Update failed", msg);
-            } finally {
-              setUpdatingId(null);
-            }
-          },
+          onPress: () => void runUpdate(),
         },
       ]
     );
