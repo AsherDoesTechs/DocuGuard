@@ -324,7 +324,7 @@ export default function AdminUsersScreen() {
             data={filteredUsers}
             keyExtractor={(item) => String(item.id)}
             renderItem={renderItem}
-            contentContainerStyle={[styles.list, { gap: ui.compactMode ? 8 : 10 }]}
+            contentContainerStyle={[styles.list, { gap: ui.compactMode ? 8 : 10, paddingRight: isWideNav ? 128 : 20 }]}
             style={{ flex: 1 }}
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
