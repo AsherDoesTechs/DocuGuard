@@ -283,7 +283,8 @@ export default function LoginScreen() {
             setIsBiometricSupported(
               hasHardware &&
                 isEnrolled &&
-                biometricSetting === "true",
+                biometricSetting === "true" &&
+                credentialsMatchAccount,
             );
           }
         } catch (error) {

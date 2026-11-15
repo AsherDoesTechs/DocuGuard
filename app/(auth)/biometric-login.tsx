@@ -146,10 +146,10 @@ export default function BiometricLoginScreen() {
         const lastSignedOutId =
           Number.isSafeInteger(lastSignedOut) && lastSignedOut > 0 ? lastSignedOut : null;
 
-        let parsed: { userId?: number } | null = null;
+        let parsed: { email?: string; password?: string; userId?: number } | null = null;
         if (storedCredentials) {
           try {
-            parsed = JSON.parse(storedCredentials) as { userId?: number };
+            parsed = JSON.parse(storedCredentials) as { email?: string; password?: string; userId?: number };
           } catch {
             parsed = null;
           }
@@ -158,8 +158,15 @@ export default function BiometricLoginScreen() {
           parsed && typeof parsed.userId === "number" && Number.isSafeInteger(parsed.userId) && parsed.userId > 0
             ? parsed.userId
             : null;
+        const hasUsableCredentials =
+          !!parsed && typeof parsed.email === "string" && typeof parsed.password === "string";
 
         const effectiveId = activeId ?? credentialUserId ?? lastSignedOutId;
+        const credentialsMatchAccount =
+          hasUsableCredentials &&
+          (credentialUserId === null ||
+            effectiveId === null ||
+            credentialUserId === effectiveId);
 
         let biometricSetting: string | null = null;
         if (effectiveId !== null) {
@@ -184,7 +191,8 @@ export default function BiometricLoginScreen() {
           setIsBiometricSupported(
             compatible &&
               enrolled &&
-              biometricSetting === "true",
+              biometricSetting === "true" &&
+              credentialsMatchAccount,
           );
         }
       } catch (error) {

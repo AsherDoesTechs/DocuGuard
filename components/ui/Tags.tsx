@@ -207,7 +207,8 @@ export function TagsInput({
       >
         <KeyboardAvoidingView
           style={styles.modalOverlay}
-          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          keyboardVerticalOffset={Platform.OS === "ios" ? 24 : 0}
         >
           <View style={styles.modalContainer}>
             <View style={styles.modalHeader}>
@@ -392,12 +393,14 @@ const createStyles = (colors: any) =>
       backgroundColor: colors.modalOverlay ?? "rgba(0,0,0,0.5)",
       justifyContent: "center",
       alignItems: "center",
-      padding: 16,
+      paddingHorizontal: 16,
+      paddingVertical: 24,
     },
     modalContainer: {
       width: "100%",
       maxWidth: 520,
-      maxHeight: "80%",
+      maxHeight: "85%",
+      minHeight: 320,
       backgroundColor: colors.surface,
       borderRadius: 16,
       padding: 16,
@@ -407,6 +410,9 @@ const createStyles = (colors: any) =>
     },
     suggestionsList: {
       flexGrow: 0,
+      flexShrink: 1,
+      minHeight: 120,
+      maxHeight: 260,
     },
     modalHeader: {
       flexDirection: "row",
