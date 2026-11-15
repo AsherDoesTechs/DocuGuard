@@ -275,15 +275,12 @@ export default function AdminUsersScreen() {
               ({ cursor: "pointer" } as any),
             ]}
             onPress={(e) => {
-              if (typeof window !== "undefined") {
-                window.alert(`BTN PRESSED id=${String(item.id)} status=${status}`);
-              }
               if ((e as any)?.preventDefault) (e as any).preventDefault();
               if ((e as any)?.stopPropagation) (e as any).stopPropagation();
               if (!isUpdating) handleToggleStatus(item);
             }}
             disabled={isUpdating}
-            hitSlop={12}
+            hitSlop={16}
             accessibilityRole="button"
           >
             <Text style={[styles.actionText, isActive ? styles.suspendText : styles.activateText]}>
