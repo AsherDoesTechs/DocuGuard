@@ -52,6 +52,13 @@ function inferExtension(fileType?: string | null, uri?: string | null) {
   return match[1] === "jpeg" ? "jpg" : match[1];
 }
 
+function isPdfType(fileType?: string | null, uri?: string | null) {
+  const t = (fileType || "").toLowerCase();
+  if (t.includes("pdf")) return true;
+  const u = (uri || "").toLowerCase();
+  return /\.pdf(\?|#|$)/i.test(u);
+}
+
 export default function DocumentViewerScreen() {
   const { id } = useLocalSearchParams<{ id?: string | string[] }>();
   const router = useRouter();
@@ -127,6 +134,7 @@ export default function DocumentViewerScreen() {
   }, [docId, resolveInitialUri]);
 
   const canRenderImage = isImageType(document?.fileType, fileUri);
+  const isPdf = isPdfType(document?.fileType, fileUri || document?.fileUrl || null);
 
   const handleOpenExternal = async () => {
     if (!fileUri) return;
@@ -145,18 +153,30 @@ export default function DocumentViewerScreen() {
         try {
           // eslint-disable-next-line @typescript-eslint/no-var-requires
           const IntentLauncher = require("expo-intent-launcher");
-          await IntentLauncher.startActivityAsync("android.intent.action.CHOOSER", {
+          await IntentLauncher.startActivityAsync("android.intent.action.VIEW", {
             data: uri,
             flags: 1,
             type: document?.fileType || undefined,
-            extras: {
-              "android.intent.extra.INITIAL_INTENTS": [],
-              "android.intent.extra.TITLE": "Open with",
-            },
           });
           return;
         } catch {
-          // Fall through to share sheet as fallback.
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const IntentLauncher = require("expo-intent-launcher");
+            await IntentLauncher.startActivityAsync("android.intent.action.CHOOSER", {
+              extra: {
+                "android.intent.extra.INTENT": {
+                  action: "android.intent.action.VIEW",
+                  data: uri,
+                  flags: 1,
+                  type: document?.fileType || undefined,
+                },
+              },
+            });
+            return;
+          } catch {
+            // Fall through to share sheet as fallback.
+          }
         }
       }
 
@@ -263,6 +283,18 @@ export default function DocumentViewerScreen() {
             </View>
           ) : null}
         </ScrollView>
+      ) : isPdf ? (
+        <View style={styles.center}>
+          <Ionicons name="document-text-outline" size={56} color={colors.primary} />
+          <Text style={styles.muted}>PDF document</Text>
+          <Text style={styles.mutedSmall} numberOfLines={2}>
+            {document?.title || "Open this file to view its contents."}
+          </Text>
+          <TouchableOpacity style={styles.button} onPress={handleOpenExternal} accessibilityRole="button">
+            <Ionicons name="open-outline" size={18} color={colors.buttonPrimaryText} />
+            <Text style={styles.buttonText}>Open PDF</Text>
+          </TouchableOpacity>
+        </View>
       ) : (
         <View style={styles.center}>
           <Ionicons name="document-text-outline" size={48} color={colors.primary} />

@@ -10,6 +10,7 @@ import {
   Pressable,
   ScrollView,
 } from "react-native";
+import * as FileSystem from "expo-file-system/legacy";
 import Animated, { FadeInDown, FadeInUp } from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useFocusEffect } from "expo-router";
@@ -125,6 +126,7 @@ export default function HomeScreen() {
         (doc as any).filePath ||
         (doc as any).uri;
 
+      let candidate: string | null = null;
       if (typeof rawImage === "string" && rawImage.trim()) {
         const trimmed = rawImage.trim();
         if (
@@ -132,26 +134,60 @@ export default function HomeScreen() {
           trimmed.startsWith("content://") ||
           trimmed.startsWith("data:")
         ) {
-          return trimmed;
+          candidate = trimmed;
+        } else if (/^https?:\/\//i.test(trimmed)) {
+          candidate = trimmed;
+        } else {
+          candidate = `file://${trimmed}`;
         }
-        if (/^https?:\/\//i.test(trimmed)) {
-          return trimmed;
-        }
-        return `file://${trimmed}`;
       }
 
-      if (!isImageDocument(doc, null)) return null;
+      const isImage =
+        isImageDocument(doc, candidate) || isImageDocument(doc, null);
+      if (!isImage) return null;
 
-      const remoteId = doc.cloudId ?? doc.id;
-      if (!remoteId) return null;
+      if (candidate && (candidate.startsWith("file://") || candidate.startsWith("content://"))) {
+        try {
+          const info = await FileSystem.getInfoAsync(candidate);
+          if (info.exists) return candidate;
+        } catch {
+          // fall through to remote fetch
+        }
+      }
+
+      let remoteUri: string | null =
+        candidate && /^https?:\/\//i.test(candidate) ? candidate : null;
+      if (!remoteUri) {
+        const remoteId = doc.cloudId ?? doc.id;
+        if (!remoteId) return null;
+        try {
+          const res = await api.client.get(`/documents/${remoteId}/file-url`);
+          const url = res?.data?.fileUrl || res?.data?.file_url;
+          remoteUri = typeof url === "string" && url.trim() ? url.trim() : null;
+        } catch {
+          return null;
+        }
+      }
+      if (!remoteUri) return null;
 
       try {
-        const res = await api.client.get(`/documents/${remoteId}/file-url`);
-        const url = res?.data?.fileUrl || res?.data?.file_url;
-        return typeof url === "string" && url.trim() ? url.trim() : null;
+        const extMatch = remoteUri.toLowerCase().match(/\.(png|jpe?g|webp|gif|bmp|heic|heif)(\?|#|$)/i);
+        const ext = extMatch ? (extMatch[1] === "jpeg" ? "jpg" : extMatch[1]) : "jpg";
+        const baseDir = FileSystem.cacheDirectory || FileSystem.documentDirectory;
+        if (baseDir) {
+          const key = String(doc.id ?? doc.cloudId ?? "recent");
+          const target = `${baseDir}recent_preview_${key}.${ext}`;
+          const result = await FileSystem.downloadAsync(remoteUri, target);
+          if (result.status >= 200 && result.status < 300 && result.uri) {
+            const info = await FileSystem.getInfoAsync(result.uri);
+            if (info.exists) return result.uri;
+          }
+        }
       } catch {
-        return null;
+        // fall through to direct remote URI
       }
+
+      return remoteUri;
     },
     [isImageDocument],
   );
