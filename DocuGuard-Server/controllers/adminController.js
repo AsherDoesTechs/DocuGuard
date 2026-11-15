@@ -153,7 +153,15 @@ exports.getDocuments = async (req, res) => {
           : "NULL::text AS \"fileName\"";
     const fileSizeExpr = hasColumn(cols, "file_size")
       ? `d.file_size AS "fileSize"`
-      : "0::bigint AS \"fileSize\"";
+      : hasColumn(cols, "file_size_bytes")
+        ? `d.file_size_bytes AS "fileSize"`
+        : hasColumn(cols, "size")
+          ? `d.size AS "fileSize"`
+          : hasColumn(cols, "bytes")
+            ? `d.bytes AS "fileSize"`
+            : hasColumn(cols, "file_size_b")
+              ? `d.file_size_b AS "fileSize"`
+              : "0::bigint AS \"fileSize\"";
     const ocrCol = hasColumn(cols, "ocr_status")
       ? "ocr_status"
       : hasColumn(cols, "ocrStatus")
@@ -343,6 +351,32 @@ exports.getSystemHealth = async (req, res) => {
           : Promise.resolve({ rows: [{}] }),
     ]);
 
+    let bucketUsageBytes = Number(storageResult.rows[0]?.bucketUsageBytes || 0);
+    try {
+      if (hasColumn(docCols, "s3_key")) {
+        const keysRes = await db.query(
+          `SELECT DISTINCT s3_key FROM public.documents WHERE ${whereStatus} AND s3_key IS NOT NULL AND s3_key <> '' LIMIT 2000`,
+        );
+        const { getObjectMetadata } = require("../services/storageService");
+        let total = BigInt(0);
+        for (const r of keysRes.rows) {
+          try {
+            const meta = await getObjectMetadata(r.s3_key);
+            if (meta && typeof meta.size === "number" && Number.isFinite(meta.size) && meta.size >= 0) {
+              total += BigInt(Math.floor(meta.size));
+            }
+          } catch (_e) {
+            // ignore per-key failures, keep best effort sum
+          }
+        }
+        if (total > BigInt(0) || keysRes.rows.length > 0) {
+          bucketUsageBytes = Number(total);
+        }
+      }
+    } catch (storageErr) {
+      console.warn("Admin health storage size from objects failed, using DB sum:", storageErr?.message || storageErr);
+    }
+
     const azureEndpoint = String(process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT || process.env.AZURE_ENDPOINT || "").trim();
     const azureKey = String(process.env.AZURE_DOCUMENT_INTELLIGENCE_KEY || process.env.AZURE_KEY || "").trim();
     const azureConfigured = Boolean(azureEndpoint && azureKey);
@@ -460,7 +494,7 @@ exports.getSystemHealth = async (req, res) => {
         supabaseStorage: {
           status: "operational",
           totalFiles: storageResult.rows[0]?.totalFiles || 0,
-          bucketUsageBytes: Number(storageResult.rows[0]?.bucketUsageBytes || 0),
+          bucketUsageBytes,
         },
         azureOcr: {
           status: azureStatus,

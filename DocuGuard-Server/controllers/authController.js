@@ -174,6 +174,15 @@ const createLoginHandler =
         });
       }
 
+      const userStatus = String(user.status || "active").toLowerCase();
+      if (userStatus === "suspended") {
+        warn("Auth", "Login blocked - account suspended", { email, userId: user.id });
+        return res.status(403).json({
+          error: "Your account has been suspended. Contact support for assistance.",
+          code: "AUTH_ACCOUNT_SUSPENDED",
+        });
+      }
+
       if (!user.is_verified) {
         return res.status(403).json({
           error: "Please verify your email address before logging in.",

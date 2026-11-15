@@ -119,6 +119,15 @@ exports.adminLogin = async (req, res) => {
       );
     }
 
+    if (String(user.status || "active").toLowerCase() === "suspended") {
+      return sendError(
+        res,
+        403,
+        "This administrator account has been suspended.",
+        "ADMIN_ACCOUNT_SUSPENDED",
+      );
+    }
+
     if (!isAdminAccount(user)) {
       return sendError(
         res,
