@@ -503,6 +503,17 @@ async function switchLocalUserUnlocked(
   const decision = resolveAccountSwitch({ ownerId: owner, nextUserId: next });
   const accountChanged = decision.accountChanged;
 
+  if (decision.accountChanged && owner !== null && owner !== next) {
+    DebugLogger.warn(
+      "LocalDatabase",
+      "Blocked sign-in: device is bound to a different account",
+      { owner, next },
+    );
+    throw new Error(
+      "This device is already linked to another DocuGuard account. To prevent data sharing, sign in with the original account on this device.",
+    );
+  }
+
   if (decision.purgePreviousData) {
     if (owner === null) {
       /*
