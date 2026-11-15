@@ -1,5 +1,5 @@
 ﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, FlatList, RefreshControl, Share, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
+import { Alert, FlatList, Pressable, RefreshControl, Share, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
@@ -245,8 +245,12 @@ export default function AdminUsersScreen() {
               <Badge label={String(item.role || "user")} tone={String(item.role) === "admin" ? "primary" : "neutral"} />
             </View>
           </View>
-          <PressableScale
-            style={[styles.actionBtn, isActive ? styles.suspendBtn : styles.activateBtn, isUpdating && { opacity: 0.6 }]}
+          <Pressable
+            style={({ pressed }) => [
+              styles.actionBtn,
+              isActive ? styles.suspendBtn : styles.activateBtn,
+              (isUpdating || pressed) && { opacity: 0.6 },
+            ]}
             onPress={() => {
               if (!isUpdating) handleToggleStatus(item);
             }}
@@ -256,7 +260,7 @@ export default function AdminUsersScreen() {
             <Text style={[styles.actionText, isActive ? styles.suspendText : styles.activateText]}>
               {isUpdating ? "..." : isActive ? "Suspend" : "Activate"}
             </Text>
-          </PressableScale>
+          </Pressable>
         </View>
       </FadeInView>
     );

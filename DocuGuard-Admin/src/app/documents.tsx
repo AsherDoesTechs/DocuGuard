@@ -61,14 +61,24 @@ export default function AdminDocumentsScreen() {
   const analytics = useMemo(() => {
     const completed = documents.filter((d) => String(d.ocrStatus) === "completed").length;
     const pending = documents.filter((d) => String(d.ocrStatus) === "pending").length;
-    const failed = documents.filter((d) => !["completed","pending","unknown"].includes(String(d.ocrStatus))).length;
+    const failed = documents.filter((d) => !["completed", "pending", "unknown"].includes(String(d.ocrStatus))).length;
     const totalBytes = documents.reduce((s, d) => {
       const anyD = d as any;
-      const v = Number(anyD.fileSize ?? anyD.file_size ?? anyD.size ?? anyD.bytes ?? anyD.storageBytes ?? 0);
+      const v = Number(
+        anyD.fileSize ??
+          anyD.file_size ??
+          anyD.size ??
+          anyD.bytes ??
+          anyD.storageBytes ??
+          anyD.file_size_bytes ??
+          anyD.fileSizeBytes ??
+          anyD.sizeBytes ??
+          0
+      );
       return s + (Number.isFinite(v) ? v : 0);
     }, 0);
     const successRate = documents.length ? Math.round((completed / documents.length) * 100) : 0;
-    return { completed, pending, failed, totalBytes, successRate, prediction: failed > 0 ? `${failed} OCR issue${failed>1?"s":""} need attention.` : pending > 0 ? `${pending} item${pending>1?"s":""} still processing.` : "OCR pipeline stable." };
+    return { completed, pending, failed, totalBytes, successRate, prediction: failed > 0 ? `${failed} OCR issue${failed > 1 ? "s" : ""} need attention.` : pending > 0 ? `${pending} item${pending > 1 ? "s" : ""} still processing.` : "OCR pipeline stable." };
   }, [documents]);
 
   const filteredDocs = useMemo(() => {
