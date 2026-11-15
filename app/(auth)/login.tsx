@@ -88,13 +88,24 @@ export default function LoginScreen() {
   };
 
   const startLockoutCountdown = (seconds?: number | null) => {
-    // Default 15 minutes to match server auth limiter window.
-    const secs = Math.max(1, Math.min(60 * 60, Math.ceil(seconds ?? 15 * 60)));
-    const until = Date.now() + secs * 1000;
-    setLockoutUntil(until);
-    void SecureStore.setItemAsync(LOGIN_LOCKOUT_UNTIL_KEY, String(until)).catch(
-      () => {},
-    );
+    const now = Date.now();
+    const parsed =
+      seconds != null && Number.isFinite(seconds) && seconds > 0
+        ? Math.ceil(seconds)
+        : null;
+    const fallbackSecs = 15 * 60;
+    const requestedSecs = parsed != null ? parsed : fallbackSecs;
+    const clampedSecs = Math.max(1, Math.min(60 * 60, requestedSecs));
+    const nextUntil = now + clampedSecs * 1000;
+    setLockoutUntil((prev) => {
+      if (prev != null && prev > now) {
+        return prev;
+      }
+      void SecureStore.setItemAsync(LOGIN_LOCKOUT_UNTIL_KEY, String(nextUntil)).catch(
+        () => {},
+      );
+      return nextUntil;
+    });
   };
 
   useEffect(() => {
@@ -643,11 +654,24 @@ export default function LoginScreen() {
       } catch {}
 
       router.replace("/(tabs)/documents" as any);
-    } catch (error) {
+    } catch (error: any) {
       console.warn("Biometric sign-in failed:", error);
-      feedbackService.error(
-        "Biometric sign-in failed. Please use your password.",
-      );
+      const status = error?.response?.status;
+      if (
+        status === 429 ||
+        error?.response?.data?.code === "AUTH_RATE_LIMIT_EXCEEDED" ||
+        /too many (login|authentication|administrator )?attempts|rate limit/i.test(
+          String(error?.response?.data?.error || ""),
+        )
+      ) {
+        const retryAfter = parseRetryAfterSeconds(error);
+        startLockoutCountdown(retryAfter);
+        feedbackService.error("Too many attempts. Please wait before trying again.");
+      } else {
+        feedbackService.error(
+          "Biometric sign-in failed. Please use your password.",
+        );
+      }
     } finally {
       biometricRequestRef.current = false;
       setBiometricSubmitting(false);

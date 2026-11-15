@@ -11,6 +11,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import * as SecureStore from "expo-secure-store";
 
 import { Button, Input, Card } from "@/components/ui";
 import { useColors } from "@/context/ThemeContext";
@@ -21,6 +22,74 @@ import {
   feedbackService,
   useFeedbackService,
 } from "@/services/feedbackService";
+
+const LOGIN_LOCKOUT_UNTIL_KEY = "docuguard.auth.loginLockoutUntil";
+
+function parseRetryAfterSeconds(err: any): number | null {
+  const retryAfterHeader =
+    err?.response?.headers?.["retry-after"] ??
+    err?.response?.headers?.["Retry-After"];
+  if (retryAfterHeader != null) {
+    const n = Number(retryAfterHeader);
+    if (Number.isFinite(n) && n > 0) return Math.ceil(n);
+    const dateMs = Date.parse(String(retryAfterHeader));
+    if (!Number.isNaN(dateMs)) {
+      const secs = Math.ceil((dateMs - Date.now()) / 1000);
+      if (secs > 0) return secs;
+    }
+  }
+  const bodyRetry = err?.response?.data?.retryAfter ?? err?.response?.data?.retry_after;
+  if (bodyRetry != null) {
+    const n = Number(bodyRetry);
+    if (Number.isFinite(n) && n > 0) return Math.ceil(n);
+  }
+  const msg = String(err?.response?.data?.error || err?.message || "");
+  const match = msg.match(/(\d+)\s*(s|sec|secs|second|seconds|m|min|mins|minute|minutes)/i);
+  if (match) {
+    const value = Number(match[1]);
+    if (Number.isFinite(value) && value > 0) {
+      const unit = match[2].toLowerCase();
+      return unit.startsWith("m") ? value * 60 : value;
+    }
+  }
+  return null;
+}
+
+async function persistLoginLockoutFromResponse(err: any): Promise<void> {
+  const status = err?.response?.status;
+  const code =
+    typeof err?.response?.data?.code === "string"
+      ? err.response.data.code
+      : "";
+  if (
+    status !== 429 &&
+    code !== "AUTH_RATE_LIMIT_EXCEEDED" &&
+    !/too many (login|authentication|administrator )?attempts|rate limit/i.test(
+      String(err?.response?.data?.error || ""),
+    )
+  ) {
+    return;
+  }
+  const retryAfter = parseRetryAfterSeconds(err);
+  const now = Date.now();
+  const secs =
+    retryAfter != null && Number.isFinite(retryAfter) && retryAfter > 0
+      ? Math.min(60 * 60, Math.ceil(retryAfter))
+      : 15 * 60;
+  const until = now + secs * 1000;
+  try {
+    const existingRaw = await SecureStore.getItemAsync(LOGIN_LOCKOUT_UNTIL_KEY);
+    const existing = existingRaw ? Number(existingRaw) : NaN;
+    const keepUntil = Number.isFinite(existing) && existing > now ? existing : until;
+    await SecureStore.setItemAsync(LOGIN_LOCKOUT_UNTIL_KEY, String(keepUntil));
+  } catch {
+    try {
+      await SecureStore.setItemAsync(LOGIN_LOCKOUT_UNTIL_KEY, String(until));
+    } catch {
+      // ignore
+    }
+  }
+}
 
 export default function Verify2FAScreen() {
   const router = useRouter();
@@ -129,6 +198,7 @@ export default function Verify2FAScreen() {
       router.replace("/(tabs)" as any);
     } catch (err: any) {
       console.error("2FA verification failed:", err);
+      await persistLoginLockoutFromResponse(err);
       const message =
         err?.response?.data?.error ||
         (err instanceof Error
