@@ -6,6 +6,9 @@ import {
   TouchableOpacity,
   Image,
   DeviceEventEmitter,
+  Modal,
+  Pressable,
+  ScrollView,
 } from "react-native";
 import Animated, { FadeInDown, FadeInUp } from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -387,6 +390,8 @@ export default function HomeScreen() {
     }
   };
 
+  const [showHowTo, setShowHowTo] = useState(false);
+
   const getGreeting = () => {
     const hour = new Date().getHours();
 
@@ -447,8 +452,25 @@ export default function HomeScreen() {
             <>
               {/* Greeting and dashboard title */}
               <Animated.View entering={FadeInDown.duration(420)} style={styles.header}>
-                <Text style={styles.greeting}>{getGreeting()}</Text>
-                <Text style={styles.title}>Your Dashboard</Text>
+                <View style={styles.headerTopRow}>
+                  <View style={styles.headerTextWrap}>
+                    <Text style={styles.greeting}>{getGreeting()}</Text>
+                    <Text style={styles.title}>Your Dashboard</Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.helpButton}
+                    onPress={() => setShowHowTo(true)}
+                    accessibilityRole="button"
+                    accessibilityLabel="DocuGuard how to use helper"
+                  >
+                    <Ionicons
+                      name="help-circle-outline"
+                      size={22}
+                      color={COLORS.primary}
+                    />
+                    <Text style={styles.helpButtonText}>How to use</Text>
+                  </TouchableOpacity>
+                </View>
               </Animated.View>
 
               {/* Vault Safety Score */}
@@ -850,6 +872,67 @@ export default function HomeScreen() {
           )}
         </View>
       </RefreshableContainer>
+      <Modal
+        visible={showHowTo}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowHowTo(false)}
+      >
+        <Pressable
+          style={styles.modalBackdrop}
+          onPress={() => setShowHowTo(false)}
+        >
+          <Pressable style={styles.modalCard} onPress={() => {}}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>How to use DocuGuard</Text>
+              <TouchableOpacity
+                onPress={() => setShowHowTo(false)}
+                accessibilityRole="button"
+                accessibilityLabel="Close how to use"
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Ionicons name="close" size={24} color={COLORS.text} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView
+              style={styles.modalScroll}
+              showsVerticalScrollIndicator={false}
+            >
+              <Text style={styles.modalStepTitle}>1. Add a document</Text>
+              <Text style={styles.modalStepBody}>
+                Tap “Add Document” (from Documents or the main actions) to pick a
+                category and type, then scan a printed/physical document with the
+                camera (or upload a photo of it). PDFs and digital files are not
+                accepted for scanning/upload here.
+              </Text>
+              <Text style={styles.modalStepTitle}>2. Review details</Text>
+              <Text style={styles.modalStepBody}>
+                Check extracted fields (name, number, issuer, dates). Issuing
+                Agency is editable only for non-legal categories; legal categories
+                keep it fixed from the document type.
+              </Text>
+              <Text style={styles.modalStepTitle}>3. Track reminders</Text>
+              <Text style={styles.modalStepBody}>
+                Set expiration alerts and reminders on the review step. The home
+                dashboard shows your Vault Safety Score and action items when
+                documents expire or are expiring soon.
+              </Text>
+              <Text style={styles.modalStepTitle}>4. Find & manage</Text>
+              <Text style={styles.modalStepBody}>
+                Open the Documents tab to browse, search, and view details. Use
+                Reminders to see upcoming and urgent items.
+              </Text>
+            </ScrollView>
+            <TouchableOpacity
+              style={styles.modalCloseBtn}
+              onPress={() => setShowHowTo(false)}
+              accessibilityRole="button"
+            >
+              <Text style={styles.modalCloseBtnText}>Got it</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -891,6 +974,82 @@ const createStyles = (COLORS: any) =>
 
     header: {
       marginBottom: 24,
+    },
+    headerTopRow: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "flex-start",
+      gap: 12,
+    },
+    headerTextWrap: {
+      flex: 1,
+    },
+    helpButton: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 4,
+      paddingVertical: 6,
+      paddingHorizontal: 10,
+      borderRadius: BORDER_RADIUS.sm,
+      borderWidth: 1,
+      borderColor: COLORS.border,
+      backgroundColor: COLORS.surface,
+    },
+    helpButtonText: {
+      fontSize: 13,
+      fontWeight: "600",
+      color: COLORS.primary,
+    },
+    modalBackdrop: {
+      flex: 1,
+      backgroundColor: "rgba(0,0,0,0.45)",
+      justifyContent: "center",
+      padding: 20,
+    },
+    modalCard: {
+      backgroundColor: COLORS.surface,
+      borderRadius: BORDER_RADIUS.md,
+      maxHeight: "85%",
+      padding: 20,
+    },
+    modalHeaderRow: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      marginBottom: 12,
+    },
+    modalTitle: {
+      fontSize: 18,
+      fontWeight: "700",
+      color: COLORS.text,
+      flex: 1,
+      paddingRight: 8,
+    },
+    modalScroll: {
+      marginBottom: 16,
+    },
+    modalStepTitle: {
+      fontSize: 14,
+      fontWeight: "700",
+      color: COLORS.text,
+      marginTop: 8,
+      marginBottom: 4,
+    },
+    modalStepBody: {
+      fontSize: 13,
+      lineHeight: 20,
+      color: COLORS.textSecondary,
+    },
+    modalCloseBtn: {
+      backgroundColor: COLORS.primary,
+      borderRadius: BORDER_RADIUS.sm,
+      paddingVertical: 12,
+      alignItems: "center",
+    },
+    modalCloseBtnText: {
+      color: COLORS.buttonPrimaryText,
+      fontWeight: "600",
+      fontSize: 15,
     },
 
     greeting: {

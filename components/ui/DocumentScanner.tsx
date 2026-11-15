@@ -350,7 +350,11 @@ export const DocumentScannerComponent = ({
         return;
       }
 
-      const result = await scanner.scanDocument();
+      const result = await scanner.scanDocument({
+        maxNumDocuments: 1,
+        responseType: "imageFilePath",
+        croppedImageQuality: 100,
+      });
 
       if (closedRef.current || !mountedRef.current) {
         isCapturingRef.current = false;

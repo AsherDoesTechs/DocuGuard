@@ -1038,6 +1038,8 @@ export default function AddDocumentScreen() {
     return [];
   }, [documentType]);
 
+  const issuerEditable = documentType === "non-legal";
+
   const specificDocuments = useMemo(() => {
     if (!category) return [];
     return DOCUMENTS_BY_CATEGORY[category.id] || [];
@@ -1134,6 +1136,24 @@ export default function AddDocumentScreen() {
       if (result.canceled || !result.assets?.[0]) return;
 
       const asset = result.assets[0];
+      const assetMime = (asset.mimeType ?? "").toLowerCase();
+      const assetName = (asset.name || "").toLowerCase();
+      const isPdf =
+        assetMime === "application/pdf" || assetName.endsWith(".pdf");
+
+      if (isPdf) {
+        feedbackService.warning(
+          "Digital/PDF files are not allowed. Scan a printed/physical document with the camera only.",
+        );
+        return;
+      }
+
+      if (!assetMime.startsWith("image/")) {
+        feedbackService.warning(
+          "Only photos of printed/physical documents are allowed. Please scan with the camera.",
+        );
+        return;
+      }
 
       const fileIdentityChanged =
         selectedFile?.uri !== asset.uri ||
@@ -1175,6 +1195,18 @@ export default function AddDocumentScreen() {
     } catch {
       feedbackService.error("Failed to pick document.");
     }
+  }
+
+  function openScannerForPhysicalOnly() {
+    feedbackService.confirm({
+      title: "Scan printed documents only",
+      message:
+        "Use the camera to scan a printed/physical document only. Do not scan screens, screenshots, or digital files.",
+      confirmText: "Continue",
+      cancelText: "Cancel",
+      onConfirm: () => setScannerVisible(true),
+      onCancel: () => {},
+    });
   }
 
   /**
@@ -1895,7 +1927,7 @@ export default function AddDocumentScreen() {
           <>
             <TouchableOpacity
               style={styles.scanOption}
-              onPress={() => setScannerVisible(true)}
+              onPress={openScannerForPhysicalOnly}
             >
               <View style={styles.scanIcon}>
                 <Ionicons
@@ -1926,9 +1958,9 @@ export default function AddDocumentScreen() {
                 />
               </View>
               <View style={styles.choiceContent}>
-                <Text style={styles.choiceTitle}>Upload File</Text>
+                <Text style={styles.choiceTitle}>Upload Photo (Physical Only)</Text>
                 <Text style={styles.choiceDescription}>
-                  Select a PDF or image from your device.
+                  Pick a photo of a printed/physical document. PDFs and digital files are not allowed.
                 </Text>
               </View>
               <Ionicons
@@ -2078,6 +2110,7 @@ export default function AddDocumentScreen() {
         <Field
           label="Issuing Agency"
           value={issuer}
+          editable={issuerEditable}
           placeholder="e.g. Department of Foreign Affairs"
           error={fieldErrors.issuer}
           onChangeText={(value) => {
