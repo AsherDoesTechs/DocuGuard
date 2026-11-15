@@ -108,7 +108,7 @@ export default function HomeScreen() {
       const candidate = String(
         uri || (doc as any).fileUrl || (doc as any).file_url || "",
       );
-      return /\.(jpg|jpeg|png|webp|heic|heif)(\?|$)/i.test(candidate);
+      return /\.(jpg|jpeg|png|webp|heic|heif|gif|bmp)(\?|#|$)/i.test(candidate);
     },
     [],
   );
@@ -700,7 +700,7 @@ export default function HomeScreen() {
                     const isImagePreview =
                       !!resolvedPreviewUri &&
                       (fileType.includes("image") ||
-                        /\.(jpg|jpeg|png|webp|heic|heif|gif|bmp)(\?|$)/i.test(
+                        /\.(jpg|jpeg|png|webp|heic|heif|gif|bmp)(\?|#|$)/i.test(
                           resolvedPreviewUri,
                         ));
 

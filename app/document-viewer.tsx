@@ -21,9 +21,12 @@ import { getDocumentById, type LocalDocument } from "@/services/localDatabase";
 
 function isImageType(fileType?: string | null, uri?: string | null) {
   const t = (fileType || "").toLowerCase();
-  if (t.startsWith("image/") || t.includes("png") || t.includes("jpg") || t.includes("jpeg")) return true;
+  if (t.startsWith("image/")) return true;
+  if (t.includes("png") || t.includes("jpg") || t.includes("jpeg") || t.includes("webp") || t.includes("heic") || t.includes("heif") || t.includes("gif") || t.includes("bmp")) {
+    return true;
+  }
   const u = (uri || "").toLowerCase();
-  return u.endsWith(".png") || u.endsWith(".jpg") || u.endsWith(".jpeg");
+  return /\.(png|jpe?g|webp|heic|heif|gif|bmp)(\?|#|$)/i.test(u);
 }
 
 export default function DocumentViewerScreen() {
@@ -176,7 +179,12 @@ export default function DocumentViewerScreen() {
           minimumZoomScale={1}
           showsVerticalScrollIndicator={false}
         >
-          <Image source={{ uri: fileUri }} style={styles.image} resizeMode="contain" />
+          <Image
+            source={{ uri: fileUri }}
+            style={styles.image}
+            resizeMode="contain"
+            onError={() => setError("Could not load this image file.")}
+          />
         </ScrollView>
       ) : (
         <View style={styles.center}>
