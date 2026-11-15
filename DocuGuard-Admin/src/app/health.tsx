@@ -27,7 +27,52 @@ export default function AdminHealthScreen() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => { loadAdminUiSettings(); return subscribeAdminUiSettings(() => setUi(getAdminUiSettings())); }, []);
-  const fetchHealth = useCallback(async (isRefresh = false, silent = false) => { if (isRefresh) setRefreshing(true); else if (!silent) setLoading(true); if (silent || isRefresh) setSyncing(true); setErrorMessage(""); try { const token = await getAdminToken(); if (!token) { router.replace("/"); return; } const data = await getAdminSystemHealth(token); setHealth(((data as any).health ?? (data as any)) as SystemHealthData); setLastSync(new Date()); } catch (error) { if (!silent) setErrorMessage(error instanceof Error ? error.message : "Unable to load health metrics."); } finally { setLoading(false); setRefreshing(false); setTimeout(() => setSyncing(false), 350); } }, []);
+  const fetchHealth = useCallback(async (isRefresh = false, silent = false) => {
+    if (isRefresh) setRefreshing(true);
+    else if (!silent) setLoading(true);
+    if (silent || isRefresh) setSyncing(true);
+    setErrorMessage("");
+    try {
+      const token = await getAdminToken();
+      if (!token) {
+        router.replace("/");
+        return;
+      }
+      const data = await getAdminSystemHealth(token);
+      const raw: any = (data as any)?.health ?? (data as any);
+      const normalized = { ...raw } as any;
+      if (!normalized?.supabaseStorage) {
+        normalized.supabaseStorage = {
+          status: "unknown",
+          bucketUsageBytes: Number(raw?.bucketUsageBytes ?? raw?.storageBytes ?? 0) || 0,
+          totalFiles: Number(raw?.totalFiles ?? raw?.documentsCount ?? 0) || 0,
+        };
+      } else {
+        normalized.supabaseStorage = {
+          ...normalized.supabaseStorage,
+          bucketUsageBytes: Number(
+            normalized.supabaseStorage.bucketUsageBytes ??
+              normalized.supabaseStorage.usageBytes ??
+              normalized.supabaseStorage.bytes ??
+              raw?.bucketUsageBytes ??
+              raw?.storageBytes ??
+              0
+          ),
+          totalFiles: Number(
+            normalized.supabaseStorage.totalFiles ?? normalized.supabaseStorage.files ?? raw?.totalFiles ?? 0
+          ),
+        };
+      }
+      setHealth(normalized as SystemHealthData);
+      setLastSync(new Date());
+    } catch (error) {
+      if (!silent) setErrorMessage(error instanceof Error ? error.message : "Unable to load health metrics.");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+      setTimeout(() => setSyncing(false), 350);
+    }
+  }, []);
   useEffect(() => { void fetchHealth(); }, [fetchHealth]);
   useEffect(() => { if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; } if (ui.autoSync) timerRef.current = setInterval(() => { void fetchHealth(false, true); }, REFRESH_MS); return () => { if (timerRef.current) clearInterval(timerRef.current); }; }, [ui.autoSync, fetchHealth]);
 

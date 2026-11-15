@@ -272,7 +272,9 @@ export default function AdminUsersScreen() {
               isActive ? styles.suspendBtn : styles.activateBtn,
               (isUpdating || pressed) && { opacity: 0.6 },
             ]}
-            onPress={() => {
+            onPress={(e) => {
+              if ((e as any)?.preventDefault) (e as any).preventDefault();
+              if ((e as any)?.stopPropagation) (e as any).stopPropagation();
               if (!isUpdating) handleToggleStatus(item);
             }}
             disabled={isUpdating}
