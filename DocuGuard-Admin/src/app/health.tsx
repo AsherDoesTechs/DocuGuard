@@ -127,9 +127,10 @@ export default function AdminHealthScreen() {
   const paidSubscriptions = (health?.subscriptions || []).filter((s) => !s.freeTier && String(s.status || "") !== "free");
   const missingRenewal = paidSubscriptions.filter((s) => !s.expiresAt);
   const fmtBytes = (bytes: number) => {
-    if (!Number.isFinite(bytes) || bytes <= 0) return "0 MB";
-    const mb = bytes / (1024 * 1024);
-    return mb > 1024 ? `${(mb / 1024).toFixed(2)} GB` : `${mb.toFixed(2)} MB`;
+    const n = Number(bytes);
+    if (!Number.isFinite(n) || n <= 0) return "0 MB";
+    const mb = n / (1024 * 1024);
+    return mb >= 1024 ? `${(mb / 1024).toFixed(2)} GB` : `${mb.toFixed(2)} MB`;
   };
   const signOut = async () => { setSettingsOpen(false); try { const t = await getAdminToken(); if (t) await logoutAdmin(t); else await clearAdminToken(); } catch { await clearAdminToken(); } router.replace("/"); };
   const exportReport = async () => { try { await Share.share({ message: health ? JSON.stringify({ fetchedAt: new Date().toISOString(), health }, null, 2) : "No health data", title: "System Health Report" }); } catch { Alert.alert("Export unavailable", "Could not share report."); } };

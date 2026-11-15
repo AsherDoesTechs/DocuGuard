@@ -64,21 +64,34 @@ export default function AdminDocumentsScreen() {
     const failed = documents.filter((d) => !["completed", "pending", "unknown"].includes(String(d.ocrStatus))).length;
     const totalBytes = documents.reduce((s, d) => {
       const anyD = d as any;
-      const v = Number(
+      const raw =
         anyD.fileSize ??
-          anyD.file_size ??
-          anyD.size ??
-          anyD.bytes ??
-          anyD.storageBytes ??
-          anyD.file_size_bytes ??
-          anyD.fileSizeBytes ??
-          anyD.sizeBytes ??
-          0
-      );
-      return s + (Number.isFinite(v) ? v : 0);
+        anyD.file_size ??
+        anyD.size ??
+        anyD.bytes ??
+        anyD.storageBytes ??
+        anyD.file_size_bytes ??
+        anyD.fileSizeBytes ??
+        anyD.sizeBytes ??
+        anyD.length ??
+        0;
+      const v = typeof raw === "string" ? Number(raw) : Number(raw);
+      return s + (Number.isFinite(v) && v >= 0 ? v : 0);
     }, 0);
     const successRate = documents.length ? Math.round((completed / documents.length) * 100) : 0;
-    return { completed, pending, failed, totalBytes, successRate, prediction: failed > 0 ? `${failed} OCR issue${failed > 1 ? "s" : ""} need attention.` : pending > 0 ? `${pending} item${pending > 1 ? "s" : ""} still processing.` : "OCR pipeline stable." };
+    return {
+      completed,
+      pending,
+      failed,
+      totalBytes,
+      successRate,
+      prediction:
+        failed > 0
+          ? `${failed} OCR issue${failed > 1 ? "s" : ""} need attention.`
+          : pending > 0
+            ? `${pending} item${pending > 1 ? "s" : ""} still processing.`
+            : "OCR pipeline stable.",
+    };
   }, [documents]);
 
   const filteredDocs = useMemo(() => {
