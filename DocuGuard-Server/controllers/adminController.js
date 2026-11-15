@@ -297,7 +297,13 @@ exports.getSystemHealth = async (req, res) => {
     const whereStatus = hasColumn(docCols, "status") ? "COALESCE(status, 'active') <> 'deleted'" : "TRUE";
     const fileSizeExpr = hasColumn(docCols, "file_size")
       ? "COALESCE(SUM(file_size), 0)::bigint"
-      : "0::bigint";
+      : hasColumn(docCols, "file_size_bytes")
+        ? "COALESCE(SUM(file_size_bytes), 0)::bigint"
+        : hasColumn(docCols, "size")
+          ? "COALESCE(SUM(size), 0)::bigint"
+          : hasColumn(docCols, "bytes")
+            ? "COALESCE(SUM(bytes), 0)::bigint"
+            : "0::bigint";
     const hasOcrStatusCol = hasColumn(docCols, "ocr_status") || hasColumn(docCols, "ocrStatus");
     const ocrColRef = hasColumn(docCols, "ocr_status")
       ? "ocr_status"
