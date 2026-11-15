@@ -131,6 +131,9 @@ export default function AdminUsersScreen() {
   }, [users, searchQuery, filter, sort]);
 
   const handleToggleStatus = (user: AdminUser) => {
+    if (typeof window !== "undefined") {
+      window.alert(`Suspend/Activate clicked (id: ${String(user.id)})`);
+    }
     const status = String(user.status || "active");
     const nextStatus = status === "active" ? "suspended" : "active";
     const label = ui.privacyMode ? "Selected account" : user.email || user.name || "User";
