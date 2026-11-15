@@ -1,5 +1,5 @@
 ﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Pressable, RefreshControl, ScrollView, Share, StyleSheet, Text, View } from "react-native";
+import { Alert, RefreshControl, ScrollView, Share, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
@@ -9,7 +9,7 @@ import { getAdminUiSettings, subscribeAdminUiSettings, loadAdminUiSettings } fro
 import { AdminBottomNav } from "../components/AdminBottomNav";
 import { AdminSettingsModal } from "../components/AdminSettingsModal";
 import { AdminColors, AdminRadii } from "../theme/adminTheme";
-import { Badge, Card, IconButton, ProgressBar, ScreenHeader, StatCard, SkeletonScreen } from "../components/ui";
+import { Badge, Card, IconButton, ProgressBar, ScreenHeader, StatCard, SkeletonScreen, SyncLine, PressableScale, FadeInView } from "../components/ui";
 
 const REFRESH_MS = 15000;
 
@@ -17,6 +17,7 @@ export default function AdminHealthScreen() {
   const [health, setHealth] = useState<SystemHealthData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [ui, setUi] = useState(getAdminUiSettings());
@@ -24,7 +25,7 @@ export default function AdminHealthScreen() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => { loadAdminUiSettings(); return subscribeAdminUiSettings(() => setUi(getAdminUiSettings())); }, []);
-  const fetchHealth = useCallback(async (isRefresh = false, silent = false) => { if (isRefresh) setRefreshing(true); else if (!silent) setLoading(true); setErrorMessage(""); try { const token = await getAdminToken(); if (!token) { router.replace("/"); return; } const data = await getAdminSystemHealth(token); setHealth(((data as any).health ?? (data as any)) as SystemHealthData); setLastSync(new Date()); } catch (error) { if (!silent) setErrorMessage(error instanceof Error ? error.message : "Unable to load health metrics."); } finally { setLoading(false); setRefreshing(false); } }, []);
+  const fetchHealth = useCallback(async (isRefresh = false, silent = false) => { if (isRefresh) setRefreshing(true); else if (!silent) setLoading(true); if (silent || isRefresh) setSyncing(true); setErrorMessage(""); try { const token = await getAdminToken(); if (!token) { router.replace("/"); return; } const data = await getAdminSystemHealth(token); setHealth(((data as any).health ?? (data as any)) as SystemHealthData); setLastSync(new Date()); } catch (error) { if (!silent) setErrorMessage(error instanceof Error ? error.message : "Unable to load health metrics."); } finally { setLoading(false); setRefreshing(false); setTimeout(() => setSyncing(false), 350); } }, []);
   useEffect(() => { void fetchHealth(); }, [fetchHealth]);
   useEffect(() => { if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; } if (ui.autoSync) timerRef.current = setInterval(() => { void fetchHealth(false, true); }, REFRESH_MS); return () => { if (timerRef.current) clearInterval(timerRef.current); }; }, [ui.autoSync, fetchHealth]);
 
@@ -66,10 +67,11 @@ export default function AdminHealthScreen() {
   return (
     <SafeAreaView style={styles.safeArea} edges={["top","left","right"]}>
       <View style={styles.screen}>
-        <ScreenHeader title="System Health" subtitle={`${ui.autoSync ? "Auto-sync 15s" : "Sync paused"}${lastSync ? ` · ${lastSync.toLocaleTimeString()}` : ""}`} right={<View style={{ flexDirection: "row", gap: 8 }}><IconButton icon="share-outline" onPress={exportReport} label="Export" /><IconButton icon="refresh-outline" onPress={() => void fetchHealth(true)} label="Refresh" /><IconButton icon="settings-outline" onPress={() => setSettingsOpen(true)} label="Settings" tone="primary" /></View>} />
-        {loading && !health ? <SkeletonScreen /> : errorMessage ? (<View style={{ paddingHorizontal: 20 }}><Card><Text style={styles.errorTitle}>Diagnostics failed</Text><Text style={styles.muted}>{errorMessage}</Text><Pressable style={styles.retryBtn} onPress={() => void fetchHealth()}><Text style={styles.retryText}>Try again</Text></Pressable></Card></View>) : health && analytics ? (
+        <SyncLine syncing={syncing} />
+        <ScreenHeader title="Health" subtitle={`${ui.autoSync ? "Auto-sync 15s" : "Sync paused"}${lastSync ? ` · ${lastSync.toLocaleTimeString()}` : ""}${syncing ? " · syncing" : ""}`} right={<View style={{ flexDirection: "row", gap: 8 }}><IconButton icon="share-outline" onPress={exportReport} label="Export" /><IconButton icon="refresh-outline" onPress={() => void fetchHealth(true)} label="Refresh" spinning={syncing} /><IconButton icon="settings-outline" onPress={() => setSettingsOpen(true)} label="Settings" tone="primary" /></View>} />
+        {loading && !health ? <SkeletonScreen /> : errorMessage ? (<View style={{ paddingHorizontal: 20 }}><Card><Text style={styles.errorTitle}>Diagnostics failed</Text><Text style={styles.muted}>{errorMessage}</Text><PressableScale style={styles.retryBtn} onPress={() => void fetchHealth()}><Text style={styles.retryText}>Try again</Text></PressableScale></Card></View>) : health && analytics ? (
           <ScrollView style={styles.scroll} contentContainerStyle={[styles.content, { gap }]} showsVerticalScrollIndicator={false} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void fetchHealth(true)} tintColor={AdminColors.primary} />}>
-            <View style={{ flexDirection: "row", gap: ui.compactMode ? 8 : 12 }}><StatCard label="Health Score" value={`${analytics.healthScore}%`} icon="fitness-outline" color={analytics.healthScore===100?AdminColors.success:AdminColors.warning} bg={analytics.healthScore===100?AdminColors.successSoft:AdminColors.warningSoft} /><StatCard label="DB Latency" value={`${analytics.latency}ms`} icon="speedometer-outline" color={AdminColors.primary} bg={AdminColors.primarySoft} hint={String(health.database?.status||"—")} /></View>
+            <FadeInView><View style={{ flexDirection: "row", gap: ui.compactMode ? 8 : 12 }}><StatCard label="Health Score" value={`${analytics.healthScore}%`} icon="fitness-outline" color={analytics.healthScore===100?AdminColors.success:AdminColors.warning} bg={analytics.healthScore===100?AdminColors.successSoft:AdminColors.warningSoft} /><StatCard label="DB Latency" value={`${analytics.latency}ms`} icon="speedometer-outline" color={AdminColors.primary} bg={AdminColors.primarySoft} hint={String(health.database?.status||"—")} /></View></FadeInView>
             <Card title="Operational status"><View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}><Text style={{ fontSize: 13, color: AdminColors.textSecondary }}>Risk level</Text><Badge label={analytics.risk} tone={analytics.risk==="High"?"danger":analytics.risk==="Moderate"?"warning":"success"} /></View><View style={{ gap: 8 }}><View style={styles.mRow}><Text style={styles.mLabel}>Service availability</Text><Text style={styles.mVal}>{analytics.healthScore}%</Text></View><ProgressBar value={analytics.healthScore} color={analytics.healthScore>=90?AdminColors.success:AdminColors.warning} /><View style={styles.mRow}><Text style={styles.mLabel}>OCR success (24h)</Text><Text style={styles.mVal}>{analytics.ocrRate}%</Text></View><ProgressBar value={analytics.ocrRate} color={analytics.ocrRate>=90?AdminColors.success:AdminColors.warning} /></View>{ui.showInsights && <View style={styles.insights}>{analytics.recommendations.map((r,i)=>(<View key={i} style={styles.insight}><Ionicons name="sparkles-outline" size={14} color={AdminColors.primary} /><Text style={styles.insightText}>{r}</Text></View>))}</View>}</Card>
 
             <Card title="Services" subtitle={`Last checked: ${health.lastChecked ? new Date(health.lastChecked).toLocaleString() : "—"}`}>
@@ -87,7 +89,7 @@ export default function AdminHealthScreen() {
                 const exp = s.expiresAt ? new Date(s.expiresAt).toLocaleDateString() : "Not set";
                 const renew = s.renewBy ? new Date(s.renewBy).toLocaleDateString() : "Not set";
                 const due = s.daysUntilExpiry == null ? "set renewal date on server env" : s.daysUntilExpiry < 0 ? `${Math.abs(s.daysUntilExpiry)}d overdue` : `${s.daysUntilExpiry}d left`;
-                return (<View key={s.id} style={styles.subRow}><View style={{ flex: 1 }}><View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}><Text style={styles.sTitle}>{s.name}</Text><Badge label={st.replace("_"," ")} tone={tone as any} /></View><Text style={styles.sMeta}>{s.provider} · {s.billing} · {s.purpose}</Text><Text style={styles.sMeta}>Expires: {exp} · Renew by: {renew} · {due}</Text>{s.note ? <Text style={styles.sNote}>{s.note}</Text> : null}</View></View>);
+                return (<FadeInView key={s.id}><View style={styles.subRow}><View style={{ flex: 1 }}><View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}><Text style={styles.sTitle}>{s.name}</Text><Badge label={st.replace("_"," ")} tone={tone as any} /></View><Text style={styles.sMeta}>{s.provider} · {s.billing} · {s.purpose}</Text><Text style={styles.sMeta}>Expires: {exp} · Renew by: {renew} · {due}</Text>{s.note ? <Text style={styles.sNote}>{s.note}</Text> : null}</View></View></FadeInView>);
               })}</View> : <Text style={styles.muted}>No subscription data available.</Text>}
               <Text style={styles.summaryHint}>Set server env vars like AZURE_SUBSCRIPTION_EXPIRES_AT / *_RENEW_BY (ISO date) and *_BILLING_CYCLE to track renewals accurately.</Text>
             </Card>
@@ -97,7 +99,7 @@ export default function AdminHealthScreen() {
         ) : null}
         <AdminBottomNav />
       </View>
-      <AdminSettingsModal visible={settingsOpen} onClose={() => setSettingsOpen(false)} ui={ui} lastSync={lastSync} onSyncNow={() => void fetchHealth(false, true)} onSignOut={signOut} extra={<View><Pressable style={styles.settingAction} onPress={() => { setSettingsOpen(false); exportReport(); }}><Ionicons name="share-outline" size={16} color={AdminColors.text} /><Text style={styles.settingActionText}>Export health report (JSON)</Text></Pressable><Pressable style={styles.settingAction} onPress={() => void fetchHealth(true)}><Ionicons name="refresh-outline" size={16} color={AdminColors.text} /><Text style={styles.settingActionText}>Run diagnostics refresh</Text></Pressable></View>} />
+      <AdminSettingsModal visible={settingsOpen} onClose={() => setSettingsOpen(false)} ui={ui} lastSync={lastSync} syncing={syncing} onSyncNow={() => void fetchHealth(false, true)} onSignOut={signOut} extra={<View><PressableScale style={styles.settingAction} onPress={() => { setSettingsOpen(false); exportReport(); }}><Ionicons name="share-outline" size={16} color={AdminColors.text} /><Text style={styles.settingActionText}>Export health report (JSON)</Text></PressableScale><PressableScale style={styles.settingAction} onPress={() => void fetchHealth(true)}><Ionicons name="refresh-outline" size={16} color={AdminColors.text} /><Text style={styles.settingActionText}>Run diagnostics refresh</Text></PressableScale></View>} />
     </SafeAreaView>
   );
 }
@@ -106,7 +108,7 @@ function ServiceRow({ icon, title, meta, status, ok, warn }: { icon: any; title:
 function SummaryRow({ label, value }: { label: string; value: string }) { return <View style={styles.summaryRow}><Text style={styles.summaryLabel}>{label}</Text><Text style={styles.summaryValue}>{value}</Text></View>; }
 
 const styles = StyleSheet.create({
-  safeArea:{flex:1,backgroundColor:AdminColors.background}, screen:{flex:1}, scroll:{flex:1}, content:{paddingHorizontal:20,paddingBottom:24},
+  safeArea:{flex:1,backgroundColor:AdminColors.background}, screen:{flex:1}, scroll:{flex:1}, content:{paddingHorizontal:20,paddingBottom:110},
   muted:{fontSize:13,color:AdminColors.textSecondary,lineHeight:19}, errorTitle:{fontSize:16,fontWeight:"700",color:AdminColors.dangerText,marginBottom:4},
   retryBtn:{alignSelf:"flex-start",marginTop:12,backgroundColor:AdminColors.primary,paddingHorizontal:14,paddingVertical:10,borderRadius:AdminRadii.sm}, retryText:{color:"#fff",fontWeight:"700",fontSize:13},
   mRow:{flexDirection:"row",justifyContent:"space-between"}, mLabel:{fontSize:12,color:AdminColors.textSecondary}, mVal:{fontSize:12,fontWeight:"700",color:AdminColors.text},

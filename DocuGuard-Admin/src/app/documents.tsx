@@ -1,15 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, FlatList, Pressable, RefreshControl, Share, StyleSheet, Text, TextInput, View } from "react-native";
+import { Alert, FlatList, RefreshControl, Share, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { getAdminDocuments, logoutAdmin, type VaultDocument } from "../services/adminApi";
 import { getAdminToken, clearAdminToken } from "../services/adminSession";
-import { getAdminUiSettings, setAdminUiSettings, subscribeAdminUiSettings, loadAdminUiSettings, maskEmail, maskPerson } from "../services/adminSettings";
+import { getAdminUiSettings, setAdminUiSettings, subscribeAdminUiSettings, loadAdminUiSettings, maskPerson } from "../services/adminSettings";
 import { AdminBottomNav } from "../components/AdminBottomNav";
 import { AdminSettingsModal } from "../components/AdminSettingsModal";
 import { AdminColors, AdminRadii } from "../theme/adminTheme";
-import { Badge, BreakdownList, Card, IconButton, ProgressBar, ScreenHeader, StatCard, SkeletonScreen } from "../components/ui";
+import { Badge, BreakdownList, Card, IconButton, ProgressBar, ScreenHeader, StatCard, SkeletonScreen, SyncLine, PressableScale, FadeInView } from "../components/ui";
 
 type OcrFilter = "all" | "completed" | "pending" | "failed";
 type SortKey = "recent" | "name" | "size";
@@ -26,6 +26,7 @@ export default function AdminDocumentsScreen() {
   const [sort, setSort] = useState<SortKey>("recent");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [ui, setUi] = useState(getAdminUiSettings());
@@ -36,10 +37,11 @@ export default function AdminDocumentsScreen() {
 
   const fetchDocuments = useCallback(async (isRefresh = false, silent = false) => {
     if (isRefresh) setRefreshing(true); else if (!silent) setLoading(true);
+    if (silent || isRefresh) setSyncing(true);
     setErrorMessage("");
     try { const token = await getAdminToken(); if (!token) { router.replace("/"); return; } const data = await getAdminDocuments(token); setDocuments((Array.isArray(data) ? data : (data as any)?.documents || []) as VaultDocument[]); setLastSync(new Date()); }
     catch (error) { if (!silent) setErrorMessage(error instanceof Error ? error.message : "Unable to load documents."); }
-    finally { setLoading(false); setRefreshing(false); }
+    finally { setLoading(false); setRefreshing(false); setTimeout(() => setSyncing(false), 350); }
   }, []);
 
   useEffect(() => { void fetchDocuments(); }, [fetchDocuments]);
@@ -82,14 +84,15 @@ export default function AdminDocumentsScreen() {
 
   const renderItem = ({ item }: { item: VaultDocument }) => {
     const ocr = String(item.ocrStatus || "pending"); const tone = ocr === "completed" ? "success" : ocr === "pending" ? "warning" : "danger"; const cat = String((item as any).category || "other").toLowerCase();
-    return (<View style={styles.docCard}><View style={styles.iconBox}><Ionicons name="document-text-outline" size={20} color={AdminColors.primary} /></View><View style={{ flex: 1 }}><Text style={styles.docTitle} numberOfLines={1}>{item.title || item.fileName || "Untitled"}</Text><Text style={styles.docMeta} numberOfLines={1}>{ui.privacyMode ? maskPerson(item.ownerEmail) : (item.ownerEmail || "Unknown owner")} · {fmtBytes(Number(item.fileSize || 0))}</Text><View style={{ flexDirection: "row", gap: 6, marginTop: 6, flexWrap: "wrap" }}><Badge label={ocr} tone={tone as any} /><Badge label={catLabel(cat)} tone="neutral" /></View></View></View>);
+    return (<FadeInView><View style={styles.docCard}><View style={styles.iconBox}><Ionicons name="document-text-outline" size={20} color={AdminColors.primary} /></View><View style={{ flex: 1 }}><Text style={styles.docTitle} numberOfLines={1}>{item.title || item.fileName || "Untitled"}</Text><Text style={styles.docMeta} numberOfLines={1}>{ui.privacyMode ? maskPerson(item.ownerEmail) : (item.ownerEmail || "Unknown owner")} · {fmtBytes(Number(item.fileSize || 0))}</Text><View style={{ flexDirection: "row", gap: 6, marginTop: 6, flexWrap: "wrap" }}><Badge label={ocr} tone={tone as any} /><Badge label={catLabel(cat)} tone="neutral" /></View></View></View></FadeInView>);
   };
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
       <View style={styles.screen}>
-        <ScreenHeader title="Documents" subtitle={`${documents.length} files · ${ui.autoSync ? "Auto-sync 15s" : "Sync paused"}${lastSync ? ` · ${lastSync.toLocaleTimeString()}` : ""}`} right={<View style={{ flexDirection: "row", gap: 8 }}><IconButton icon="share-outline" onPress={exportDocs} label="Export" /><IconButton icon="refresh-outline" onPress={() => void fetchDocuments(true)} label="Refresh" /><IconButton icon="settings-outline" onPress={() => setSettingsOpen(true)} label="Settings" tone="primary" /></View>} />
-        {loading && documents.length === 0 ? <SkeletonScreen /> : errorMessage ? (<View style={{ paddingHorizontal: 20 }}><Card><Text style={styles.errorTitle}>Could not load documents</Text><Text style={styles.muted}>{errorMessage}</Text><Pressable style={styles.retryBtn} onPress={() => void fetchDocuments()}><Text style={styles.retryText}>Try again</Text></Pressable></Card></View>) : (
+        <SyncLine syncing={syncing} />
+        <ScreenHeader title="Documents" subtitle={`${ui.autoSync ? "Auto-sync 15s" : "Sync paused"}${lastSync ? ` · ${lastSync.toLocaleTimeString()}` : ""}${syncing ? " · syncing" : ""}`} right={<View style={{ flexDirection: "row", gap: 8 }}><IconButton icon="share-outline" onPress={exportDocs} label="Export" /><IconButton icon="refresh-outline" onPress={() => void fetchDocuments(true)} label="Refresh" spinning={syncing} /><IconButton icon="settings-outline" onPress={() => setSettingsOpen(true)} label="Settings" tone="primary" /></View>} />
+        {loading && documents.length === 0 ? <SkeletonScreen /> : errorMessage ? (<View style={{ paddingHorizontal: 20 }}><Card><Text style={styles.errorTitle}>Could not load documents</Text><Text style={styles.muted}>{errorMessage}</Text><PressableScale style={styles.retryBtn} onPress={() => void fetchDocuments()}><Text style={styles.retryText}>Try again</Text></PressableScale></Card></View>) : (
           <FlatList data={filteredDocs} keyExtractor={(item) => String(item.id)} renderItem={renderItem} contentContainerStyle={[styles.list, { gap: ui.compactMode ? 8 : 10 }]} style={{ flex: 1 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled"
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void fetchDocuments(true)} tintColor={AdminColors.primary} />}
             ListHeaderComponent={<View style={{ gap, marginBottom: 2 }}>
@@ -97,26 +100,26 @@ export default function AdminDocumentsScreen() {
               {ui.showInsights && <Card title="OCR pipeline"><BreakdownList segments={[{ label: "Completed", value: analytics.completed, color: AdminColors.success }, { label: "Pending", value: analytics.pending, color: AdminColors.warning }, { label: "Failed/Other", value: analytics.failed, color: AdminColors.danger }]} /><View style={{ marginTop: 12, gap: 6 }}><View style={styles.progressRow}><Text style={styles.progressLabel}>Completion</Text><Text style={styles.progressPct}>{analytics.successRate}%</Text></View><ProgressBar value={analytics.successRate} color={AdminColors.success} /></View><View style={styles.insight}><Ionicons name="sparkles-outline" size={14} color={AdminColors.primary} /><Text style={styles.insightText}>{analytics.prediction}</Text></View></Card>}
               <Card title="Categories" subtitle="Filter by category and totals">
                 <View style={styles.catGrid}>
-                  <Pressable style={[styles.catChip, categoryFilter === "all" && styles.catChipActive]} onPress={() => setCategoryFilter("all")}><Text style={[styles.catChipLabel, categoryFilter === "all" && styles.catChipLabelActive]}>All</Text><View style={[styles.catCount, categoryFilter === "all" && styles.catCountActive]}><Text style={[styles.catCountText, categoryFilter === "all" && styles.catCountTextActive]}>{documents.length}</Text></View></Pressable>
-                  {categories.map(([cat, count]) => (<Pressable key={cat} style={[styles.catChip, categoryFilter === cat && styles.catChipActive]} onPress={() => setCategoryFilter(cat)}><Text style={[styles.catChipLabel, categoryFilter === cat && styles.catChipLabelActive]} numberOfLines={1}>{catLabel(cat)}</Text><View style={[styles.catCount, categoryFilter === cat && styles.catCountActive]}><Text style={[styles.catCountText, categoryFilter === cat && styles.catCountTextActive]}>{count}</Text></View></Pressable>))}
+                  <PressableScale style={[styles.catChip, categoryFilter === "all" && styles.catChipActive]} onPress={() => setCategoryFilter("all")}><Text style={[styles.catChipLabel, categoryFilter === "all" && styles.catChipLabelActive]}>All</Text><View style={[styles.catCount, categoryFilter === "all" && styles.catCountActive]}><Text style={[styles.catCountText, categoryFilter === "all" && styles.catCountTextActive]}>{documents.length}</Text></View></PressableScale>
+                  {categories.map(([cat, count]) => (<PressableScale key={cat} style={[styles.catChip, categoryFilter === cat && styles.catChipActive]} onPress={() => setCategoryFilter(cat)}><Text style={[styles.catChipLabel, categoryFilter === cat && styles.catChipLabelActive]} numberOfLines={1}>{catLabel(cat)}</Text><View style={[styles.catCount, categoryFilter === cat && styles.catCountActive]}><Text style={[styles.catCountText, categoryFilter === cat && styles.catCountTextActive]}>{count}</Text></View></PressableScale>))}
                 </View>
                 {!categories.length && <Text style={styles.muted}>No category data from backend.</Text>}
               </Card>
-              <View style={styles.searchWrap}><Ionicons name="search-outline" size={18} color={AdminColors.textMuted} /><TextInput style={styles.searchInput} placeholder="Search title, owner, category, status…" placeholderTextColor={AdminColors.textMuted} value={searchQuery} onChangeText={setSearchQuery} />{!!searchQuery && <Pressable onPress={() => setSearchQuery("")}><Ionicons name="close-circle" size={18} color={AdminColors.textMuted} /></Pressable>}</View>
-              <View style={styles.chips}>{([{key:"all",label:"All OCR"},{key:"completed",label:"Completed"},{key:"pending",label:"Pending"},{key:"failed",label:"Failed/Other"}] as const).map((f) => (<Pressable key={f.key} style={[styles.chip, ocrFilter === f.key && styles.chipActive]} onPress={() => setOcrFilter(f.key)}><Text style={[styles.chipText, ocrFilter === f.key && styles.chipTextActive]}>{f.label}</Text></Pressable>))}</View>
-              <View style={styles.sortRow}><Text style={styles.sectionMeta}>{filteredDocs.length} result{filteredDocs.length===1?"":"s"}{categoryFilter!=="all"?` · ${catLabel(categoryFilter)}`:""}</Text><View style={styles.sortBtns}>{([{k:"recent",l:"Recent"},{k:"name",l:"Name"},{k:"size",l:"Size"}] as const).map((s)=>(<Pressable key={s.k} onPress={()=>setSort(s.k)} style={[styles.sortChip, sort===s.k&&styles.sortChipActive]}><Text style={[styles.sortText, sort===s.k&&styles.sortTextActive]}>{s.l}</Text></Pressable>))}</View></View>
+              <View style={styles.searchWrap}><Ionicons name="search-outline" size={18} color={AdminColors.textMuted} /><TextInput style={styles.searchInput} placeholder="Search title, owner, category, status…" placeholderTextColor={AdminColors.textMuted} value={searchQuery} onChangeText={setSearchQuery} />{!!searchQuery && <PressableScale onPress={() => setSearchQuery("")}><Ionicons name="close-circle" size={18} color={AdminColors.textMuted} /></PressableScale>}</View>
+              <View style={styles.chips}>{([{key:"all",label:"All OCR"},{key:"completed",label:"Completed"},{key:"pending",label:"Pending"},{key:"failed",label:"Failed/Other"}] as const).map((f) => (<PressableScale key={f.key} style={[styles.chip, ocrFilter === f.key && styles.chipActive]} onPress={() => setOcrFilter(f.key)}><Text style={[styles.chipText, ocrFilter === f.key && styles.chipTextActive]}>{f.label}</Text></PressableScale>))}</View>
+              <View style={styles.sortRow}><Text style={styles.sectionMeta}>{filteredDocs.length} result{filteredDocs.length===1?"":"s"}{categoryFilter!=="all"?` · ${catLabel(categoryFilter)}`:""}</Text><View style={styles.sortBtns}>{([{k:"recent",l:"Recent"},{k:"name",l:"Name"},{k:"size",l:"Size"}] as const).map((s)=>(<PressableScale key={s.k} onPress={()=>setSort(s.k)} style={[styles.sortChip, sort===s.k&&styles.sortChipActive]}><Text style={[styles.sortText, sort===s.k&&styles.sortTextActive]}>{s.l}</Text></PressableScale>))}</View></View>
             </View>}
             ListEmptyComponent={<View style={styles.empty}><Ionicons name="folder-open-outline" size={40} color={AdminColors.textMuted} /><Text style={styles.muted}>No documents match filters.</Text></View>} />
         )}
         <AdminBottomNav />
       </View>
-      <AdminSettingsModal visible={settingsOpen} onClose={() => setSettingsOpen(false)} ui={ui} lastSync={lastSync} onSyncNow={() => void fetchDocuments(false, true)} onSignOut={signOut} extra={<View><Pressable style={styles.settingAction} onPress={() => { setSettingsOpen(false); exportDocs(); }}><Ionicons name="share-outline" size={16} color={AdminColors.text} /><Text style={styles.settingActionText}>Export filtered documents (CSV)</Text></Pressable><Pressable style={styles.settingAction} onPress={() => { setSearchQuery(""); setOcrFilter("all"); setCategoryFilter("all"); setSort("recent"); }}><Ionicons name="filter-outline" size={16} color={AdminColors.text} /><Text style={styles.settingActionText}>Reset filters & search</Text></Pressable><Pressable style={styles.settingAction} onPress={() => setAdminUiSettings({ privacyMode: !ui.privacyMode })}><Ionicons name="eye-off-outline" size={16} color={AdminColors.text} /><Text style={styles.settingActionText}>{ui.privacyMode ? "Disable privacy masking" : "Enable privacy masking"}</Text></Pressable></View>} />
+      <AdminSettingsModal visible={settingsOpen} onClose={() => setSettingsOpen(false)} ui={ui} lastSync={lastSync} syncing={syncing} onSyncNow={() => void fetchDocuments(false, true)} onSignOut={signOut} extra={<View><PressableScale style={styles.settingAction} onPress={() => { setSettingsOpen(false); exportDocs(); }}><Ionicons name="share-outline" size={16} color={AdminColors.text} /><Text style={styles.settingActionText}>Export filtered documents (CSV)</Text></PressableScale><PressableScale style={styles.settingAction} onPress={() => { setSearchQuery(""); setOcrFilter("all"); setCategoryFilter("all"); setSort("recent"); }}><Ionicons name="filter-outline" size={16} color={AdminColors.text} /><Text style={styles.settingActionText}>Reset filters & search</Text></PressableScale><PressableScale style={styles.settingAction} onPress={() => setAdminUiSettings({ privacyMode: !ui.privacyMode })}><Ionicons name="eye-off-outline" size={16} color={AdminColors.text} /><Text style={styles.settingActionText}>{ui.privacyMode ? "Disable privacy masking" : "Enable privacy masking"}</Text></PressableScale></View>} />
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea:{flex:1,backgroundColor:AdminColors.background}, screen:{flex:1}, list:{paddingHorizontal:20,paddingBottom:24},
+  safeArea:{flex:1,backgroundColor:AdminColors.background}, screen:{flex:1}, list:{paddingHorizontal:20,paddingBottom:110},
   muted:{fontSize:13,color:AdminColors.textSecondary,lineHeight:19}, errorTitle:{fontSize:16,fontWeight:"700",color:AdminColors.dangerText,marginBottom:4},
   retryBtn:{alignSelf:"flex-start",marginTop:12,backgroundColor:AdminColors.primary,paddingHorizontal:14,paddingVertical:10,borderRadius:AdminRadii.sm}, retryText:{color:"#fff",fontWeight:"700",fontSize:13},
   searchWrap:{flexDirection:"row",alignItems:"center",gap:8,backgroundColor:AdminColors.surface,borderWidth:1,borderColor:AdminColors.border,borderRadius:14,paddingHorizontal:14,height:46}, searchInput:{flex:1,fontSize:14,color:AdminColors.text},

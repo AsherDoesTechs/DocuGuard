@@ -1,13 +1,13 @@
 ﻿import React, { useEffect, useRef } from "react";
-import { Animated, StyleProp, StyleSheet, View, ViewStyle } from "react-native";
+import { Animated, Easing, StyleProp, StyleSheet, View, ViewStyle } from "react-native";
 import { AdminColors, AdminRadii } from "../../theme/adminTheme";
 
 export function Skeleton({ width, height, radius = 8, style }: { width?: number | string; height?: number; radius?: number; style?: StyleProp<ViewStyle> }) {
-  const opacity = useRef(new Animated.Value(0.45)).current;
+  const opacity = useRef(new Animated.Value(0.4)).current;
   useEffect(() => {
     const loop = Animated.loop(Animated.sequence([
-      Animated.timing(opacity, { toValue: 1, duration: 700, useNativeDriver: true }),
-      Animated.timing(opacity, { toValue: 0.45, duration: 700, useNativeDriver: true }),
+      Animated.timing(opacity, { toValue: 0.95, duration: 750, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+      Animated.timing(opacity, { toValue: 0.4, duration: 750, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
     ]));
     loop.start();
     return () => loop.stop();
@@ -18,9 +18,12 @@ export function Skeleton({ width, height, radius = 8, style }: { width?: number 
 export function SkeletonCard({ lines = 3 }: { lines?: number }) {
   return (
     <View style={styles.card}>
-      <Skeleton width="45%" height={14} style={{ marginBottom: 12 }} />
+      <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 12 }}>
+        <Skeleton width="42%" height={14} />
+        <Skeleton width={48} height={20} radius={10} />
+      </View>
       {Array.from({ length: lines }).map((_, i) => (
-        <Skeleton key={i} width={i === lines - 1 ? "60%" : "100%"} height={12} style={{ marginBottom: 8 }} />
+        <Skeleton key={i} width={i === lines - 1 ? "58%" : "100%"} height={12} style={{ marginBottom: 8 }} />
       ))}
     </View>
   );
@@ -33,9 +36,10 @@ export function SkeletonList({ count = 5 }: { count?: number }) {
         <View key={i} style={styles.row}>
           <Skeleton width={42} height={42} radius={12} />
           <View style={{ flex: 1, gap: 8 }}>
-            <Skeleton width="70%" height={13} />
-            <Skeleton width="45%" height={11} />
+            <Skeleton width={`${72 - (i % 3) * 10}%`} height={13} />
+            <Skeleton width={`${48 - (i % 2) * 8}%`} height={11} />
           </View>
+          <Skeleton width={64} height={24} radius={8} />
         </View>
       ))}
     </View>
@@ -49,6 +53,7 @@ export function SkeletonScreen() {
         <View style={{ flex: 1 }}><SkeletonCard lines={2} /></View>
         <View style={{ flex: 1 }}><SkeletonCard lines={2} /></View>
       </View>
+      <View style={styles.card}><Skeleton width="30%" height={14} style={{ marginBottom: 10 }} /><Skeleton width="100%" height={90} radius={12} /></View>
       <SkeletonCard lines={4} />
       <SkeletonList count={4} />
     </View>
@@ -56,7 +61,7 @@ export function SkeletonScreen() {
 }
 
 const styles = StyleSheet.create({
-  base: { backgroundColor: "#E5E7EB" },
+  base: { backgroundColor: "#DDE3EA" },
   card: { backgroundColor: AdminColors.surface, borderRadius: AdminRadii.lg, borderWidth: 1, borderColor: AdminColors.border, padding: 16 },
   row: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: AdminColors.surface, borderRadius: AdminRadii.lg, borderWidth: 1, borderColor: AdminColors.border, padding: 14 },
 });

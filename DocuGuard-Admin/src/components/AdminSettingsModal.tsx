@@ -4,6 +4,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { AdminColors, AdminRadii } from "../theme/adminTheme";
 import { getAdminApiBaseUrl } from "../services/adminApi";
 import { AdminUiSettings, setAdminUiSettings } from "../services/adminSettings";
+import { SyncPulse } from "./ui/SyncStatus";
+import { PressableScale } from "./ui/PressableScale";
 
 type Props = {
   visible: boolean;
@@ -14,22 +16,23 @@ type Props = {
   onSignOut: () => void;
   extra?: React.ReactNode;
   title?: string;
+  syncing?: boolean;
 };
 
-export function AdminSettingsModal({ visible, onClose, ui, lastSync, onSyncNow, onSignOut, extra, title = "Settings" }: Props) {
+export function AdminSettingsModal({ visible, onClose, ui, lastSync, onSyncNow, onSignOut, extra, title = "Settings", syncing }: Props) {
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={styles.overlay} onPress={onClose}>
         <Pressable style={styles.card} onPress={() => {}}>
           <View style={styles.header}>
             <Text style={styles.title}>{title}</Text>
-            <Pressable onPress={onClose} accessibilityRole="button" style={styles.closeBtn}><Ionicons name="close" size={20} color={AdminColors.text} /></Pressable>
+            <PressableScale onPress={onClose} accessibilityRole="button" style={styles.closeBtn}><Ionicons name="close" size={20} color={AdminColors.text} /></PressableScale>
           </View>
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 8 }}>
             <Text style={styles.group}>Sync</Text>
             <Row label="Auto-sync every 15s" hint="Automatically refresh data in the background" value={ui.autoSync} onChange={(v) => setAdminUiSettings({ autoSync: v })} />
-            <Info label="Last sync" value={lastSync ? lastSync.toLocaleString() : "Not synced yet"} />
-            <Pressable style={styles.actionRow} onPress={onSyncNow}><Ionicons name="refresh-outline" size={16} color={AdminColors.primary} /><Text style={styles.actionText}>Sync now</Text></Pressable>
+            <View style={styles.infoRow}><View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}><Text style={styles.infoLabel}>Last sync</Text><SyncPulse active={ui.autoSync} syncing={syncing} /></View><Text style={styles.infoValue} selectable>{syncing ? "Syncing now…" : lastSync ? lastSync.toLocaleString() : "Not synced yet"}</Text></View>
+            <PressableScale style={styles.actionRow} onPress={onSyncNow}><Ionicons name="refresh-outline" size={16} color={AdminColors.primary} /><Text style={styles.actionText}>{syncing ? "Syncing…" : "Sync now"}</Text></PressableScale>
 
             <Text style={[styles.group, { marginTop: 14 }]}>Display</Text>
             <Row label="Compact layout" hint="Reduce spacing for faster scanning" value={ui.compactMode} onChange={(v) => setAdminUiSettings({ compactMode: v })} />
@@ -45,7 +48,7 @@ export function AdminSettingsModal({ visible, onClose, ui, lastSync, onSyncNow, 
 
             {extra ? <View style={{ marginTop: 14 }}><Text style={styles.group}>Page actions</Text>{extra}</View> : null}
 
-            <Pressable style={styles.signOutBtn} onPress={onSignOut}><Ionicons name="log-out-outline" size={18} color="#fff" /><Text style={styles.signOutText}>Sign out</Text></Pressable>
+            <PressableScale style={styles.signOutBtn} onPress={onSignOut}><Ionicons name="log-out-outline" size={18} color="#fff" /><Text style={styles.signOutText}>Sign out</Text></PressableScale>
           </ScrollView>
         </Pressable>
       </Pressable>

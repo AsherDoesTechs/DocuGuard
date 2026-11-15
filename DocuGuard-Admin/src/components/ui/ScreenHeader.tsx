@@ -1,5 +1,5 @@
-﻿import React from "react";
-import { Pressable, StyleSheet, Text, View, ViewStyle } from "react-native";
+﻿import React, { useEffect, useRef } from "react";
+import { Animated, Easing, Pressable, StyleSheet, Text, View, ViewStyle } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { AdminColors } from "../../theme/adminTheme";
 
@@ -9,18 +9,18 @@ type Props = {
   onBack?: () => void;
   right?: React.ReactNode;
   style?: ViewStyle;
+  topSlot?: React.ReactNode;
 };
 
-export function ScreenHeader({ title, subtitle, onBack, right, style }: Props) {
+export function ScreenHeader({ title, subtitle, onBack, right, style, topSlot }: Props) {
   return (
     <View style={[styles.header, style]}>
       <View style={styles.left}>
         {onBack ? (
-          <Pressable onPress={onBack} style={styles.iconBtn} accessibilityRole="button">
-            <Ionicons name="chevron-back" size={20} color={AdminColors.text} />
-          </Pressable>
+          <IconButton icon="chevron-back" onPress={onBack} label="Back" />
         ) : null}
         <View style={{ flex: 1 }}>
+          {topSlot}
           <Text style={styles.title} numberOfLines={1}>{title}</Text>
           {subtitle ? <Text style={styles.subtitle} numberOfLines={1}>{subtitle}</Text> : null}
         </View>
@@ -35,18 +35,48 @@ export function IconButton({
   onPress,
   label,
   tone = "default",
+  spinning = false,
+  disabled = false,
 }: {
   icon: React.ComponentProps<typeof Ionicons>["name"];
   onPress: () => void;
   label?: string;
   tone?: "default" | "primary" | "danger";
+  spinning?: boolean;
+  disabled?: boolean;
 }) {
+  const scale = useRef(new Animated.Value(1)).current;
+  const spin = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    spin.stopAnimation();
+    if (spinning) {
+      spin.setValue(0);
+      const loop = Animated.loop(Animated.timing(spin, { toValue: 1, duration: 900, easing: Easing.linear, useNativeDriver: true }));
+      loop.start();
+      return () => loop.stop();
+    }
+    spin.setValue(0);
+  }, [spinning, spin]);
+
   const color = tone === "danger" ? AdminColors.danger : tone === "primary" ? AdminColors.primary : AdminColors.text;
   const bg = tone === "danger" ? AdminColors.dangerSoft : tone === "primary" ? AdminColors.primarySoft : AdminColors.surface;
   const border = tone === "danger" ? "#FECACA" : tone === "primary" ? "#BFDBFE" : AdminColors.border;
+  const rotate = spin.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "360deg"] });
   return (
-    <Pressable onPress={onPress} style={[styles.iconBtn, { backgroundColor: bg, borderColor: border }]} accessibilityRole="button" accessibilityLabel={label}>
-      <Ionicons name={icon} size={18} color={color} />
+    <Pressable
+      onPress={onPress}
+      disabled={disabled || spinning}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      onPressIn={() => Animated.spring(scale, { toValue: 0.92, useNativeDriver: true, speed: 40, bounciness: 0 }).start()}
+      onPressOut={() => Animated.spring(scale, { toValue: 1, useNativeDriver: true, speed: 24, bounciness: 4 }).start()}
+    >
+      <Animated.View style={[styles.iconBtn, { backgroundColor: bg, borderColor: border, opacity: disabled ? 0.6 : 1, transform: [{ scale }] }]}>
+        <Animated.View style={{ transform: [{ rotate }] }}>
+          <Ionicons name={icon} size={18} color={color} />
+        </Animated.View>
+      </Animated.View>
     </Pressable>
   );
 }
