@@ -372,6 +372,15 @@ exports.getSystemHealth = async (req, res) => {
       return "active";
     };
 
+    const azureExpiresAt = process.env.AZURE_SUBSCRIPTION_EXPIRES_AT || null;
+    const renderExpiresAt = process.env.RENDER_SUBSCRIPTION_EXPIRES_AT || null;
+    const supabaseConfigured = Boolean(process.env.SUPABASE_URL || process.env.DATABASE_URL);
+    const supabaseExpiresAt = process.env.SUPABASE_SUBSCRIPTION_EXPIRES_AT || null;
+    const supabaseFreeTier = !supabaseExpiresAt && !process.env.SUPABASE_BILLING_CYCLE;
+    const resendConfigured = Boolean(process.env.RESEND_API_KEY);
+    const resendExpiresAt = process.env.RESEND_SUBSCRIPTION_EXPIRES_AT || null;
+    const resendFreeTier = !resendExpiresAt && !process.env.RESEND_BILLING_CYCLE;
+
     const subscriptions = [
       {
         id: "azure-ocr",
@@ -379,10 +388,11 @@ exports.getSystemHealth = async (req, res) => {
         provider: "Microsoft Azure",
         purpose: "OCR and document extraction",
         configured: azureConfigured,
-        expiresAt: process.env.AZURE_SUBSCRIPTION_EXPIRES_AT || null,
-        renewBy: process.env.AZURE_SUBSCRIPTION_RENEW_BY || process.env.AZURE_SUBSCRIPTION_EXPIRES_AT || null,
+        freeTier: false,
+        expiresAt: azureExpiresAt,
+        renewBy: process.env.AZURE_SUBSCRIPTION_RENEW_BY || azureExpiresAt || null,
         billing: process.env.AZURE_BILLING_CYCLE || "monthly",
-        status: serviceStatusFromExpiry(process.env.AZURE_SUBSCRIPTION_EXPIRES_AT || null, azureConfigured),
+        status: serviceStatusFromExpiry(azureExpiresAt, azureConfigured),
         note: azureIssue || (azureConfigured ? "Credentials detected on server." : "Set AZURE_ENDPOINT and AZURE_KEY on the API server."),
       },
       {
@@ -391,10 +401,11 @@ exports.getSystemHealth = async (req, res) => {
         provider: "Render",
         purpose: "DocuGuard backend hosting",
         configured: true,
-        expiresAt: process.env.RENDER_SUBSCRIPTION_EXPIRES_AT || null,
-        renewBy: process.env.RENDER_SUBSCRIPTION_RENEW_BY || process.env.RENDER_SUBSCRIPTION_EXPIRES_AT || null,
+        freeTier: false,
+        expiresAt: renderExpiresAt,
+        renewBy: process.env.RENDER_SUBSCRIPTION_RENEW_BY || renderExpiresAt || null,
         billing: process.env.RENDER_BILLING_CYCLE || "monthly",
-        status: serviceStatusFromExpiry(process.env.RENDER_SUBSCRIPTION_EXPIRES_AT || null, true),
+        status: serviceStatusFromExpiry(renderExpiresAt, true),
         note: process.env.RENDER_SERVICE_ID ? "Running on Render service." : "Hosted service; set renewal date env vars to track expiry.",
       },
       {
@@ -402,24 +413,28 @@ exports.getSystemHealth = async (req, res) => {
         name: "Supabase (DB/Auth/Storage)",
         provider: "Supabase",
         purpose: "Database, auth, and file storage",
-        configured: Boolean(process.env.SUPABASE_URL || process.env.DATABASE_URL),
-        expiresAt: process.env.SUPABASE_SUBSCRIPTION_EXPIRES_AT || null,
-        renewBy: process.env.SUPABASE_SUBSCRIPTION_RENEW_BY || process.env.SUPABASE_SUBSCRIPTION_EXPIRES_AT || null,
-        billing: process.env.SUPABASE_BILLING_CYCLE || "monthly",
-        status: serviceStatusFromExpiry(process.env.SUPABASE_SUBSCRIPTION_EXPIRES_AT || null, Boolean(process.env.SUPABASE_URL || process.env.DATABASE_URL)),
-        note: "Core data service.",
+        configured: supabaseConfigured,
+        freeTier: supabaseFreeTier,
+        expiresAt: supabaseExpiresAt,
+        renewBy: process.env.SUPABASE_SUBSCRIPTION_RENEW_BY || supabaseExpiresAt || null,
+        billing: process.env.SUPABASE_BILLING_CYCLE || (supabaseFreeTier ? "free tier" : "monthly"),
+        status: supabaseFreeTier ? "free" : serviceStatusFromExpiry(supabaseExpiresAt, supabaseConfigured),
+        note: supabaseFreeTier ? (supabaseConfigured ? "Free tier — no renewal date required." : "Free tier — but SUPABASE_URL/DATABASE_URL is missing.") : "Core data service.",
       },
       {
         id: "resend",
         name: "Resend Email",
         provider: "Resend",
         purpose: "Verification and reminder emails",
-        configured: Boolean(process.env.RESEND_API_KEY),
-        expiresAt: process.env.RESEND_SUBSCRIPTION_EXPIRES_AT || null,
-        renewBy: process.env.RESEND_SUBSCRIPTION_RENEW_BY || process.env.RESEND_SUBSCRIPTION_EXPIRES_AT || null,
-        billing: process.env.RESEND_BILLING_CYCLE || "monthly",
-        status: serviceStatusFromExpiry(process.env.RESEND_SUBSCRIPTION_EXPIRES_AT || null, Boolean(process.env.RESEND_API_KEY)),
-        note: process.env.RESEND_API_KEY ? "API key configured." : "RESEND_API_KEY missing; email delivery unavailable.",
+        configured: resendConfigured,
+        freeTier: resendFreeTier,
+        expiresAt: resendExpiresAt,
+        renewBy: process.env.RESEND_SUBSCRIPTION_RENEW_BY || resendExpiresAt || null,
+        billing: process.env.RESEND_BILLING_CYCLE || (resendFreeTier ? "free tier" : "monthly"),
+        status: resendFreeTier ? "free" : serviceStatusFromExpiry(resendExpiresAt, resendConfigured),
+        note: resendFreeTier
+          ? (resendConfigured ? "Free tier — no renewal date required." : "Free tier — RESEND_API_KEY missing; email delivery unavailable.")
+          : (resendConfigured ? "API key configured." : "RESEND_API_KEY missing; email delivery unavailable."),
       },
     ].map((s) => ({ ...s, daysUntilExpiry: daysUntil(s.expiresAt) }));
 

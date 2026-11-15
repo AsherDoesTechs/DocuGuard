@@ -160,11 +160,12 @@ export default function AdminDashboardScreen() {
                   <View style={styles.serviceLine}><View style={{ flex: 1 }}><Text style={styles.serviceName}>Azure Document Intelligence (OCR)</Text><Text style={styles.serviceMeta}>{serviceSummary.azureIssue || (serviceSummary.azureStatus === "operational" ? "Configured and operational" : serviceSummary.azureStatus === "not_configured" ? "Not detected on server env" : "Check configuration/status")}</Text></View><Badge label={serviceSummary.azureStatus.replace("_"," ")} tone={serviceSummary.azureStatus==="operational"?"success":serviceSummary.azureStatus==="not_configured"?"danger":"warning"} /></View>
                   {(serviceSummary.expired.length > 0 || serviceSummary.expiring.length > 0) ? (
                     <View style={styles.alertBox}><Ionicons name="alert-circle-outline" size={16} color={AdminColors.warning} /><Text style={styles.alertText}>{serviceSummary.expired.length} expired, {serviceSummary.expiring.length} expiring soon. Review renewals in Health.</Text></View>
-                  ) : serviceSummary.subs.length ? <Text style={styles.muted}>No subscriptions expiring soon. {serviceSummary.subs.filter((s)=>!s.expiresAt).length} service(s) need renewal dates set on server.</Text> : <Text style={styles.muted}>Subscription data unavailable.</Text>}
-                  {serviceSummary.subs.slice(0,3).map((s) => {
-                    const due = s.daysUntilExpiry == null ? "date not set" : s.daysUntilExpiry < 0 ? `${Math.abs(s.daysUntilExpiry)}d overdue` : `${s.daysUntilExpiry}d left`;
-                    const tone = s.status === "active" ? "success" : s.status === "expiring_soon" ? "warning" : s.status === "expired" ? "danger" : "neutral";
-                    return <View key={s.id} style={styles.subMini}><Text style={styles.subMiniName} numberOfLines={1}>{s.name}</Text><Text style={styles.subMiniMeta}>{s.renewBy ? `Renew by ${new Date(s.renewBy).toLocaleDateString()}` : "Renewal date not set"} · {due}</Text><Badge label={s.status.replace("_"," ")} tone={tone as any} /></View>;
+                  ) : serviceSummary.subs.length ? <Text style={styles.muted}>No subscriptions expiring soon. {serviceSummary.subs.filter((s)=>!s.freeTier && String(s.status||"")!=="free" && !s.expiresAt).length} paid service(s) need renewal dates set on server.</Text> : <Text style={styles.muted}>Subscription data unavailable.</Text>}
+                  {serviceSummary.subs.slice(0,4).map((s) => {
+                    const isFree = Boolean(s.freeTier) || s.status === "free";
+                    const due = isFree ? "no renewal needed" : s.daysUntilExpiry == null ? "date not set" : s.daysUntilExpiry < 0 ? `${Math.abs(s.daysUntilExpiry)}d overdue` : `${s.daysUntilExpiry}d left`;
+                    const tone = isFree ? "info" : s.status === "active" ? "success" : s.status === "expiring_soon" ? "warning" : s.status === "expired" ? "danger" : "neutral";
+                    return <View key={s.id} style={styles.subMini}><Text style={styles.subMiniName} numberOfLines={1}>{s.name}</Text><Text style={styles.subMiniMeta}>{isFree ? "Free tier" : s.renewBy ? `Renew by ${new Date(s.renewBy).toLocaleDateString()}` : "Renewal date not set"} · {due}</Text><Badge label={isFree ? "free tier" : s.status.replace("_"," ")} tone={tone as any} /></View>;
                   })}
                 </View>
               </Card>

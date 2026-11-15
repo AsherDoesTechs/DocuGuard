@@ -59,6 +59,8 @@ export default function AdminHealthScreen() {
     return { dbOk, storageOk, ocrOk, ocrStatus, healthScore, ocrRate, queue, latency, risk, recommendations, expiringSubs, expiredSubs };
   }, [health]);
 
+  const paidSubscriptions = (health?.subscriptions || []).filter((s) => !s.freeTier && String(s.status || "") !== "free");
+  const missingRenewal = paidSubscriptions.filter((s) => !s.expiresAt);
   const fmtBytes = (bytes: number) => { if (!bytes || bytes <= 0) return "0 MB"; const mb = bytes / (1024 * 1024); return mb > 1024 ? `${(mb / 1024).toFixed(2)} GB` : `${mb.toFixed(2)} MB`; };
   const signOut = async () => { setSettingsOpen(false); try { const t = await getAdminToken(); if (t) await logoutAdmin(t); else await clearAdminToken(); } catch { await clearAdminToken(); } router.replace("/"); };
   const exportReport = async () => { try { await Share.share({ message: health ? JSON.stringify({ fetchedAt: new Date().toISOString(), health }, null, 2) : "No health data", title: "System Health Report" }); } catch { Alert.alert("Export unavailable", "Could not share report."); } };
@@ -82,16 +84,17 @@ export default function AdminHealthScreen() {
               </View>
             </Card>
 
-            <Card title="Subscriptions & renewals" subtitle="Track service expiration and when to subscribe again">
+            <Card title="Subscriptions & renewals" subtitle="Paid service expiration and free-tier services">
               {(health.subscriptions || []).length ? <View style={{ gap: 10 }}>{(health.subscriptions || []).map((s) => {
                 const st = String(s.status || "active");
-                const tone = st === "active" ? "success" : st === "expiring_soon" ? "warning" : st === "expired" ? "danger" : "neutral";
+                const isFree = Boolean(s.freeTier) || st === "free";
+                const tone = isFree ? "info" : st === "active" ? "success" : st === "expiring_soon" ? "warning" : st === "expired" ? "danger" : "neutral";
                 const exp = s.expiresAt ? new Date(s.expiresAt).toLocaleDateString() : "Not set";
                 const renew = s.renewBy ? new Date(s.renewBy).toLocaleDateString() : "Not set";
                 const due = s.daysUntilExpiry == null ? "set renewal date on server env" : s.daysUntilExpiry < 0 ? `${Math.abs(s.daysUntilExpiry)}d overdue` : `${s.daysUntilExpiry}d left`;
-                return (<FadeInView key={s.id}><View style={styles.subRow}><View style={{ flex: 1 }}><View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}><Text style={styles.sTitle}>{s.name}</Text><Badge label={st.replace("_"," ")} tone={tone as any} /></View><Text style={styles.sMeta}>{s.provider} · {s.billing} · {s.purpose}</Text><Text style={styles.sMeta}>Expires: {exp} · Renew by: {renew} · {due}</Text>{s.note ? <Text style={styles.sNote}>{s.note}</Text> : null}</View></View></FadeInView>);
+                return (<FadeInView key={s.id}><View style={styles.subRow}><View style={{ flex: 1 }}><View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}><Text style={styles.sTitle}>{s.name}</Text><Badge label={isFree ? "free tier" : st.replace("_"," ")} tone={tone as any} /></View><Text style={styles.sMeta}>{s.provider} · {s.billing} · {s.purpose}</Text>{isFree ? <Text style={styles.sMeta}>No renewal date needed</Text> : <Text style={styles.sMeta}>Expires: {exp} · Renew by: {renew} · {due}</Text>}{s.note ? <Text style={styles.sNote}>{s.note}</Text> : null}</View></View></FadeInView>);
               })}</View> : <Text style={styles.muted}>No subscription data available.</Text>}
-              <Text style={styles.summaryHint}>Set server env vars like AZURE_SUBSCRIPTION_EXPIRES_AT / *_RENEW_BY (ISO date) and *_BILLING_CYCLE to track renewals accurately.</Text>
+              {missingRenewal.length ? <Text style={styles.summaryHint}>Set server env vars like AZURE_SUBSCRIPTION_EXPIRES_AT / *_RENEW_BY (ISO date) and *_BILLING_CYCLE to track renewals accurately. Missing: {missingRenewal.map((s) => s.name).join(", ")}.</Text> : <Text style={styles.summaryHint}>Paid service renewal dates are set on the server. Supabase and Resend run on free tiers and do not expire.</Text>}
             </Card>
 
             <Card title="Summary"><SummaryRow label="Overall status" value={String(health.status||"unknown").toUpperCase()} /><SummaryRow label="Uptime" value={String(health.uptime||"—")} /><SummaryRow label="OCR queue" value={String(analytics.queue)} /><SummaryRow label="OCR failed" value={String(Number(health.azureOcr?.failedCount||0))} /><SummaryRow label="Documents indexed" value={String(health.supabaseStorage?.totalFiles ?? 0)} /><Text style={styles.summaryHint}>Metrics derived from backend admin telemetry. Admins do not access user document contents.</Text></Card>

@@ -111,10 +111,11 @@ export type SystemHealthData = {
     provider: string;
     purpose: string;
     configured: boolean;
+    freeTier?: boolean;
     expiresAt: string | null;
     renewBy: string | null;
     billing: string;
-    status: "active" | "expiring_soon" | "expired" | "not_configured" | string;
+    status: "active" | "expiring_soon" | "expired" | "not_configured" | "free" | string;
     note?: string;
     daysUntilExpiry?: number | null;
   }[];
