@@ -1,5 +1,5 @@
 ﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, RefreshControl, ScrollView, Share, StyleSheet, Text, View } from "react-native";
+import { Alert, RefreshControl, ScrollView, Share, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
@@ -14,6 +14,8 @@ import { Badge, Card, IconButton, ProgressBar, ScreenHeader, StatCard, SkeletonS
 const REFRESH_MS = 15000;
 
 export default function AdminHealthScreen() {
+  const { width } = useWindowDimensions();
+  const isWideNav = width >= 768;
   const [health, setHealth] = useState<SystemHealthData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -89,8 +91,8 @@ export default function AdminHealthScreen() {
       <View style={styles.screen}>
         <SyncLine syncing={syncing} />
         <ScreenHeader title="Health" subtitle={`${ui.autoSync ? "Auto-sync 15s" : "Sync paused"}${lastSync ? ` · ${lastSync.toLocaleTimeString()}` : ""}${syncing ? " · syncing" : ""}`} right={<View style={{ flexDirection: "row", gap: 8 }}><IconButton icon="share-outline" onPress={exportReport} label="Export" /><IconButton icon="refresh-outline" onPress={() => void fetchHealth(true)} label="Refresh" spinning={syncing} /><IconButton icon="settings-outline" onPress={() => setSettingsOpen(true)} label="Settings" tone="primary" /></View>} />
-        {loading && !health ? <SkeletonScreen /> : errorMessage ? (<View style={{ paddingHorizontal: 20 }}><Card><Text style={styles.errorTitle}>Diagnostics failed</Text><Text style={styles.muted}>{errorMessage}</Text><PressableScale style={styles.retryBtn} onPress={() => void fetchHealth()}><Text style={styles.retryText}>Try again</Text></PressableScale></Card></View>) : health && analytics ? (
-          <ScrollView style={styles.scroll} contentContainerStyle={[styles.content, { gap }]} showsVerticalScrollIndicator={false} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void fetchHealth(true)} tintColor={AdminColors.primary} />}>
+        {loading && !health ? <SkeletonScreen /> : errorMessage ? (<View style={{ paddingHorizontal: isWideNav ? 88 : 20 }}><Card><Text style={styles.errorTitle}>Diagnostics failed</Text><Text style={styles.muted}>{errorMessage}</Text><PressableScale style={styles.retryBtn} onPress={() => void fetchHealth()}><Text style={styles.retryText}>Try again</Text></PressableScale></Card></View>) : health && analytics ? (
+          <ScrollView style={styles.scroll} contentContainerStyle={[styles.content, { gap, paddingRight: isWideNav ? 88 : 20 }]} showsVerticalScrollIndicator={false} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void fetchHealth(true)} tintColor={AdminColors.primary} />}>
             <FadeInView><View style={{ flexDirection: "row", gap: ui.compactMode ? 8 : 12 }}><StatCard label="Health Score" value={`${analytics.healthScore}%`} icon="fitness-outline" color={analytics.healthScore===100?AdminColors.success:AdminColors.warning} bg={analytics.healthScore===100?AdminColors.successSoft:AdminColors.warningSoft} /><StatCard label="DB Latency" value={`${analytics.latency}ms`} icon="speedometer-outline" color={AdminColors.primary} bg={AdminColors.primarySoft} hint={String(health.database?.status||"—")} /></View></FadeInView>
             <Card title="Operational status"><View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}><Text style={{ fontSize: 13, color: AdminColors.textSecondary }}>Risk level</Text><Badge label={analytics.risk} tone={analytics.risk==="High"?"danger":analytics.risk==="Moderate"?"warning":"success"} /></View><View style={{ gap: 8 }}><View style={styles.mRow}><Text style={styles.mLabel}>Service availability</Text><Text style={styles.mVal}>{analytics.healthScore}%</Text></View><ProgressBar value={analytics.healthScore} color={analytics.healthScore>=90?AdminColors.success:AdminColors.warning} /><View style={styles.mRow}><Text style={styles.mLabel}>OCR success (24h)</Text><Text style={styles.mVal}>{analytics.ocrRate}%</Text></View><ProgressBar value={analytics.ocrRate} color={analytics.ocrRate>=90?AdminColors.success:AdminColors.warning} /></View>{ui.showInsights && <View style={styles.insights}>{analytics.recommendations.map((r,i)=>(<View key={i} style={styles.insight}><Ionicons name="sparkles-outline" size={14} color={AdminColors.primary} /><Text style={styles.insightText}>{r}</Text></View>))}</View>}</Card>
 

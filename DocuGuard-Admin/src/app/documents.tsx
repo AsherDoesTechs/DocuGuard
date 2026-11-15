@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, FlatList, RefreshControl, Share, StyleSheet, Text, TextInput, View } from "react-native";
+import { Alert, FlatList, RefreshControl, Share, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
@@ -15,10 +15,18 @@ type OcrFilter = "all" | "completed" | "pending" | "failed";
 type SortKey = "recent" | "name" | "size";
 const REFRESH_MS = 15000;
 
-function fmtBytes(bytes: number) { if (!Number.isFinite(bytes) || bytes <= 0) return "0 B"; const k = 1024; const sizes = ["B", "KB", "MB", "GB"]; const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1); return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`; }
+function fmtBytes(bytes: number) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB"];
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1);
+  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
+}
 function catLabel(c: string) { const s = String(c || "other"); return s.charAt(0).toUpperCase() + s.slice(1); }
 
 export default function AdminDocumentsScreen() {
+  const { width } = useWindowDimensions();
+  const isWideNav = width >= 768;
   const [documents, setDocuments] = useState<VaultDocument[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [ocrFilter, setOcrFilter] = useState<OcrFilter>("all");
@@ -54,7 +62,11 @@ export default function AdminDocumentsScreen() {
     const completed = documents.filter((d) => String(d.ocrStatus) === "completed").length;
     const pending = documents.filter((d) => String(d.ocrStatus) === "pending").length;
     const failed = documents.filter((d) => !["completed","pending","unknown"].includes(String(d.ocrStatus))).length;
-    const totalBytes = documents.reduce((s, d) => s + (Number(d.fileSize) || 0), 0);
+    const totalBytes = documents.reduce((s, d) => {
+      const anyD = d as any;
+      const v = Number(anyD.fileSize ?? anyD.file_size ?? anyD.size ?? anyD.bytes ?? anyD.storageBytes ?? 0);
+      return s + (Number.isFinite(v) ? v : 0);
+    }, 0);
     const successRate = documents.length ? Math.round((completed / documents.length) * 100) : 0;
     return { completed, pending, failed, totalBytes, successRate, prediction: failed > 0 ? `${failed} OCR issue${failed>1?"s":""} need attention.` : pending > 0 ? `${pending} item${pending>1?"s":""} still processing.` : "OCR pipeline stable." };
   }, [documents]);
@@ -71,20 +83,42 @@ export default function AdminDocumentsScreen() {
       return [d.title, d.fileName, d.ownerEmail, d.id, ocr, cat].some((v) => String(v ?? "").toLowerCase().includes(q));
     });
     list = [...list].sort((a, b) => {
+      const anyA = a as any; const anyB = b as any;
       if (sort === "name") return String(a.title || a.fileName || "").localeCompare(String(b.title || b.fileName || ""));
-      if (sort === "size") return Number(b.fileSize || 0) - Number(a.fileSize || 0);
+      if (sort === "size") return Number(anyB.fileSize ?? anyB.file_size ?? anyB.size ?? 0) - Number(anyA.fileSize ?? anyA.file_size ?? anyA.size ?? 0);
       return new Date((b as any).createdAt || 0).getTime() - new Date((a as any).createdAt || 0).getTime();
     });
     return list;
   }, [documents, searchQuery, ocrFilter, categoryFilter, sort]);
 
-  const exportDocs = async () => { try { const rows = [["id","title","fileName","category","ownerEmail","ocrStatus","fileSize","createdAt"].join(",")]; filteredDocs.forEach((d) => rows.push([ui.privacyMode ? maskPerson(d.id) : d.id, d.title||"", ui.privacyMode ? "restricted" : (d.fileName||""), (d as any).category||"other", ui.privacyMode ? maskPerson(d.ownerEmail) : (d.ownerEmail||""), d.ocrStatus||"", d.fileSize||0, (d as any).createdAt||""].map((v)=>`"${String(v).replace(/"/g,'""')}"`).join(","))); await Share.share({ message: rows.join("\n"), title: "Documents Export" }); } catch { Alert.alert("Export unavailable", "Could not share export."); } };
+  const exportDocs = async () => {
+    try {
+      const rows = [["id","title","fileName","category","ownerEmail","ocrStatus","fileSize","createdAt"].join(",")];
+      filteredDocs.forEach((d) => {
+        const anyD = d as any;
+        const sizeVal = Number(anyD.fileSize ?? anyD.file_size ?? anyD.size ?? 0);
+        rows.push([
+          ui.privacyMode ? maskPerson(d.id) : d.id,
+          d.title || "",
+          ui.privacyMode ? "restricted" : (d.fileName || ""),
+          anyD.category || "other",
+          ui.privacyMode ? maskPerson(d.ownerEmail) : (d.ownerEmail || ""),
+          d.ocrStatus || "",
+          Number.isFinite(sizeVal) ? sizeVal : 0,
+          anyD.createdAt || "",
+        ].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","));
+      });
+      await Share.share({ message: rows.join("\n"), title: "Documents Export" });
+    } catch { Alert.alert("Export unavailable", "Could not share export."); }
+  };
   const signOut = async () => { setSettingsOpen(false); try { const t = await getAdminToken(); if (t) await logoutAdmin(t); else await clearAdminToken(); } catch { await clearAdminToken(); } router.replace("/"); };
   const gap = ui.compactMode ? 10 : 14;
 
   const renderItem = ({ item }: { item: VaultDocument }) => {
-    const ocr = String(item.ocrStatus || "pending"); const tone = ocr === "completed" ? "success" : ocr === "pending" ? "warning" : "danger"; const cat = String((item as any).category || "other").toLowerCase();
-    return (<FadeInView><View style={styles.docCard}><View style={styles.iconBox}><Ionicons name="document-text-outline" size={20} color={AdminColors.primary} /></View><View style={{ flex: 1 }}><Text style={styles.docTitle} numberOfLines={1}>{item.title || item.fileName || "Untitled"}</Text><Text style={styles.docMeta} numberOfLines={1}>{ui.privacyMode ? maskPerson(item.ownerEmail) : (item.ownerEmail || "Unknown owner")} · {fmtBytes(Number(item.fileSize || 0))}</Text><View style={{ flexDirection: "row", gap: 6, marginTop: 6, flexWrap: "wrap" }}><Badge label={ocr} tone={tone as any} /><Badge label={catLabel(cat)} tone="neutral" /></View></View></View></FadeInView>);
+    const anyD = item as any;
+    const ocr = String(item.ocrStatus || "pending"); const tone = ocr === "completed" ? "success" : ocr === "pending" ? "warning" : "danger"; const cat = String(anyD.category || "other").toLowerCase();
+    const sizeVal = Number(anyD.fileSize ?? anyD.file_size ?? anyD.size ?? 0);
+    return (<FadeInView><View style={styles.docCard}><View style={styles.iconBox}><Ionicons name="document-text-outline" size={20} color={AdminColors.primary} /></View><View style={{ flex: 1 }}><Text style={styles.docTitle} numberOfLines={1}>{item.title || item.fileName || "Untitled"}</Text><Text style={styles.docMeta} numberOfLines={1}>{ui.privacyMode ? maskPerson(item.ownerEmail) : (item.ownerEmail || "Unknown owner")} · {fmtBytes(Number.isFinite(sizeVal) ? sizeVal : 0)}</Text><View style={{ flexDirection: "row", gap: 6, marginTop: 6, flexWrap: "wrap" }}><Badge label={ocr} tone={tone as any} /><Badge label={catLabel(cat)} tone="neutral" /></View></View></View></FadeInView>);
   };
 
   return (
@@ -92,8 +126,8 @@ export default function AdminDocumentsScreen() {
       <View style={styles.screen}>
         <SyncLine syncing={syncing} />
         <ScreenHeader title="Documents" subtitle={`${ui.autoSync ? "Auto-sync 15s" : "Sync paused"}${lastSync ? ` · ${lastSync.toLocaleTimeString()}` : ""}${syncing ? " · syncing" : ""}`} right={<View style={{ flexDirection: "row", gap: 8 }}><IconButton icon="share-outline" onPress={exportDocs} label="Export" /><IconButton icon="refresh-outline" onPress={() => void fetchDocuments(true)} label="Refresh" spinning={syncing} /><IconButton icon="settings-outline" onPress={() => setSettingsOpen(true)} label="Settings" tone="primary" /></View>} />
-        {loading && documents.length === 0 ? <SkeletonScreen /> : errorMessage ? (<View style={{ paddingHorizontal: 20 }}><Card><Text style={styles.errorTitle}>Could not load documents</Text><Text style={styles.muted}>{errorMessage}</Text><PressableScale style={styles.retryBtn} onPress={() => void fetchDocuments()}><Text style={styles.retryText}>Try again</Text></PressableScale></Card></View>) : (
-          <FlatList data={filteredDocs} keyExtractor={(item) => String(item.id)} renderItem={renderItem} contentContainerStyle={[styles.list, { gap: ui.compactMode ? 8 : 10 }]} style={{ flex: 1 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled"
+        {loading && documents.length === 0 ? <SkeletonScreen /> : errorMessage ? (<View style={{ paddingHorizontal: isWideNav ? 88 : 20 }}><Card><Text style={styles.errorTitle}>Could not load documents</Text><Text style={styles.muted}>{errorMessage}</Text><PressableScale style={styles.retryBtn} onPress={() => void fetchDocuments()}><Text style={styles.retryText}>Try again</Text></PressableScale></Card></View>) : (
+          <FlatList data={filteredDocs} keyExtractor={(item) => String(item.id)} renderItem={renderItem} contentContainerStyle={[styles.list, { gap: ui.compactMode ? 8 : 10, paddingRight: isWideNav ? 88 : 20 }]} style={{ flex: 1 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled"
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void fetchDocuments(true)} tintColor={AdminColors.primary} />}
             ListHeaderComponent={<View style={{ gap, marginBottom: 2 }}>
               <View style={{ flexDirection: "row", gap: ui.compactMode ? 8 : 12 }}><StatCard label="OCR Success" value={`${analytics.successRate}%`} icon="scan-outline" color={AdminColors.success} bg={AdminColors.successSoft} /><StatCard label="Storage" value={fmtBytes(analytics.totalBytes)} icon="cloud-outline" color={AdminColors.primary} bg={AdminColors.primarySoft} /></View>

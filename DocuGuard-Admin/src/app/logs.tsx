@@ -1,5 +1,5 @@
 ﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, FlatList, RefreshControl, Share, StyleSheet, Text, TextInput, View } from "react-native";
+import { Alert, FlatList, RefreshControl, Share, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
@@ -13,11 +13,13 @@ import { Badge, BarChart, BreakdownList, Card, IconButton, ScreenHeader, StatCar
 
 type SevFilter = "all" | "info" | "warning" | "critical";
 const REFRESH_MS = 15000;
-function sevOf(item: AuditLogEntry): "info"|"warning"|"critical" { const s = String(item.severity||"info").toLowerCase(); return s==="critical"?"critical":s==="warning"?"warning":"info"; }
-function maskActor(a?: string|null){ const s=String(a||""); if(!s) return "—"; if(s.includes("@")){ const at=s.indexOf("@"); return `${s.slice(0,1)}•••${s.slice(at)}`; } if(/^\d+$/.test(s)) return `user ••${s.slice(-2)}`; return s.length>10?`${s.slice(0,3)}•••${s.slice(-2)}`:s; }
-function maskIp(ip?: string|null){ const s=String(ip||""); if(!s) return "—"; const parts=s.split("."); if(parts.length===4) return `${parts[0]}.${parts[1]}.•••.•••`; return "•••"; }
+function sevOf(item: AuditLogEntry): "info" | "warning" | "critical" { const s = String(item.severity || "info").toLowerCase(); return s === "critical" ? "critical" : s === "warning" ? "warning" : "info"; }
+function maskActor(a?: string | null) { const s = String(a || ""); if (!s) return "—"; if (s.includes("@")) { const at = s.indexOf("@"); return `${s.slice(0, 1)}•••${s.slice(at)}`; } if (/^\d+$/.test(s)) return `user ••${s.slice(-2)}`; return s.length > 10 ? `${s.slice(0, 3)}•••${s.slice(-2)}` : s; }
+function maskIp(ip?: string | null) { const s = String(ip || ""); if (!s) return "—"; const parts = s.split("."); if (parts.length === 4) return `${parts[0]}.${parts[1]}.•••.•••`; return "•••"; }
 
 export default function AdminLogsScreen() {
+  const { width } = useWindowDimensions();
+  const isWideNav = width >= 768;
   const [logs, setLogs] = useState<AuditLogEntry[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [filter, setFilter] = useState<SevFilter>("all");
@@ -61,8 +63,8 @@ export default function AdminLogsScreen() {
       <View style={styles.screen}>
         <SyncLine syncing={syncing} />
         <ScreenHeader title="Security Logs" subtitle={`${ui.autoSync ? "Auto-sync 15s" : "Sync paused"}${lastSync ? ` · ${lastSync.toLocaleTimeString()}` : ""}${syncing ? " · syncing" : ""}`} right={<View style={{ flexDirection: "row", gap: 8 }}><IconButton icon="share-outline" onPress={exportLogs} label="Export" /><IconButton icon="refresh-outline" onPress={() => void fetchLogs(true)} label="Refresh" spinning={syncing} /><IconButton icon="settings-outline" onPress={() => setSettingsOpen(true)} label="Settings" tone="primary" /></View>} />
-        {loading && logs.length === 0 ? <SkeletonScreen /> : errorMessage ? (<View style={{ paddingHorizontal: 20 }}><Card><Text style={styles.errorTitle}>Could not load logs</Text><Text style={styles.muted}>{errorMessage}</Text><PressableScale style={styles.retryBtn} onPress={() => void fetchLogs()}><Text style={styles.retryText}>Try again</Text></PressableScale></Card></View>) : (
-          <FlatList data={filteredLogs} keyExtractor={(item,idx)=>String(item.id ?? idx)} renderItem={renderItem} contentContainerStyle={[styles.list, { gap: ui.compactMode ? 8 : 10 }]} style={{ flex: 1 }} showsVerticalScrollIndicator={false}
+        {loading && logs.length === 0 ? <SkeletonScreen /> : errorMessage ? (<View style={{ paddingHorizontal: isWideNav ? 88 : 20 }}><Card><Text style={styles.errorTitle}>Could not load logs</Text><Text style={styles.muted}>{errorMessage}</Text><PressableScale style={styles.retryBtn} onPress={() => void fetchLogs()}><Text style={styles.retryText}>Try again</Text></PressableScale></Card></View>) : (
+          <FlatList data={filteredLogs} keyExtractor={(item) => String(item.id)} renderItem={renderItem} contentContainerStyle={[styles.list, { gap: ui.compactMode ? 8 : 10, paddingRight: isWideNav ? 88 : 20 }]} style={{ flex: 1 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled"
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void fetchLogs(true)} tintColor={AdminColors.primary} />}
             ListHeaderComponent={<View style={{ gap, marginBottom: 2 }}>
               <View style={{ flexDirection: "row", gap: ui.compactMode ? 8 : 12 }}><StatCard label="24h Events" value={analytics.last24h} icon="time-outline" color={AdminColors.primary} bg={AdminColors.primarySoft} /><StatCard label="Critical" value={analytics.critical} icon="alert-circle-outline" color={AdminColors.danger} bg={AdminColors.dangerSoft} /></View>
