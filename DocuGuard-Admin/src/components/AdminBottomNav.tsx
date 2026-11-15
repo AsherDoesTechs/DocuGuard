@@ -1,5 +1,5 @@
 ﻿import React, { useEffect, useRef } from "react";
-import { Animated, Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import { Animated, Platform, Pressable, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { router, usePathname } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -16,6 +16,10 @@ const TABS = [
 export function AdminBottomNav() {
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+  const isTablet = width >= 768;
+
+  if (isTablet) return null;
 
   return (
     <View style={[styles.container, { paddingBottom: Math.max(insets.bottom, Platform.OS === "web" ? 10 : 8) }]}>

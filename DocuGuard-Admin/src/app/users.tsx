@@ -74,15 +74,53 @@ export default function AdminUsersScreen() {
   }, [users, searchQuery, filter, sort]);
 
   const handleToggleStatus = (user: AdminUser) => {
-    const status = String(user.status || "active"); const nextStatus = status === "active" ? "suspended" : "active";
-    Alert.alert(`${nextStatus === "suspended" ? "Suspend" : "Activate"} user`, `${ui.privacyMode ? "Selected account" : (user.email || user.name || "User")} will be ${nextStatus}.`, [
-      { text: "Cancel", style: "cancel" },
-      { text: "Confirm", style: nextStatus === "suspended" ? "destructive" : "default", onPress: async () => {
-        try { const token = await getAdminToken(); if (!token) return; await updateAdminUserStatus(token, user.id, nextStatus as any);
-          setUsers((prev) => prev.map((u) => (String(u.id) === String(user.id) ? { ...u, status: nextStatus } : u)));
-        } catch (err: any) { Alert.alert("Update failed", err?.message || "Could not update status."); }
-      }},
-    ]);
+    const status = String(user.status || "active");
+    const nextStatus = status === "active" ? "suspended" : "active";
+    Alert.alert(
+      `${nextStatus === "suspended" ? "Suspend" : "Activate"} user`,
+      `${ui.privacyMode ? "Selected account" : user.email || user.name || "User"} will be ${nextStatus}.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Confirm",
+          style: nextStatus === "suspended" ? "destructive" : "default",
+          onPress: async () => {
+            try {
+              const token = await getAdminToken();
+              if (!token) {
+                Alert.alert("Not signed in", "Please sign in again.");
+                router.replace("/");
+                return;
+              }
+              const res: any = await updateAdminUserStatus(token, user.id, nextStatus);
+              const updated = res?.user;
+              if (updated && typeof updated === "object") {
+                setUsers((prev) =>
+                  prev.map((u) =>
+                    String(u.id) === String(user.id)
+                      ? { ...u, ...updated, status: String(updated.status || nextStatus) }
+                      : u,
+                  ),
+                );
+              } else {
+                setUsers((prev) =>
+                  prev.map((u) =>
+                    String(u.id) === String(user.id) ? { ...u, status: nextStatus } : u,
+                  ),
+                );
+              }
+            } catch (err: any) {
+              const msg =
+                err?.response?.data?.error ||
+                err?.data?.error ||
+                err?.message ||
+                "Could not update status.";
+              Alert.alert("Update failed", msg);
+            }
+          },
+        },
+      ],
+    );
   };
 
   const exportUsers = async () => { try { const rows = [["id","name","email","role","status","createdAt"].join(",")]; filteredUsers.forEach((u) => rows.push([ui.privacyMode ? maskPerson(u.id) : u.id, ui.privacyMode ? maskPerson(u.name) : (u.name||""), ui.privacyMode ? maskEmail(u.email) : (u.email||""), u.role||"user", u.status||"active", (u as any).createdAt||""].map((v)=>`"${String(v).replace(/"/g,'""')}"`).join(","))); await Share.share({ message: rows.join("\n"), title: "Users Export" }); } catch { Alert.alert("Export unavailable", "Could not share export."); } };

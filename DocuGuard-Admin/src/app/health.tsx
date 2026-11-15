@@ -35,28 +35,46 @@ export default function AdminHealthScreen() {
     const storageStatus = String(health.supabaseStorage?.status || "").toLowerCase();
     const storageOk = storageStatus === "operational";
     const ocrStatus = String(health.azureOcr?.status || "").toLowerCase();
+    const ocrConfigured =
+      health.azureOcr?.configured === true ||
+      (health.azureOcr?.endpointConfigured === true && health.azureOcr?.keyConfigured === true);
     const ocrOk = ocrStatus === "operational";
-    const score = [dbOk, storageOk || storageStatus === "unknown", ocrOk || ocrStatus === "configured" || ocrStatus === "unknown"].filter(Boolean).length;
+    const score = [
+      dbOk,
+      storageOk || storageStatus === "unknown",
+      ocrConfigured || ocrStatus === "operational" || ocrStatus === "configured" || ocrStatus === "unknown",
+    ].filter(Boolean).length;
     const healthScore = Math.round((score / 3) * 100);
-    const ocrRate = Number(health.azureOcr?.successRate24h ?? 0);
+    const ocrRateRaw = Number(health.azureOcr?.successRate24h);
+    const ocrRate = Number.isFinite(ocrRateRaw) ? Math.round(ocrRateRaw) : 0;
     const queue = Number(health.azureOcr?.pendingQueueCount ?? 0);
     const latency = Number(health.database?.latencyMs ?? 0);
     const subs = health.subscriptions || [];
     const expiringSubs = subs.filter((s) => s.status === "expiring_soon").length;
     const expiredSubs = subs.filter((s) => s.status === "expired").length;
-    const risk: "Low" | "Moderate" | "High" = !dbOk || expiredSubs > 0 ? "High" : !storageOk || queue > 20 || expiringSubs > 0 || ocrStatus === "not_configured" || ocrStatus === "degraded" ? "Moderate" : "Low";
+    const risk: "Low" | "Moderate" | "High" =
+      !dbOk || expiredSubs > 0
+        ? "High"
+        : !storageOk || queue > 20 || expiringSubs > 0 || ocrStatus === "not_configured" || ocrStatus === "degraded"
+          ? "Moderate"
+          : "Low";
     const recommendations: string[] = [];
     if (!dbOk) recommendations.push("Database unreachable — check connection/credentials.");
-    if (storageStatus !== "operational" && storageStatus !== "unknown") recommendations.push("Storage degraded — verify Supabase storage config.");
-    if (ocrStatus === "not_configured") recommendations.push("Azure OCR not detected: set AZURE_ENDPOINT/AZURE_KEY (or AZURE_DOCUMENT_INTELLIGENCE_*) on the API server and redeploy.");
-    if (ocrStatus === "configured") recommendations.push("Azure credentials detected but OCR telemetry is limited by schema; verify OCR status tracking.");
+    if (storageStatus !== "operational" && storageStatus !== "unknown")
+      recommendations.push("Storage degraded — verify Supabase storage config.");
+    if (ocrStatus === "not_configured" || !ocrConfigured)
+      recommendations.push(
+        "Azure OCR not detected: set AZURE_ENDPOINT/AZURE_KEY (or AZURE_DOCUMENT_INTELLIGENCE_*) on the API server and redeploy.",
+      );
+    if (ocrStatus === "configured")
+      recommendations.push("Azure credentials detected but OCR telemetry is limited by schema; verify OCR status tracking.");
     if (queue > 20) recommendations.push("OCR queue elevated — monitor processing throughput.");
     if (latency > 500) recommendations.push("High DB latency — investigate load/network.");
-    if (expiredSubs > 0) recommendations.push(`${expiredSubs} service subscription${expiredSubs>1?"s":""} expired — renew immediately.`);
-    if (expiringSubs > 0) recommendations.push(`${expiringSubs} service subscription${expiringSubs>1?"s":""} expiring soon.`);
+    if (expiredSubs > 0) recommendations.push(`${expiredSubs} service subscription${expiredSubs > 1 ? "s" : ""} expired — renew immediately.`);
+    if (expiringSubs > 0) recommendations.push(`${expiringSubs} service subscription${expiringSubs > 1 ? "s" : ""} expiring soon.`);
     if (health.azureOcr?.issue) recommendations.push(`OCR: ${health.azureOcr.issue}`);
     if (!recommendations.length) recommendations.push("All monitored services appear healthy.");
-    return { dbOk, storageOk, ocrOk, ocrStatus, healthScore, ocrRate, queue, latency, risk, recommendations, expiringSubs, expiredSubs };
+    return { dbOk, storageOk, ocrOk, ocrStatus, ocrConfigured, healthScore, ocrRate, queue, latency, risk, recommendations, expiringSubs, expiredSubs };
   }, [health]);
 
   const paidSubscriptions = (health?.subscriptions || []).filter((s) => !s.freeTier && String(s.status || "") !== "free");
@@ -80,7 +98,22 @@ export default function AdminHealthScreen() {
               <View style={{ gap: 12 }}>
                 <ServiceRow icon="server-outline" title="Database" meta={`Latency ${analytics.latency} ms`} status={String(health.database?.status||"unknown")} ok={analytics.dbOk} />
                 <ServiceRow icon="cloud-outline" title="Storage" meta={`${health.supabaseStorage?.totalFiles ?? 0} files · ${fmtBytes(Number(health.supabaseStorage?.bucketUsageBytes || 0))}`} status={String(health.supabaseStorage?.status||"unknown")} ok={analytics.storageOk} />
-                <ServiceRow icon="scan-outline" title="Azure OCR" meta={`${analytics.queue} pending · ${analytics.ocrRate}% success · ${Number(health.azureOcr?.completedCount||0)} completed`} status={String(health.azureOcr?.status||"unknown")} ok={analytics.ocrOk} warn={analytics.ocrStatus==="configured" || analytics.ocrStatus==="unknown" || analytics.ocrStatus==="not_configured"} />
+                <ServiceRow
+                  icon="scan-outline"
+                  title="Azure OCR"
+                  meta={
+                    analytics.ocrStatus === "configured"
+                      ? "Credentials set on server; DB OCR status tracking not available (backlog/rates may show 0)."
+                      : `${analytics.queue} pending · ${analytics.ocrRate}% success · ${Number(health.azureOcr?.completedCount || 0)} completed`
+                  }
+                  status={String(health.azureOcr?.status || "unknown")}
+                  ok={analytics.ocrOk}
+                  warn={
+                    analytics.ocrStatus === "configured" ||
+                    analytics.ocrStatus === "unknown" ||
+                    analytics.ocrStatus === "not_configured"
+                  }
+                />
               </View>
             </Card>
 

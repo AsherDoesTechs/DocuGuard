@@ -94,7 +94,12 @@ export default function AdminDashboardScreen() {
     const expiring = subs.filter((s) => s.status === "expiring_soon");
     const expired = subs.filter((s) => s.status === "expired");
     const azure = health?.azureOcr;
-    return { subs, expiring, expired, azureStatus: String(azure?.status || "unknown"), azureIssue: azure?.issue || null };
+    const azureStatusRaw = String(azure?.status || "unknown");
+    const azureConfigured =
+      azure?.configured === true ||
+      (azure?.endpointConfigured === true && azure?.keyConfigured === true);
+    const azureStatus = azureConfigured && azureStatusRaw === "not_configured" ? "configured" : azureStatusRaw;
+    return { subs, expiring, expired, azure, azureStatus, azureConfigured, azureIssue: azure?.issue || null };
   }, [health]);
 
   const syncMeta = useMemo(() => {
@@ -112,6 +117,7 @@ export default function AdminDashboardScreen() {
     if (partialMessage) items.push({ tone: "warning", text: partialMessage });
     if (serviceSummary.azureStatus === "not_configured") items.push({ tone: "danger", text: "Azure OCR not detected on server. Configure credentials and redeploy API.", route: "/health" });
     else if (serviceSummary.azureStatus === "degraded") items.push({ tone: "warning", text: serviceSummary.azureIssue || "Azure OCR is degraded.", route: "/health" });
+    else if (serviceSummary.azureConfigured && serviceSummary.azureStatus === "configured") items.push({ tone: "info", text: "Azure OCR credentials detected; telemetry fields may be limited until schema is updated.", route: "/health" });
     if (serviceSummary.expired.length) items.push({ tone: "danger", text: `${serviceSummary.expired.length} service subscription${serviceSummary.expired.length>1?"s":""} expired. Renew now.`, route: "/health" });
     if (serviceSummary.expiring.length) items.push({ tone: "warning", text: `${serviceSummary.expiring.length} service subscription${serviceSummary.expiring.length>1?"s":""} expiring soon.`, route: "/health" });
     if (analytics.critical24h > 0) items.push({ tone: "danger", text: `${analytics.critical24h} critical security event${analytics.critical24h>1?"s":""} in last 24h.`, route: "/logs" });
@@ -157,7 +163,7 @@ export default function AdminDashboardScreen() {
 
               <Card title="Services & subscriptions" subtitle="OCR status and paid service renewals" right={<PressableScale onPress={() => router.push("/health" as any)}><Text style={styles.link}>Details</Text></PressableScale>}>
                 <View style={{ gap: 10 }}>
-                  <View style={styles.serviceLine}><View style={{ flex: 1 }}><Text style={styles.serviceName}>Azure Document Intelligence (OCR)</Text><Text style={styles.serviceMeta}>{serviceSummary.azureIssue || (serviceSummary.azureStatus === "operational" ? "Configured and operational" : serviceSummary.azureStatus === "not_configured" ? "Not detected on server env" : "Check configuration/status")}</Text></View><Badge label={serviceSummary.azureStatus.replace("_"," ")} tone={serviceSummary.azureStatus==="operational"?"success":serviceSummary.azureStatus==="not_configured"?"danger":"warning"} /></View>
+                  <View style={styles.serviceLine}><View style={{ flex: 1 }}><Text style={styles.serviceName}>Azure Document Intelligence (OCR)</Text><Text style={styles.serviceMeta}>{serviceSummary.azureIssue || (serviceSummary.azureStatus === "operational" ? "Configured and operational" : serviceSummary.azureConfigured ? "Configured on server (telemetry may be limited)" : serviceSummary.azureStatus === "not_configured" ? "Not detected on server env" : "Check configuration/status")}</Text></View><Badge label={serviceSummary.azureStatus.replace(/_/g," ")} tone={serviceSummary.azureStatus==="operational"?"success":serviceSummary.azureStatus==="not_configured"?"danger":"warning"} /></View>
                   {(serviceSummary.expired.length > 0 || serviceSummary.expiring.length > 0) ? (
                     <View style={styles.alertBox}><Ionicons name="alert-circle-outline" size={16} color={AdminColors.warning} /><Text style={styles.alertText}>{serviceSummary.expired.length} expired, {serviceSummary.expiring.length} expiring soon. Review renewals in Health.</Text></View>
                   ) : serviceSummary.subs.length ? <Text style={styles.muted}>No subscriptions expiring soon. {serviceSummary.subs.filter((s)=>!s.freeTier && String(s.status||"")!=="free" && !s.expiresAt).length} paid service(s) need renewal dates set on server.</Text> : <Text style={styles.muted}>Subscription data unavailable.</Text>}
