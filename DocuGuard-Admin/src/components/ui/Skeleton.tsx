@@ -1,9 +1,18 @@
-﻿import React from "react";
-import { StyleProp, StyleSheet, View, ViewStyle } from "react-native";
+﻿import React, { useEffect, useRef } from "react";
+import { Animated, StyleProp, StyleSheet, View, ViewStyle } from "react-native";
 import { AdminColors, AdminRadii } from "../../theme/adminTheme";
 
 export function Skeleton({ width, height, radius = 8, style }: { width?: number | string; height?: number; radius?: number; style?: StyleProp<ViewStyle> }) {
-  return <View style={[styles.base, { width: width ?? "100%", height: height ?? 14, borderRadius: radius }, style]} />;
+  const opacity = useRef(new Animated.Value(0.45)).current;
+  useEffect(() => {
+    const loop = Animated.loop(Animated.sequence([
+      Animated.timing(opacity, { toValue: 1, duration: 700, useNativeDriver: true }),
+      Animated.timing(opacity, { toValue: 0.45, duration: 700, useNativeDriver: true }),
+    ]));
+    loop.start();
+    return () => loop.stop();
+  }, [opacity]);
+  return <Animated.View style={[styles.base, { width: width ?? "100%", height: height ?? 14, borderRadius: radius, opacity }, style]} />;
 }
 
 export function SkeletonCard({ lines = 3 }: { lines?: number }) {
@@ -47,22 +56,7 @@ export function SkeletonScreen() {
 }
 
 const styles = StyleSheet.create({
-  base: { backgroundColor: AdminColors.surfaceAlt },
-  card: {
-    backgroundColor: AdminColors.surface,
-    borderRadius: AdminRadii.lg,
-    borderWidth: 1,
-    borderColor: AdminColors.border,
-    padding: 16,
-  },
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    backgroundColor: AdminColors.surface,
-    borderRadius: AdminRadii.lg,
-    borderWidth: 1,
-    borderColor: AdminColors.border,
-    padding: 14,
-  },
+  base: { backgroundColor: "#E5E7EB" },
+  card: { backgroundColor: AdminColors.surface, borderRadius: AdminRadii.lg, borderWidth: 1, borderColor: AdminColors.border, padding: 16 },
+  row: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: AdminColors.surface, borderRadius: AdminRadii.lg, borderWidth: 1, borderColor: AdminColors.border, padding: 14 },
 });
