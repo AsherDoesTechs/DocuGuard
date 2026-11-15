@@ -1,501 +1,157 @@
-
-import React, { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+﻿import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { ActivityIndicator, Alert, FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
+import { getAdminLogs, type AuditLogEntry } from "../services/adminApi";
 import { getAdminToken } from "../services/adminSession";
+import { AdminBottomNav } from "../components/AdminBottomNav";
+import { AdminColors, AdminRadii } from "../theme/adminTheme";
+import { Badge, BarChart, BreakdownList, Card, IconButton, ScreenHeader, StatCard } from "../components/ui";
 
-// Define Audit Log item type
-type AuditLogEntry = {
-  id: string | number;
-  action: string;
-  actor: string;
-  severity: "info" | "warning" | "critical";
-  ipAddress?: string;
-  timestamp: string;
-  details?: string;
-};
+type SevFilter = "all" | "info" | "warning" | "critical";
 
 export default function AdminLogsScreen() {
   const [logs, setLogs] = useState<AuditLogEntry[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
+  const [filter, setFilter] = useState<SevFilter>("all");
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
-  const fetchLogs = useCallback(async () => {
-    setLoading(true);
+  const fetchLogs = useCallback(async (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true); else setLoading(true);
     setErrorMessage("");
-
     try {
       const token = await getAdminToken();
-
-      if (!token) {
-        router.replace("/");
-        return;
-      }
-
-      const API_BASE_URL =
-        process.env.EXPO_PUBLIC_API_BASE_URL ??
-        "https://docuguard-api-onoj.onrender.com";
-
-      const response = await fetch(`${API_BASE_URL}/admin/logs`, {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: "application/json",
-        },
-      });
-
-      if (response.status === 401) {
-        router.replace("/");
-        throw new Error("Session expired. Please sign in again.");
-      }
-
-      if (!response.ok) {
-        throw new Error(
-          "Failed to load security audit logs from the server.",
-        );
-      }
-
-      const data = await response.json();
-      const logList = data.logs || data || [];
-
-      setLogs(logList);
+      if (!token) { router.replace("/"); return; }
+      const data = await getAdminLogs(token);
+      const list = Array.isArray(data) ? data : (data as any)?.logs || [];
+      setLogs(list as AuditLogEntry[]);
     } catch (error) {
-      setErrorMessage(
-        error instanceof Error
-          ? error.message
-          : "An unexpected error occurred.",
-      );
-    } finally {
-      setLoading(false);
-    }
+      setErrorMessage(error instanceof Error ? error.message : "Unable to load logs.");
+    } finally { setLoading(false); setRefreshing(false); }
   }, []);
 
- useEffect(() => {
-  // Initial API request; fetchLogs manages loading and data state.
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-  void fetchLogs();
-}, [fetchLogs]);
+  useEffect(() => { void fetchLogs(); }, [fetchLogs]);
 
-  // Derive filtered logs instead of maintaining duplicate state.
+  const analytics = useMemo(() => {
+    const now = Date.now(); const dayMs = 86400000;
+    const info = logs.filter((l) => String(l.severity) === "info").length;
+    const warning = logs.filter((l) => String(l.severity) === "warning").length;
+    const critical = logs.filter((l) => String(l.severity) === "critical").length;
+    const last24h = logs.filter((l) => { const t = new Date(l.timestamp as any).getTime(); return Number.isFinite(t) && now - t <= dayMs; }).length;
+    const dayNames = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+    const trend = Array.from({ length: 7 }, (_, idx) => {
+      const i = 6 - idx; const d = new Date(now - i * dayMs);
+      const start = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+      const count = logs.filter((l) => { const t = new Date(l.timestamp as any).getTime(); return Number.isFinite(t) && t >= start && t < start + dayMs; }).length;
+      return { label: dayNames[d.getDay()], value: count };
+    });
+    const risk: "Low"|"Moderate"|"High" = critical > 0 ? "High" : warning >= 5 ? "Moderate" : "Low";
+    const prediction = critical > 0 ? `${critical} critical event${critical>1?"s":""} — investigate immediately.` : warning > 0 ? `${warning} warning${warning>1?"s":""} — monitor for escalation.` : "No critical/warning patterns detected.";
+    return { info, warning, critical, last24h, trend, risk, prediction };
+  }, [logs]);
+
   const filteredLogs = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
+    const q = searchQuery.trim().toLowerCase();
+    return logs.filter((l) => {
+      const sev = String(l.severity || "info");
+      if (filter !== "all" && sev !== filter) return false;
+      if (!q) return true;
+      const details = typeof l.details === "string" ? l.details : JSON.stringify(l.details || "");
+      return [l.action, l.actor, details, l.ipAddress].some((v) => String(v || "").toLowerCase().includes(q));
+    });
+  }, [logs, searchQuery, filter]);
 
-    if (!query) {
-      return logs;
-    }
-
-    return logs.filter(
-      (log) =>
-        log.action.toLowerCase().includes(query) ||
-        log.actor.toLowerCase().includes(query) ||
-        (log.details && log.details.toLowerCase().includes(query)),
-    );
-  }, [logs, searchQuery]);
-
-  const handleInspectLog = (log: AuditLogEntry) => {
-    Alert.alert(
-      "Audit Log Details",
-      `Action: ${log.action}\nActor: ${log.actor}\nSeverity: ${log.severity.toUpperCase()}\nTime: ${new Date(log.timestamp).toLocaleString()}\nIP: ${log.ipAddress || "N/A"}\nDetails: ${log.details || "No additional payload"}`,
-      [{ text: "Close" }],
-    );
-  };
+  const filters: { key: SevFilter; label: string }[] = [{ key: "all", label: "All" }, { key: "critical", label: "Critical" }, { key: "warning", label: "Warning" }, { key: "info", label: "Info" }];
 
   const renderItem = ({ item }: { item: AuditLogEntry }) => {
-    const isCritical = item.severity === "critical";
-    const isWarning = item.severity === "warning";
-
+    const sev = String(item.severity || "info");
+    const tone = sev === "critical" ? "danger" : sev === "warning" ? "warning" : "info";
+    const icon = sev === "critical" ? "alert-circle" : sev === "warning" ? "warning" : "information-circle";
+    const details = typeof item.details === "string" ? item.details : item.details ? JSON.stringify(item.details, null, 2) : "No details";
     return (
-      <View style={styles.logCard}>
-        <View style={styles.logInfo}>
-          <View
-            style={[
-              styles.iconBox,
-              isCritical
-                ? styles.iconCritical
-                : isWarning
-                  ? styles.iconWarning
-                  : styles.iconInfo,
-            ]}
-          >
-            <Ionicons
-              name={
-                isCritical
-                  ? "alert-circle"
-                  : isWarning
-                    ? "warning"
-                    : "checkmark-circle"
-              }
-              size={20}
-              color={
-                isCritical
-                  ? "#9B1C1C"
-                  : isWarning
-                    ? "#92400E"
-                    : "#204D91"
-              }
-            />
-          </View>
-
-          <View style={styles.logDetails}>
-            <View style={styles.actionRow}>
-              <Text style={styles.actionTitle}>{item.action}</Text>
-
-              <View
-                style={[
-                  styles.badge,
-                  isCritical
-                    ? styles.badgeCritical
-                    : isWarning
-                      ? styles.badgeWarning
-                      : styles.badgeInfo,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.badgeText,
-                    isCritical
-                      ? styles.badgeTextCritical
-                      : isWarning
-                        ? styles.badgeTextWarning
-                        : styles.badgeTextInfo,
-                  ]}
-                >
-                  {item.severity.toUpperCase()}
-                </Text>
-              </View>
-            </View>
-
-            <Text style={styles.logActor}>
-              Actor: {item.actor}
-            </Text>
-
-            <Text style={styles.logTimestamp}>
-              {new Date(item.timestamp).toLocaleString()}{" "}
-              {item.ipAddress ? `· IP: ${item.ipAddress}` : ""}
-            </Text>
-          </View>
+      <Pressable style={styles.logCard} onPress={() => Alert.alert("Audit Log", `Action: ${item.action}\nActor: ${item.actor}\nSeverity: ${sev.toUpperCase()}\nTime: ${item.timestamp ? new Date(item.timestamp).toLocaleString() : "—"}\nIP: ${item.ipAddress || "N/A"}\n\n${details}`, [{ text: "Close" }])}>
+        <View style={[styles.iconBox, { backgroundColor: sev === "critical" ? AdminColors.dangerSoft : sev === "warning" ? AdminColors.warningSoft : AdminColors.infoSoft }]}>
+          <Ionicons name={icon as any} size={18} color={sev === "critical" ? AdminColors.danger : sev === "warning" ? AdminColors.warning : AdminColors.info} />
         </View>
-
-        <Pressable
-          style={styles.inspectButton}
-          onPress={() => handleInspectLog(item)}
-        >
-          <Ionicons
-            name="chevron-forward"
-            size={18}
-            color="#68778D"
-          />
-        </Pressable>
-      </View>
+        <View style={{ flex: 1 }}>
+          <View style={styles.rowBetween}><Text style={styles.action} numberOfLines={1}>{item.action || "Event"}</Text><Badge label={sev} tone={tone as any} /></View>
+          <Text style={styles.meta} numberOfLines={1}>{item.actor || "Unknown"}{item.ipAddress ? ` · ${item.ipAddress}` : ""}</Text>
+          <Text style={styles.time} numberOfLines={1}>{item.timestamp ? new Date(item.timestamp).toLocaleString() : "—"}</Text>
+        </View>
+      </Pressable>
     );
   };
 
   return (
-    <View style={styles.container}>
-      {/* Header & Search */}
-      <View style={styles.headerRow}>
-        <View>
-          <Text style={styles.title}>Security & Audit Logs</Text>
-          <Text style={styles.subtitle}>
-            Track admin device challenges, sign-ins, and security events
-          </Text>
-        </View>
-
-        <Pressable
-          style={styles.refreshButton}
-          onPress={() => void fetchLogs()}
-        >
-          <Ionicons
-            name="refresh-outline"
-            size={18}
-            color="#204D91"
+    <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
+      <View style={styles.screen}>
+        <ScreenHeader title="Security Logs" subtitle={`${logs.length} events`} right={<IconButton icon="refresh-outline" onPress={() => void fetchLogs()} />} />
+        {loading ? (
+          <View style={styles.center}><ActivityIndicator size="large" color={AdminColors.primary} /><Text style={styles.muted}>Loading logs…</Text></View>
+        ) : errorMessage ? (
+          <View style={{ paddingHorizontal: 20, flex: 1 }}><Card><Text style={styles.errorTitle}>Could not load logs</Text><Text style={styles.muted}>{errorMessage}</Text><Text style={styles.errorHint}>If server says audit log unavailable, ensure audit_log table exists and server is updated.</Text><Pressable style={styles.retryBtn} onPress={() => void fetchLogs()}><Text style={styles.retryText}>Try again</Text></Pressable></Card></View>
+        ) : (
+          <FlatList
+            data={filteredLogs}
+            keyExtractor={(item) => String(item.id)}
+            renderItem={renderItem}
+            contentContainerStyle={styles.list}
+            style={styles.listFlex}
+            showsVerticalScrollIndicator={false}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void fetchLogs(true)} tintColor={AdminColors.primary} />}
+            ListHeaderComponent={
+              <View style={{ gap: 14, marginBottom: 4 }}>
+                <View style={styles.statsRow}><StatCard label="24h Events" value={analytics.last24h} icon="time-outline" color={AdminColors.primary} bg={AdminColors.primarySoft} /><StatCard label="Critical" value={analytics.critical} icon="alert-circle-outline" color={AdminColors.danger} bg={AdminColors.dangerSoft} /></View>
+                <Card title="Risk Prediction" subtitle="Signal from log severity">
+                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}><Text style={{ fontSize: 13, color: AdminColors.textSecondary }}>Current risk</Text><Badge label={analytics.risk} tone={analytics.risk === "High" ? "danger" : analytics.risk === "Moderate" ? "warning" : "success"} /></View>
+                  <BreakdownList segments={[{ label: "Info", value: analytics.info, color: AdminColors.info }, { label: "Warning", value: analytics.warning, color: AdminColors.warning }, { label: "Critical", value: analytics.critical, color: AdminColors.danger }]} />
+                  <View style={styles.insight}><Ionicons name="sparkles-outline" size={14} color={AdminColors.primary} /><Text style={styles.insightText}>{analytics.prediction}</Text></View>
+                </Card>
+                <Card title="7-Day Activity" subtitle="Event volume trend">{logs.length ? <BarChart data={analytics.trend} height={120} /> : <Text style={styles.muted}>No trend data.</Text>}</Card>
+                <View style={styles.searchWrap}><Ionicons name="search-outline" size={18} color={AdminColors.textMuted} /><TextInput style={styles.searchInput} placeholder="Search action, actor, details" placeholderTextColor={AdminColors.textMuted} value={searchQuery} onChangeText={setSearchQuery} />{!!searchQuery && <Pressable onPress={() => setSearchQuery("")}><Ionicons name="close-circle" size={18} color={AdminColors.textMuted} /></Pressable>}</View>
+                <View style={styles.chips}>{filters.map((f) => (<Pressable key={f.key} style={[styles.chip, filter === f.key && styles.chipActive]} onPress={() => setFilter(f.key)}><Text style={[styles.chipText, filter === f.key && styles.chipTextActive]}>{f.label}</Text></Pressable>))}</View>
+                <Text style={styles.sectionMeta}>{filteredLogs.length} result{filteredLogs.length === 1 ? "" : "s"}</Text>
+              </View>
+            }
+            ListEmptyComponent={<View style={styles.empty}><Ionicons name="shield-checkmark-outline" size={40} color={AdminColors.textMuted} /><Text style={styles.muted}>No logs match.</Text></View>}
           />
-          <Text style={styles.refreshText}>Refresh</Text>
-        </Pressable>
-      </View>
-
-      <View style={styles.searchContainer}>
-        <Ionicons
-          name="search-outline"
-          size={20}
-          color="#8A96A8"
-          style={styles.searchIcon}
-        />
-
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Search by action, actor, or details..."
-          placeholderTextColor="#8A96A8"
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-        />
-
-        {searchQuery.length > 0 && (
-          <Pressable onPress={() => setSearchQuery("")}>
-            <Ionicons
-              name="close-circle"
-              size={18}
-              color="#8A96A8"
-            />
-          </Pressable>
         )}
+        <AdminBottomNav />
       </View>
-
-      {/* Content Body */}
-      {loading ? (
-        <View style={styles.centerContainer}>
-          <ActivityIndicator size="large" color="#204D91" />
-          <Text style={styles.centerText}>
-            Loading audit logs...
-          </Text>
-        </View>
-      ) : errorMessage ? (
-        <View style={styles.errorContainer}>
-          <Ionicons
-            name="alert-circle-outline"
-            size={32}
-            color="#9B2C2C"
-          />
-
-          <Text style={styles.errorTitle}>
-            Could not load audit logs
-          </Text>
-
-          <Text style={styles.errorText}>
-            {errorMessage}
-          </Text>
-
-          <Pressable
-            style={styles.retryButton}
-            onPress={() => void fetchLogs()}
-          >
-            <Text style={styles.retryButtonText}>
-              Try again
-            </Text>
-          </Pressable>
-        </View>
-      ) : filteredLogs.length === 0 ? (
-        <View style={styles.centerContainer}>
-          <Ionicons
-            name="shield-checkmark-outline"
-            size={48}
-            color="#A0AEC0"
-          />
-
-          <Text style={styles.centerText}>
-            No security logs found.
-          </Text>
-        </View>
-      ) : (
-        <FlatList
-          data={filteredLogs}
-          keyExtractor={(item) => String(item.id)}
-          renderItem={renderItem}
-          contentContainerStyle={styles.listContainer}
-        />
-      )}
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    padding: 24,
-    backgroundColor: "#F3F6FB",
-  },
-  headerRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 20,
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: "800",
-    color: "#172B4D",
-  },
-  subtitle: {
-    fontSize: 13,
-    color: "#68778D",
-    marginTop: 2,
-  },
-  refreshButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: "#DCE4EF",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
-  },
-  refreshText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#204D91",
-  },
-  searchContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: "#DCE4EF",
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    height: 48,
-    marginBottom: 20,
-  },
-  searchIcon: {
-    marginRight: 10,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 14,
-    color: "#172B4D",
-  },
-  listContainer: {
-    gap: 12,
-  },
-  logCard: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 14,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: "#E4EAF3",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  logInfo: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 14,
-    flex: 1,
-  },
-  iconBox: {
-    width: 42,
-    height: 42,
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  iconInfo: {
-    backgroundColor: "#EAF1FF",
-  },
-  iconWarning: {
-    backgroundColor: "#FEF3C7",
-  },
-  iconCritical: {
-    backgroundColor: "#FDE8E8",
-  },
-  logDetails: {
-    flex: 1,
-  },
-  actionRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-  actionTitle: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#172B4D",
-  },
-  badge: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  badgeInfo: {
-    backgroundColor: "#EAF1FF",
-  },
-  badgeWarning: {
-    backgroundColor: "#FEF3C7",
-  },
-  badgeCritical: {
-    backgroundColor: "#FDE8E8",
-  },
-  badgeText: {
-    fontSize: 9,
-    fontWeight: "700",
-  },
-  badgeTextInfo: {
-    color: "#204D91",
-  },
-  badgeTextWarning: {
-    color: "#92400E",
-  },
-  badgeTextCritical: {
-    color: "#9B1C1C",
-  },
-  logActor: {
-    fontSize: 13,
-    color: "#68778D",
-    marginTop: 3,
-  },
-  logTimestamp: {
-    fontSize: 11,
-    color: "#8A96A8",
-    marginTop: 2,
-  },
-  inspectButton: {
-    padding: 8,
-  },
-  centerContainer: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 50,
-  },
-  centerText: {
-    color: "#68778D",
-    marginTop: 10,
-    fontSize: 14,
-  },
-  errorContainer: {
-    padding: 24,
-    alignItems: "center",
-    backgroundColor: "#FFFFFF",
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#E4EAF3",
-    marginTop: 20,
-  },
-  errorTitle: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#9B2C2C",
-    marginTop: 10,
-  },
-  errorText: {
-    fontSize: 13,
-    color: "#68778D",
-    textAlign: "center",
-    marginTop: 4,
-    marginBottom: 16,
-  },
-  retryButton: {
-    backgroundColor: "#204D91",
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 8,
-  },
-  retryButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "700",
-    fontSize: 13,
-  },
+  safeArea: { flex: 1, backgroundColor: AdminColors.background },
+  screen: { flex: 1 },
+  listFlex: { flex: 1 },
+  list: { paddingHorizontal: 20, paddingBottom: 24, gap: 10 },
+  statsRow: { flexDirection: "row", gap: 12 },
+  center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 10 },
+  muted: { fontSize: 13, color: AdminColors.textSecondary, lineHeight: 19 },
+  errorTitle: { fontSize: 16, fontWeight: "700", color: AdminColors.dangerText, marginBottom: 4 },
+  errorHint: { fontSize: 12, color: AdminColors.textMuted, marginTop: 6, lineHeight: 17 },
+  retryBtn: { alignSelf: "flex-start", marginTop: 12, backgroundColor: AdminColors.primary, paddingHorizontal: 14, paddingVertical: 10, borderRadius: AdminRadii.sm },
+  retryText: { color: "#fff", fontWeight: "700", fontSize: 13 },
+  searchWrap: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: AdminColors.surface, borderWidth: 1, borderColor: AdminColors.border, borderRadius: 14, paddingHorizontal: 14, height: 46 },
+  searchInput: { flex: 1, fontSize: 14, color: AdminColors.text },
+  chips: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  chip: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: AdminRadii.pill, backgroundColor: AdminColors.surface, borderWidth: 1, borderColor: AdminColors.border },
+  chipActive: { backgroundColor: AdminColors.primary, borderColor: AdminColors.primary },
+  chipText: { fontSize: 12, fontWeight: "600", color: AdminColors.textSecondary },
+  chipTextActive: { color: "#fff" },
+  sectionMeta: { fontSize: 12, color: AdminColors.textMuted, fontWeight: "600" },
+  logCard: { flexDirection: "row", gap: 12, backgroundColor: AdminColors.surface, borderWidth: 1, borderColor: AdminColors.border, borderRadius: AdminRadii.lg, padding: 14 },
+  iconBox: { width: 38, height: 38, borderRadius: 10, alignItems: "center", justifyContent: "center" },
+  rowBetween: { flexDirection: "row", alignItems: "center", gap: 8 },
+  action: { flex: 1, fontSize: 14, fontWeight: "700", color: AdminColors.text },
+  meta: { fontSize: 12, color: AdminColors.textSecondary, marginTop: 3 },
+  time: { fontSize: 11, color: AdminColors.textMuted, marginTop: 2 },
+  insight: { flexDirection: "row", gap: 8, marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: AdminColors.border },
+  insightText: { flex: 1, fontSize: 13, color: AdminColors.textSecondary, lineHeight: 18 },
+  empty: { alignItems: "center", paddingVertical: 40, gap: 8 },
 });

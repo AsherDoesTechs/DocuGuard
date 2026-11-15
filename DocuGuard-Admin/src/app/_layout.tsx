@@ -1,23 +1,37 @@
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { Platform } from "react-native";
 import CustomSplashScreen from "../components/CustomSplashScreen";
+import { PhoneLayout } from "../components/PhoneLayout";
 
 export default function RootLayout() {
   const [showSplash, setShowSplash] = useState(true);
 
+  useEffect(() => {
+    if (Platform.OS === "web" && "serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch((err) => {
+        console.warn("[PWA] Service worker registration failed", err);
+      });
+    }
+  }, []);
+
   if (showSplash) {
-    return <CustomSplashScreen onAnimationFinished={() => setShowSplash(false)} />;
+    return (
+      <PhoneLayout>
+        <CustomSplashScreen onAnimationFinished={() => setShowSplash(false)} />
+      </PhoneLayout>
+    );
   }
 
   return (
-    <>
-      <StatusBar style="light" />
+    <PhoneLayout>
+      <StatusBar style="dark" />
       <Stack
         screenOptions={{
           headerShown: false,
-          animation: "fade",
-          contentStyle: { backgroundColor: "#F5F7FB" },
+          animation: "slide_from_right",
+          contentStyle: { backgroundColor: "#F3F6FB" },
         }}
       >
         <Stack.Screen name="index" />
@@ -27,6 +41,6 @@ export default function RootLayout() {
         <Stack.Screen name="logs" />
         <Stack.Screen name="users" />
       </Stack>
-    </>
+    </PhoneLayout>
   );
 }

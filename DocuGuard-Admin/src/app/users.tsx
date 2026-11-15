@@ -1,505 +1,225 @@
-
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+﻿import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   FlatList,
   Pressable,
+  RefreshControl,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
+import { getAdminUsers, updateAdminUserStatus, type AdminUser } from "../services/adminApi";
 import { getAdminToken } from "../services/adminSession";
+import { AdminBottomNav } from "../components/AdminBottomNav";
+import { AdminColors, AdminRadii } from "../theme/adminTheme";
+import { Badge, BreakdownList, Card, IconButton, ScreenHeader, StatCard } from "../components/ui";
 
-// Define User type based on DocuGuard user schema
-type UserAccount = {
-  id: string | number;
-  email: string;
-  name?: string;
-  role: "admin" | "user" | "moderator";
-  status: "active" | "suspended" | "pending";
-  createdAt: string;
-};
+type Filter = "all" | "active" | "suspended" | "admin";
 
 export default function AdminUsersScreen() {
-  const [users, setUsers] = useState<UserAccount[]>([]);
+  const [users, setUsers] = useState<AdminUser[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
+  const [filter, setFilter] = useState<Filter>("all");
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
-  const fetchUsers = useCallback(async () => {
-    setLoading(true);
+  const fetchUsers = useCallback(async (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true); else setLoading(true);
     setErrorMessage("");
-
     try {
       const token = await getAdminToken();
-
-      if (!token) {
-        router.replace("/");
-        return;
-      }
-
-      const API_BASE_URL =
-        process.env.EXPO_PUBLIC_API_BASE_URL ??
-        "https://docuguard-api-onoj.onrender.com";
-
-      const response = await fetch(`${API_BASE_URL}/admin/users`, {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: "application/json",
-        },
-      });
-
-      if (response.status === 401) {
-        router.replace("/");
-        throw new Error("Session expired. Please sign in again.");
-      }
-
-      if (!response.ok) {
-        throw new Error("Failed to load user accounts from the server.");
-      }
-
-      const data = await response.json();
-
-      // Expecting data.users or data directly as an array
-      const userList = data.users || data || [];
-
-      setUsers(userList);
+      if (!token) { router.replace("/"); return; }
+      const data = await getAdminUsers(token);
+      const list = Array.isArray(data) ? data : (data as any)?.users || [];
+      setUsers(list as AdminUser[]);
     } catch (error) {
-      setErrorMessage(
-        error instanceof Error
-          ? error.message
-          : "An unexpected error occurred.",
-      );
+      setErrorMessage(error instanceof Error ? error.message : "Unable to load users.");
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, []);
 
-useEffect(() => {
-  // Initial API request; fetchUsers manages loading and data state.
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-  void fetchUsers();
-}, [fetchUsers]);
+  useEffect(() => { void fetchUsers(); }, [fetchUsers]);
 
-  // Derive filtered users instead of maintaining duplicate state.
+  const analytics = useMemo(() => {
+    const active = users.filter((u) => String(u.status || "active") === "active").length;
+    const suspended = users.filter((u) => String(u.status) === "suspended").length;
+    const admins = users.filter((u) => String(u.role) === "admin").length;
+    const inactiveRate = users.length ? Math.round(((users.length - active) / users.length) * 100) : 0;
+    const prediction = suspended > 0
+      ? `${suspended} suspended account${suspended > 1 ? "s" : ""} — review access if not intentional.`
+      : inactiveRate > 20
+        ? `${inactiveRate}% non-active rate — consider engagement or cleanup.`
+        : "User activity looks healthy. No immediate action predicted.";
+    return { active, suspended, admins, prediction };
+  }, [users]);
+
   const filteredUsers = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
+    const q = searchQuery.trim().toLowerCase();
+    return users.filter((u) => {
+      const status = String(u.status || "active");
+      const role = String(u.role || "user");
+      if (filter === "active" && status !== "active") return false;
+      if (filter === "suspended" && status !== "suspended") return false;
+      if (filter === "admin" && role !== "admin") return false;
+      if (!q) return true;
+      return String(u.email || "").toLowerCase().includes(q) || String(u.name || "").toLowerCase().includes(q);
+    });
+  }, [users, searchQuery, filter]);
 
-    if (!query) {
-      return users;
-    }
-
-    return users.filter(
-      (user) =>
-        user.email.toLowerCase().includes(query) ||
-        (user.name && user.name.toLowerCase().includes(query)),
-    );
-  }, [users, searchQuery]);
-
-  const handleToggleStatus = (
-    userId: string | number,
-    currentStatus: string,
-  ) => {
-    const action = currentStatus === "active" ? "suspend" : "activate";
-
-    Alert.alert(
-      `Confirm ${action}`,
-      `Are you sure you want to ${action} this user account?`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Confirm",
-          style: currentStatus === "active" ? "destructive" : "default",
-          onPress: async () => {
-            // Implement your backend toggle call here
-            Alert.alert("Success", `User has been ${action}d successfully.`);
-            // Refresh list or update local state
-          },
+  const handleToggleStatus = (userId: string | number, currentStatus?: string) => {
+    const status = String(currentStatus || "active");
+    const nextStatus = status === "active" ? "suspended" : "active";
+    Alert.alert(`${nextStatus === "suspended" ? "Suspend" : "Activate"} user`, `Confirm ${nextStatus} for this account?`, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Confirm",
+        style: nextStatus === "suspended" ? "destructive" : "default",
+        onPress: async () => {
+          try {
+            const token = await getAdminToken();
+            if (!token) return;
+            await updateAdminUserStatus(token, userId, nextStatus as any);
+            setUsers((prev) => prev.map((u) => (String(u.id) === String(userId) ? { ...u, status: nextStatus } : u)));
+          } catch (err: any) {
+            Alert.alert("Update failed", err?.message || "Could not update status.");
+          }
         },
-      ],
-    );
+      },
+    ]);
   };
 
-  const renderItem = ({ item }: { item: UserAccount }) => {
-    const isActive = item.status === "active";
+  const filters: { key: Filter; label: string }[] = [
+    { key: "all", label: "All" }, { key: "active", label: "Active" }, { key: "suspended", label: "Suspended" }, { key: "admin", label: "Admins" },
+  ];
 
+  const renderItem = ({ item }: { item: AdminUser }) => {
+    const status = String(item.status || "active");
+    const isActive = status === "active";
+    const name = item.name || "Unnamed User";
     return (
       <View style={styles.userCard}>
-        <View style={styles.userInfo}>
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>
-              {(item.name || item.email).charAt(0).toUpperCase()}
-            </Text>
-          </View>
-
-          <View style={styles.userDetails}>
-            <Text style={styles.userName}>
-              {item.name || "Unnamed User"}
-            </Text>
-
-            <Text style={styles.userEmail}>
-              {item.email}
-            </Text>
-
-            <View style={styles.badgeRow}>
-              <View
-                style={[
-                  styles.badge,
-                  isActive ? styles.badgeActive : styles.badgeSuspended,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.badgeText,
-                    isActive
-                      ? styles.badgeTextActive
-                      : styles.badgeTextSuspended,
-                  ]}
-                >
-                  {item.status.toUpperCase()}
-                </Text>
-              </View>
-
-              <Text style={styles.roleText}>
-                Role: {item.role}
-              </Text>
-            </View>
+        <View style={styles.avatar}><Text style={styles.avatarText}>{(name || item.email || "?").charAt(0).toUpperCase()}</Text></View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.userName} numberOfLines={1}>{name}</Text>
+          <Text style={styles.userEmail} numberOfLines={1}>{item.email}</Text>
+          <View style={styles.badgeRow}>
+            <Badge label={status} tone={isActive ? "success" : "danger"} />
+            <Badge label={String(item.role || "user")} tone={String(item.role) === "admin" ? "primary" : "neutral"} />
           </View>
         </View>
-
-        <Pressable
-          style={[
-            styles.actionButton,
-            isActive ? styles.suspendButton : styles.activateButton,
-          ]}
-          onPress={() => handleToggleStatus(item.id, item.status)}
-        >
-          <Text
-            style={[
-              styles.actionButtonText,
-              isActive ? styles.suspendText : styles.activateText,
-            ]}
-          >
-            {isActive ? "Suspend" : "Activate"}
-          </Text>
+        <Pressable style={[styles.actionBtn, isActive ? styles.suspendBtn : styles.activateBtn]} onPress={() => handleToggleStatus(item.id, status)}>
+          <Text style={[styles.actionText, isActive ? styles.suspendText : styles.activateText]}>{isActive ? "Suspend" : "Activate"}</Text>
         </Pressable>
       </View>
     );
   };
 
   return (
-    <View style={styles.container}>
-      {/* Header & Search Bar */}
-      <View style={styles.headerRow}>
-        <View>
-          <Text style={styles.title}>User Management</Text>
-          <Text style={styles.subtitle}>
-            View and manage registered DocuGuard accounts
-          </Text>
-        </View>
+    <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
+      <View style={styles.screen}>
+        <ScreenHeader title="Users" subtitle={`${users.length} accounts`} right={<IconButton icon="refresh-outline" onPress={() => void fetchUsers()} />} />
 
-        <Pressable
-          style={styles.refreshButton}
-          onPress={() => void fetchUsers()}
-        >
-          <Ionicons
-            name="refresh-outline"
-            size={18}
-            color="#204D91"
+        {loading ? (
+          <View style={styles.center}><ActivityIndicator size="large" color={AdminColors.primary} /><Text style={styles.muted}>Loading users…</Text></View>
+        ) : errorMessage ? (
+          <View style={{ paddingHorizontal: 20, flex: 1 }}>
+            <Card>
+              <Text style={styles.errorTitle}>Could not load users</Text>
+              <Text style={styles.muted}>{errorMessage}</Text>
+              <Text style={styles.errorHint}>Check admin token, network, and that the server is reachable and up to date.</Text>
+              <Pressable style={styles.retryBtn} onPress={() => void fetchUsers()}><Text style={styles.retryText}>Try again</Text></Pressable>
+            </Card>
+          </View>
+        ) : (
+          <FlatList
+            data={filteredUsers}
+            keyExtractor={(item) => String(item.id)}
+            renderItem={renderItem}
+            contentContainerStyle={styles.list}
+            style={styles.listFlex}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void fetchUsers(true)} tintColor={AdminColors.primary} />}
+            ListHeaderComponent={
+              <View style={{ gap: 14, marginBottom: 4 }}>
+                <View style={styles.row}>
+                  <StatCard label="Active" value={analytics.active} icon="checkmark-circle-outline" color={AdminColors.success} bg={AdminColors.successSoft} />
+                  <StatCard label="Suspended" value={analytics.suspended} icon="pause-circle-outline" color={AdminColors.danger} bg={AdminColors.dangerSoft} />
+                </View>
+                <Card title="Account Breakdown" subtitle="Role and status distribution">
+                  <BreakdownList segments={[
+                    { label: "Active users", value: analytics.active, color: AdminColors.success },
+                    { label: "Suspended", value: analytics.suspended, color: AdminColors.danger },
+                    { label: "Admins", value: analytics.admins, color: AdminColors.primary },
+                  ]} />
+                  <View style={styles.insight}><Ionicons name="sparkles-outline" size={14} color={AdminColors.primary} /><Text style={styles.insightText}>{analytics.prediction}</Text></View>
+                </Card>
+                <View style={styles.searchWrap}>
+                  <Ionicons name="search-outline" size={18} color={AdminColors.textMuted} />
+                  <TextInput style={styles.searchInput} placeholder="Search name or email" placeholderTextColor={AdminColors.textMuted} value={searchQuery} onChangeText={setSearchQuery} />
+                  {!!searchQuery && <Pressable onPress={() => setSearchQuery("")}><Ionicons name="close-circle" size={18} color={AdminColors.textMuted} /></Pressable>}
+                </View>
+                <View style={styles.chips}>
+                  {filters.map((f) => (
+                    <Pressable key={f.key} style={[styles.chip, filter === f.key && styles.chipActive]} onPress={() => setFilter(f.key)}>
+                      <Text style={[styles.chipText, filter === f.key && styles.chipTextActive]}>{f.label}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+                <Text style={styles.sectionMeta}>{filteredUsers.length} result{filteredUsers.length === 1 ? "" : "s"}</Text>
+              </View>
+            }
+            ListEmptyComponent={<View style={styles.empty}><Ionicons name="people-outline" size={40} color={AdminColors.textMuted} /><Text style={styles.muted}>No users match your filters.</Text></View>}
           />
-          <Text style={styles.refreshText}>Refresh</Text>
-        </Pressable>
-      </View>
-
-      <View style={styles.searchContainer}>
-        <Ionicons
-          name="search-outline"
-          size={20}
-          color="#8A96A8"
-          style={styles.searchIcon}
-        />
-
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Search by name or email..."
-          placeholderTextColor="#8A96A8"
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-        />
-
-        {searchQuery.length > 0 && (
-          <Pressable onPress={() => setSearchQuery("")}>
-            <Ionicons
-              name="close-circle"
-              size={18}
-              color="#8A96A8"
-            />
-          </Pressable>
         )}
+
+        <AdminBottomNav />
       </View>
-
-      {/* Content Body */}
-      {loading ? (
-        <View style={styles.centerContainer}>
-          <ActivityIndicator size="large" color="#204D91" />
-          <Text style={styles.centerText}>
-            Loading users...
-          </Text>
-        </View>
-      ) : errorMessage ? (
-        <View style={styles.errorContainer}>
-          <Ionicons
-            name="alert-circle-outline"
-            size={32}
-            color="#9B2C2C"
-          />
-
-          <Text style={styles.errorTitle}>
-            Could not load users
-          </Text>
-
-          <Text style={styles.errorText}>
-            {errorMessage}
-          </Text>
-
-          <Pressable
-            style={styles.retryButton}
-            onPress={() => void fetchUsers()}
-          >
-            <Text style={styles.retryButtonText}>
-              Try again
-            </Text>
-          </Pressable>
-        </View>
-      ) : filteredUsers.length === 0 ? (
-        <View style={styles.centerContainer}>
-          <Ionicons
-            name="people-outline"
-            size={48}
-            color="#A0AEC0"
-          />
-
-          <Text style={styles.centerText}>
-            No users found.
-          </Text>
-        </View>
-      ) : (
-        <FlatList
-          data={filteredUsers}
-          keyExtractor={(item) => String(item.id)}
-          renderItem={renderItem}
-          contentContainerStyle={styles.listContainer}
-        />
-      )}
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    padding: 24,
-    backgroundColor: "#F3F6FB",
-  },
-  headerRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 20,
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: "800",
-    color: "#172B4D",
-  },
-  subtitle: {
-    fontSize: 13,
-    color: "#68778D",
-    marginTop: 2,
-  },
-  refreshButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: "#DCE4EF",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
-  },
-  refreshText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#204D91",
-  },
-  searchContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: "#DCE4EF",
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    height: 48,
-    marginBottom: 20,
-  },
-  searchIcon: {
-    marginRight: 10,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 14,
-    color: "#172B4D",
-  },
-  listContainer: {
-    gap: 12,
-  },
-  userCard: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 14,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: "#E4EAF3",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  userInfo: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 14,
-    flex: 1,
-  },
-  avatar: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: "#EAF1FF",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  avatarText: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#204D91",
-  },
-  userDetails: {
-    flex: 1,
-  },
-  userName: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: "#172B4D",
-  },
-  userEmail: {
-    fontSize: 13,
-    color: "#68778D",
-    marginTop: 2,
-  },
-  badgeRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    marginTop: 6,
-  },
-  badge: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
-  },
-  badgeActive: {
-    backgroundColor: "#DEF7EC",
-  },
-  badgeSuspended: {
-    backgroundColor: "#FDE8E8",
-  },
-  badgeText: {
-    fontSize: 10,
-    fontWeight: "700",
-  },
-  badgeTextActive: {
-    color: "#03543F",
-  },
-  badgeTextSuspended: {
-    color: "#9B1C1C",
-  },
-  roleText: {
-    fontSize: 12,
-    color: "#68778D",
-    textTransform: "capitalize",
-  },
-  actionButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
-    borderWidth: 1,
-  },
-  suspendButton: {
-    borderColor: "#FBD5D5",
-    backgroundColor: "#FDF2F2",
-  },
-  activateButton: {
-    borderColor: "#C6F6D5",
-    backgroundColor: "#F0FFF4",
-  },
-  actionButtonText: {
-    fontSize: 12,
-    fontWeight: "700",
-  },
-  suspendText: {
-    color: "#9B1C1C",
-  },
-  activateText: {
-    color: "#22543D",
-  },
-  centerContainer: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 50,
-  },
-  centerText: {
-    color: "#68778D",
-    marginTop: 10,
-    fontSize: 14,
-  },
-  errorContainer: {
-    padding: 24,
-    alignItems: "center",
-    backgroundColor: "#FFFFFF",
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#E4EAF3",
-    marginTop: 20,
-  },
-  errorTitle: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#9B2C2C",
-    marginTop: 10,
-  },
-  errorText: {
-    fontSize: 13,
-    color: "#68778D",
-    textAlign: "center",
-    marginTop: 4,
-    marginBottom: 16,
-  },
-  retryButton: {
-    backgroundColor: "#204D91",
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 8,
-  },
-  retryButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "700",
-    fontSize: 13,
-  },
+  safeArea: { flex: 1, backgroundColor: AdminColors.background },
+  screen: { flex: 1 },
+  listFlex: { flex: 1 },
+  list: { paddingHorizontal: 20, paddingBottom: 24, gap: 10 },
+  row: { flexDirection: "row", gap: 12 },
+  center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 10 },
+  muted: { fontSize: 13, color: AdminColors.textSecondary, lineHeight: 19 },
+  errorTitle: { fontSize: 16, fontWeight: "700", color: AdminColors.dangerText, marginBottom: 4 },
+  errorHint: { fontSize: 12, color: AdminColors.textMuted, marginTop: 6, lineHeight: 17 },
+  retryBtn: { alignSelf: "flex-start", marginTop: 12, backgroundColor: AdminColors.primary, paddingHorizontal: 14, paddingVertical: 10, borderRadius: AdminRadii.sm },
+  retryText: { color: "#fff", fontWeight: "700", fontSize: 13 },
+  searchWrap: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: AdminColors.surface, borderWidth: 1, borderColor: AdminColors.border, borderRadius: 14, paddingHorizontal: 14, height: 46 },
+  searchInput: { flex: 1, fontSize: 14, color: AdminColors.text },
+  chips: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  chip: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: AdminRadii.pill, backgroundColor: AdminColors.surface, borderWidth: 1, borderColor: AdminColors.border },
+  chipActive: { backgroundColor: AdminColors.primary, borderColor: AdminColors.primary },
+  chipText: { fontSize: 12, fontWeight: "600", color: AdminColors.textSecondary },
+  chipTextActive: { color: "#fff" },
+  sectionMeta: { fontSize: 12, color: AdminColors.textMuted, fontWeight: "600" },
+  userCard: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: AdminColors.surface, borderWidth: 1, borderColor: AdminColors.border, borderRadius: AdminRadii.lg, padding: 14 },
+  avatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: AdminColors.primarySoft, alignItems: "center", justifyContent: "center" },
+  avatarText: { fontSize: 16, fontWeight: "700", color: AdminColors.primary },
+  userName: { fontSize: 15, fontWeight: "700", color: AdminColors.text },
+  userEmail: { fontSize: 12, color: AdminColors.textSecondary, marginTop: 1 },
+  badgeRow: { flexDirection: "row", gap: 6, marginTop: 6 },
+  actionBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, borderWidth: 1 },
+  suspendBtn: { backgroundColor: AdminColors.dangerSoft, borderColor: "#FECACA" },
+  activateBtn: { backgroundColor: AdminColors.successSoft, borderColor: "#BBF7D0" },
+  actionText: { fontSize: 12, fontWeight: "700" },
+  suspendText: { color: AdminColors.dangerText },
+  activateText: { color: AdminColors.successText },
+  insight: { flexDirection: "row", gap: 8, marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: AdminColors.border },
+  insightText: { flex: 1, fontSize: 13, color: AdminColors.textSecondary, lineHeight: 18 },
+  empty: { alignItems: "center", paddingVertical: 40, gap: 8 },
 });

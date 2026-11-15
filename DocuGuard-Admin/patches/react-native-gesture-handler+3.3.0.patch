@@ -1,0 +1,48 @@
+diff --git a/node_modules/react-native-gesture-handler/android/src/main/jni/CMakeLists.txt b/node_modules/react-native-gesture-handler/android/src/main/jni/CMakeLists.txt
+index 3fc10f2..1e0b1ad 100644
+--- a/node_modules/react-native-gesture-handler/android/src/main/jni/CMakeLists.txt
++++ b/node_modules/react-native-gesture-handler/android/src/main/jni/CMakeLists.txt
+@@ -1,5 +1,6 @@
+ project(GestureHandler)
+ cmake_minimum_required(VERSION 3.9.0)
++set(CMAKE_SUPPRESS_REGENERATION ON)
+ 
+ set(CMAKE_VERBOSE_MAKEFILE ON)
+ set(CMAKE_CXX_STANDARD 20)
+@@ -7,9 +8,17 @@ set(CMAKE_CXX_STANDARD 20)
+ set(PACKAGE_NAME "gesturehandler")
+ set(RNGH_DIR "${CMAKE_SOURCE_DIR}/../../../../")
+ set(REACT_ANDROID_DIR "${REACT_NATIVE_DIR}/ReactAndroid")
++set(RNGH_SHARED_BUILD_DIR "${CMAKE_SOURCE_DIR}/.rngh-shared")
++if(NOT EXISTS "${RNGH_SHARED_BUILD_DIR}")
++  file(COPY "${RNGH_DIR}/shared/runtime" DESTINATION "${RNGH_SHARED_BUILD_DIR}")
++endif()
+ 
+-file(GLOB_RECURSE gesture_handler_SRCS CONFIGURE_DEPENDS ./*.cpp)
+-file(GLOB_RECURSE gesture_handler_shared_SRCS CONFIGURE_DEPENDS "${RNGH_DIR}/shared/runtime/*.cpp")
++file(GLOB_RECURSE gesture_handler_SRCS
++  RELATIVE "${CMAKE_SOURCE_DIR}"
++  ./*.cpp)
++file(GLOB_RECURSE gesture_handler_shared_SRCS
++  RELATIVE "${CMAKE_SOURCE_DIR}"
++  "${RNGH_SHARED_BUILD_DIR}/runtime/*.cpp")
+ 
+ include(${REACT_ANDROID_DIR}/cmake-utils/folly-flags.cmake)
+ add_compile_options(${folly_FLAGS})
+@@ -26,7 +35,7 @@ target_include_directories(
+   ${PACKAGE_NAME}
+   PUBLIC
+   "${CMAKE_SOURCE_DIR}"
+-  "${RNGH_DIR}/shared/runtime"
++  "${RNGH_SHARED_BUILD_DIR}/runtime"
+   PRIVATE
+   "${REACT_NATIVE_DIR}/ReactCommon"
+ )
+@@ -41,6 +50,7 @@ target_link_libraries(
+   ReactAndroid::reactnative
+   ReactAndroid::jsi
+   fbjni::fbjni
++  c++_shared
+ )
+ 
+ if(RNGH_USE_WORKLETS)

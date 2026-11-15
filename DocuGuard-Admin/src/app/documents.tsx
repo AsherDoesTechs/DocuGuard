@@ -1,549 +1,194 @@
-
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
+﻿import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   FlatList,
   Pressable,
+  RefreshControl,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
+import { getAdminDocuments, type VaultDocument } from "../services/adminApi";
 import { getAdminToken } from "../services/adminSession";
+import { AdminBottomNav } from "../components/AdminBottomNav";
+import { AdminColors, AdminRadii } from "../theme/adminTheme";
+import { Badge, BreakdownList, Card, IconButton, ProgressBar, ScreenHeader, StatCard } from "../components/ui";
 
-// Define Document Vault item type
-type VaultDocument = {
-  id: string | number;
-  title: string;
-  fileName: string;
-  fileSize: number;
-  ownerEmail: string;
-  ocrStatus: "completed" | "pending" | "failed";
-  createdAt: string;
-};
+type OcrFilter = "all" | "completed" | "pending" | "failed";
 
 export default function AdminDocumentsScreen() {
   const [documents, setDocuments] = useState<VaultDocument[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
+  const [filter, setFilter] = useState<OcrFilter>("all");
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
-  const fetchDocuments = useCallback(async () => {
-    setLoading(true);
+  const fetchDocuments = useCallback(async (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true); else setLoading(true);
     setErrorMessage("");
-
     try {
       const token = await getAdminToken();
-
-      if (!token) {
-        router.replace("/");
-        return;
-      }
-
-      const API_BASE_URL =
-        process.env.EXPO_PUBLIC_API_BASE_URL ??
-        "https://docuguard-api-onoj.onrender.com";
-
-      const response = await fetch(
-        `${API_BASE_URL}/admin/documents`,
-        {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            Accept: "application/json",
-          },
-        },
-      );
-
-      if (response.status === 401) {
-        router.replace("/");
-        throw new Error(
-          "Session expired. Please sign in again.",
-        );
-      }
-
-      if (!response.ok) {
-        throw new Error(
-          "Failed to load document audit records from the server.",
-        );
-      }
-
-      const data = await response.json();
-
-      const docList: VaultDocument[] = Array.isArray(data.documents)
-        ? data.documents
-        : Array.isArray(data)
-          ? data
-          : [];
-
-      setDocuments(docList);
+      if (!token) { router.replace("/"); return; }
+      const data = await getAdminDocuments(token);
+      const list = Array.isArray(data) ? data : (data as any)?.documents || [];
+      setDocuments(list as VaultDocument[]);
     } catch (error) {
-      setErrorMessage(
-        error instanceof Error
-          ? error.message
-          : "An unexpected error occurred.",
-      );
+      setErrorMessage(error instanceof Error ? error.message : "Unable to load documents.");
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, []);
 
-useEffect(() => {
-  // Initial API request; fetchDocuments manages loading and data state.
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-  void fetchDocuments();
-}, [fetchDocuments]);
+  useEffect(() => { void fetchDocuments(); }, [fetchDocuments]);
 
-  // Derive filtered documents instead of maintaining duplicate state.
+  const analytics = useMemo(() => {
+    const completed = documents.filter((d) => String(d.ocrStatus) === "completed").length;
+    const pending = documents.filter((d) => String(d.ocrStatus) === "pending").length;
+    const failed = documents.filter((d) => !["completed", "pending"].includes(String(d.ocrStatus))).length;
+    const totalBytes = documents.reduce((s, d) => s + (Number(d.fileSize) || 0), 0);
+    const successRate = documents.length ? Math.round((completed / documents.length) * 100) : 0;
+    const prediction = failed > 0
+      ? `${failed} failed OCR item${failed > 1 ? "s" : ""} — review uploads/formats.`
+      : pending > completed
+        ? "OCR backlog higher than completed — expect processing delays."
+        : pending > 0
+          ? `${pending} item${pending > 1 ? "s" : ""} still processing.`
+          : "OCR pipeline stable.";
+    return { completed, pending, failed, totalBytes, successRate, prediction };
+  }, [documents]);
+
   const filteredDocs = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
-
-    if (!query) {
-      return documents;
-    }
-
-    return documents.filter((document) => {
-      const title = document.title ?? "";
-      const fileName = document.fileName ?? "";
-      const ownerEmail = document.ownerEmail ?? "";
-
-      return (
-        title.toLowerCase().includes(query) ||
-        fileName.toLowerCase().includes(query) ||
-        ownerEmail.toLowerCase().includes(query)
-      );
+    const q = searchQuery.trim().toLowerCase();
+    return documents.filter((d) => {
+      const ocr = String(d.ocrStatus || "pending");
+      if (filter === "completed" && ocr !== "completed") return false;
+      if (filter === "pending" && ocr !== "pending") return false;
+      if (filter === "failed" && ["completed", "pending"].includes(ocr)) return false;
+      if (!q) return true;
+      return [d.title, d.fileName, d.ownerEmail].some((v) => String(v || "").toLowerCase().includes(q));
     });
-  }, [documents, searchQuery]);
+  }, [documents, searchQuery, filter]);
 
   const formatFileSize = (bytes: number) => {
-    if (!Number.isFinite(bytes) || bytes <= 0) {
-      return "0 Bytes";
-    }
-
-    const k = 1024;
-    const sizes = ["Bytes", "KB", "MB", "GB"];
-    const i = Math.min(
-      Math.floor(Math.log(bytes) / Math.log(k)),
-      sizes.length - 1,
-    );
-
-    return (
-      parseFloat((bytes / Math.pow(k, i)).toFixed(2)) +
-      " " +
-      sizes[i]
-    );
+    if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+    const k = 1024; const sizes = ["B", "KB", "MB", "GB"];
+    const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1);
+    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
   };
 
-  const handleInspectDoc = (doc: VaultDocument) => {
-    Alert.alert(
-      "Document Details",
-      `Title: ${doc.title || doc.fileName}\n` +
-        `File: ${doc.fileName}\n` +
-        `Owner: ${doc.ownerEmail}\n` +
-        `OCR Status: ${doc.ocrStatus.toUpperCase()}\n` +
-        `Size: ${formatFileSize(doc.fileSize)}`,
-      [{ text: "Close" }],
-    );
-  };
+  const filters: { key: OcrFilter; label: string }[] = [
+    { key: "all", label: "All" }, { key: "completed", label: "Completed" }, { key: "pending", label: "Pending" }, { key: "failed", label: "Failed" },
+  ];
 
-  const renderItem = ({
-    item,
-  }: {
-    item: VaultDocument;
-  }) => {
-    const isCompleted = item.ocrStatus === "completed";
-    const isFailed = item.ocrStatus === "failed";
-
+  const renderItem = ({ item }: { item: VaultDocument }) => {
+    const ocr = String(item.ocrStatus || "pending");
+    const tone = ocr === "completed" ? "success" : ocr === "pending" ? "warning" : "danger";
     return (
-      <View style={styles.docCard}>
-        <View style={styles.docInfo}>
-          <View style={styles.iconBox}>
-            <Ionicons
-              name="document-text-outline"
-              size={22}
-              color="#204D91"
-            />
-          </View>
-
-          <View style={styles.docDetails}>
-            <Text
-              style={styles.docTitle}
-              numberOfLines={1}
-            >
-              {item.title || item.fileName}
-            </Text>
-
-            <Text style={styles.docOwner}>
-              Owner: {item.ownerEmail}
-            </Text>
-
-            <View style={styles.metaRow}>
-              <View
-                style={[
-                  styles.badge,
-                  isCompleted
-                    ? styles.badgeCompleted
-                    : isFailed
-                      ? styles.badgeFailed
-                      : styles.badgePending,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.badgeText,
-                    isCompleted
-                      ? styles.badgeTextCompleted
-                      : isFailed
-                        ? styles.badgeTextFailed
-                        : styles.badgeTextPending,
-                  ]}
-                >
-                  OCR: {item.ocrStatus.toUpperCase()}
-                </Text>
-              </View>
-
-              <Text style={styles.sizeText}>
-                {formatFileSize(item.fileSize)}
-              </Text>
-            </View>
-          </View>
+      <Pressable style={styles.docCard} onPress={() => Alert.alert("Document", `Title: ${item.title || item.fileName}\nOwner: ${item.ownerEmail || "Unknown"}\nOCR: ${ocr.toUpperCase()}\nSize: ${formatFileSize(Number(item.fileSize || 0))}`, [{ text: "Close" }])}>
+        <View style={styles.iconBox}><Ionicons name="document-text-outline" size={20} color={AdminColors.primary} /></View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.docTitle} numberOfLines={1}>{item.title || item.fileName || "Untitled"}</Text>
+          <Text style={styles.docMeta} numberOfLines={1}>{item.ownerEmail || "Unknown owner"} · {formatFileSize(Number(item.fileSize || 0))}</Text>
+          <View style={{ marginTop: 6 }}><Badge label={ocr} tone={tone as any} /></View>
         </View>
-
-        <Pressable
-          style={styles.inspectButton}
-          onPress={() => handleInspectDoc(item)}
-          accessibilityRole="button"
-          accessibilityLabel={`Inspect ${item.title || item.fileName}`}
-        >
-          <Ionicons
-            name="ellipsis-vertical"
-            size={18}
-            color="#68778D"
-          />
-        </Pressable>
-      </View>
+        <Ionicons name="chevron-forward" size={18} color={AdminColors.textMuted} />
+      </Pressable>
     );
   };
 
   return (
-    <View style={styles.container}>
-      {/* Header & Search */}
-      <View style={styles.headerRow}>
-        <View>
-          <Text style={styles.title}>
-            Document Vault Audits
-          </Text>
+    <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
+      <View style={styles.screen}>
+        <ScreenHeader title="Documents" subtitle={`${documents.length} files`} right={<IconButton icon="refresh-outline" onPress={() => void fetchDocuments()} />} />
 
-          <Text style={styles.subtitle}>
-            Inspect uploaded files and Azure OCR processing status
-          </Text>
-        </View>
-
-        <Pressable
-          style={styles.refreshButton}
-          onPress={() => void fetchDocuments()}
-          accessibilityRole="button"
-          accessibilityLabel="Refresh documents"
-        >
-          <Ionicons
-            name="refresh-outline"
-            size={18}
-            color="#204D91"
+        {loading ? (
+          <View style={styles.center}><ActivityIndicator size="large" color={AdminColors.primary} /><Text style={styles.muted}>Loading documents…</Text></View>
+        ) : errorMessage ? (
+          <View style={{ paddingHorizontal: 20, flex: 1 }}>
+            <Card><Text style={styles.errorTitle}>Could not load documents</Text><Text style={styles.muted}>{errorMessage}</Text><Text style={styles.errorHint}>Check token, network, and server routes/DB schema.</Text>
+              <Pressable style={styles.retryBtn} onPress={() => void fetchDocuments()}><Text style={styles.retryText}>Try again</Text></Pressable></Card>
+          </View>
+        ) : (
+          <FlatList
+            data={filteredDocs}
+            keyExtractor={(item) => String(item.id)}
+            renderItem={renderItem}
+            contentContainerStyle={styles.list}
+            style={styles.listFlex}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void fetchDocuments(true)} tintColor={AdminColors.primary} />}
+            ListHeaderComponent={
+              <View style={{ gap: 14, marginBottom: 4 }}>
+                <View style={styles.row}>
+                  <StatCard label="OCR Success" value={`${analytics.successRate}%`} icon="scan-outline" color={AdminColors.success} bg={AdminColors.successSoft} />
+                  <StatCard label="Storage" value={formatFileSize(analytics.totalBytes)} icon="cloud-outline" color={AdminColors.primary} bg={AdminColors.primarySoft} />
+                </View>
+                <Card title="OCR Pipeline" subtitle="Processing status & prediction">
+                  <BreakdownList segments={[
+                    { label: "Completed", value: analytics.completed, color: AdminColors.success },
+                    { label: "Pending", value: analytics.pending, color: AdminColors.warning },
+                    { label: "Failed / Other", value: analytics.failed, color: AdminColors.danger },
+                  ]} />
+                  <View style={{ marginTop: 12, gap: 6 }}>
+                    <View style={styles.progressRow}><Text style={styles.progressLabel}>Completion rate</Text><Text style={styles.progressPct}>{analytics.successRate}%</Text></View>
+                    <ProgressBar value={analytics.successRate} color={AdminColors.success} />
+                  </View>
+                  <View style={styles.insight}><Ionicons name="sparkles-outline" size={14} color={AdminColors.primary} /><Text style={styles.insightText}>{analytics.prediction}</Text></View>
+                </Card>
+                <View style={styles.searchWrap}>
+                  <Ionicons name="search-outline" size={18} color={AdminColors.textMuted} />
+                  <TextInput style={styles.searchInput} placeholder="Search title, file, owner" placeholderTextColor={AdminColors.textMuted} value={searchQuery} onChangeText={setSearchQuery} />
+                  {!!searchQuery && <Pressable onPress={() => setSearchQuery("")}><Ionicons name="close-circle" size={18} color={AdminColors.textMuted} /></Pressable>}
+                </View>
+                <View style={styles.chips}>{filters.map((f) => (<Pressable key={f.key} style={[styles.chip, filter === f.key && styles.chipActive]} onPress={() => setFilter(f.key)}><Text style={[styles.chipText, filter === f.key && styles.chipTextActive]}>{f.label}</Text></Pressable>))}</View>
+                <Text style={styles.sectionMeta}>{filteredDocs.length} result{filteredDocs.length === 1 ? "" : "s"}</Text>
+              </View>
+            }
+            ListEmptyComponent={<View style={styles.empty}><Ionicons name="folder-open-outline" size={40} color={AdminColors.textMuted} /><Text style={styles.muted}>No documents match.</Text></View>}
           />
-
-          <Text style={styles.refreshText}>
-            Refresh
-          </Text>
-        </Pressable>
-      </View>
-
-      <View style={styles.searchContainer}>
-        <Ionicons
-          name="search-outline"
-          size={20}
-          color="#8A96A8"
-          style={styles.searchIcon}
-        />
-
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Search by title, filename, or owner email..."
-          placeholderTextColor="#8A96A8"
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-          accessibilityLabel="Search documents"
-          returnKeyType="search"
-        />
-
-        {searchQuery.length > 0 && (
-          <Pressable
-            onPress={() => setSearchQuery("")}
-            accessibilityRole="button"
-            accessibilityLabel="Clear search"
-          >
-            <Ionicons
-              name="close-circle"
-              size={18}
-              color="#8A96A8"
-            />
-          </Pressable>
         )}
+        <AdminBottomNav />
       </View>
-
-      {/* Content Body */}
-      {loading ? (
-        <View style={styles.centerContainer}>
-          <ActivityIndicator
-            size="large"
-            color="#204D91"
-          />
-
-          <Text style={styles.centerText}>
-            Loading documents...
-          </Text>
-        </View>
-      ) : errorMessage ? (
-        <View style={styles.errorContainer}>
-          <Ionicons
-            name="alert-circle-outline"
-            size={32}
-            color="#9B2C2C"
-          />
-
-          <Text style={styles.errorTitle}>
-            Could not load documents
-          </Text>
-
-          <Text style={styles.errorText}>
-            {errorMessage}
-          </Text>
-
-          <Pressable
-            style={styles.retryButton}
-            onPress={() => void fetchDocuments()}
-            accessibilityRole="button"
-            accessibilityLabel="Retry loading documents"
-          >
-            <Text style={styles.retryButtonText}>
-              Try again
-            </Text>
-          </Pressable>
-        </View>
-      ) : filteredDocs.length === 0 ? (
-        <View style={styles.centerContainer}>
-          <Ionicons
-            name="folder-open-outline"
-            size={48}
-            color="#A0AEC0"
-          />
-
-          <Text style={styles.centerText}>
-            {searchQuery.trim()
-              ? "No documents match your search."
-              : "No documents found in the vault."}
-          </Text>
-        </View>
-      ) : (
-        <FlatList
-          data={filteredDocs}
-          keyExtractor={(item) => String(item.id)}
-          renderItem={renderItem}
-          contentContainerStyle={styles.listContainer}
-          keyboardShouldPersistTaps="handled"
-        />
-      )}
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    padding: 24,
-    backgroundColor: "#F3F6FB",
-  },
-  headerRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 20,
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: "800",
-    color: "#172B4D",
-  },
-  subtitle: {
-    fontSize: 13,
-    color: "#68778D",
-    marginTop: 2,
-  },
-  refreshButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: "#DCE4EF",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
-  },
-  refreshText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#204D91",
-  },
-  searchContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: "#DCE4EF",
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    height: 48,
-    marginBottom: 20,
-  },
-  searchIcon: {
-    marginRight: 10,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 14,
-    color: "#172B4D",
-  },
-  listContainer: {
-    gap: 12,
-  },
-  docCard: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 14,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: "#E4EAF3",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  docInfo: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 14,
-    flex: 1,
-  },
-  iconBox: {
-    width: 42,
-    height: 42,
-    borderRadius: 12,
-    backgroundColor: "#EAF1FF",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  docDetails: {
-    flex: 1,
-  },
-  docTitle: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: "#172B4D",
-  },
-  docOwner: {
-    fontSize: 13,
-    color: "#68778D",
-    marginTop: 2,
-  },
-  metaRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    marginTop: 6,
-  },
-  badge: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
-  },
-  badgeCompleted: {
-    backgroundColor: "#DEF7EC",
-  },
-  badgePending: {
-    backgroundColor: "#FEF3C7",
-  },
-  badgeFailed: {
-    backgroundColor: "#FDE8E8",
-  },
-  badgeText: {
-    fontSize: 10,
-    fontWeight: "700",
-  },
-  badgeTextCompleted: {
-    color: "#03543F",
-  },
-  badgeTextPending: {
-    color: "#92400E",
-  },
-  badgeTextFailed: {
-    color: "#9B1C1C",
-  },
-  sizeText: {
-    fontSize: 12,
-    color: "#68778D",
-  },
-  inspectButton: {
-    padding: 8,
-  },
-  centerContainer: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 50,
-  },
-  centerText: {
-    color: "#68778D",
-    marginTop: 10,
-    fontSize: 14,
-    textAlign: "center",
-  },
-  errorContainer: {
-    padding: 24,
-    alignItems: "center",
-    backgroundColor: "#FFFFFF",
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#E4EAF3",
-    marginTop: 20,
-  },
-  errorTitle: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#9B2C2C",
-    marginTop: 10,
-  },
-  errorText: {
-    fontSize: 13,
-    color: "#68778D",
-    textAlign: "center",
-    marginTop: 4,
-    marginBottom: 16,
-  },
-  retryButton: {
-    backgroundColor: "#204D91",
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 8,
-  },
-  retryButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "700",
-    fontSize: 13,
-  },
+  safeArea: { flex: 1, backgroundColor: AdminColors.background },
+  screen: { flex: 1 },
+  listFlex: { flex: 1 },
+  list: { paddingHorizontal: 20, paddingBottom: 24, gap: 10 },
+  row: { flexDirection: "row", gap: 12 },
+  center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 10 },
+  muted: { fontSize: 13, color: AdminColors.textSecondary, lineHeight: 19 },
+  errorTitle: { fontSize: 16, fontWeight: "700", color: AdminColors.dangerText, marginBottom: 4 },
+  errorHint: { fontSize: 12, color: AdminColors.textMuted, marginTop: 6, lineHeight: 17 },
+  retryBtn: { alignSelf: "flex-start", marginTop: 12, backgroundColor: AdminColors.primary, paddingHorizontal: 14, paddingVertical: 10, borderRadius: AdminRadii.sm },
+  retryText: { color: "#fff", fontWeight: "700", fontSize: 13 },
+  searchWrap: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: AdminColors.surface, borderWidth: 1, borderColor: AdminColors.border, borderRadius: 14, paddingHorizontal: 14, height: 46 },
+  searchInput: { flex: 1, fontSize: 14, color: AdminColors.text },
+  chips: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  chip: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: AdminRadii.pill, backgroundColor: AdminColors.surface, borderWidth: 1, borderColor: AdminColors.border },
+  chipActive: { backgroundColor: AdminColors.primary, borderColor: AdminColors.primary },
+  chipText: { fontSize: 12, fontWeight: "600", color: AdminColors.textSecondary },
+  chipTextActive: { color: "#fff" },
+  sectionMeta: { fontSize: 12, color: AdminColors.textMuted, fontWeight: "600" },
+  docCard: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: AdminColors.surface, borderWidth: 1, borderColor: AdminColors.border, borderRadius: AdminRadii.lg, padding: 14 },
+  iconBox: { width: 42, height: 42, borderRadius: 12, backgroundColor: AdminColors.primarySoft, alignItems: "center", justifyContent: "center" },
+  docTitle: { fontSize: 15, fontWeight: "700", color: AdminColors.text },
+  docMeta: { fontSize: 12, color: AdminColors.textSecondary, marginTop: 2 },
+  progressRow: { flexDirection: "row", justifyContent: "space-between" },
+  progressLabel: { fontSize: 12, color: AdminColors.textSecondary },
+  progressPct: { fontSize: 12, fontWeight: "700", color: AdminColors.text },
+  insight: { flexDirection: "row", gap: 8, marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: AdminColors.border },
+  insightText: { flex: 1, fontSize: 13, color: AdminColors.textSecondary, lineHeight: 18 },
+  empty: { alignItems: "center", paddingVertical: 40, gap: 8 },
 });

@@ -1,21 +1,26 @@
-import * as Notifications from "expo-notifications";
-import * as Device from "expo-device";
-import { Platform } from "react-native";
-
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
-});
+﻿import { Platform } from "react-native";
 
 export async function registerForPushNotificationsAsync(
-  userId: string,
-  apiToken: string,
+  _userId: string,
+  _apiToken: string,
 ) {
+  if (Platform.OS === "web") {
+    return null;
+  }
+
+  const Notifications = await import("expo-notifications");
+  const Device = await import("expo-device");
+
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowAlert: true,
+      shouldPlaySound: true,
+      shouldSetBadge: true,
+      shouldShowBanner: true,
+      shouldShowList: true,
+    }),
+  });
+
   if (!Device.isDevice) {
     console.log("Push Notifications require a physical device.");
     return null;
@@ -35,28 +40,14 @@ export async function registerForPushNotificationsAsync(
   }
 
   const tokenData = await Notifications.getExpoPushTokenAsync({
-    projectId: "YOUR-PROJECT-ID", // Match your EAS project ID
+    projectId: "YOUR-PROJECT-ID",
   });
 
   const pushToken = tokenData.data;
   console.log("Expo Push Token:", pushToken);
 
-  // Send this token to your Express backend to store in database
-  try {
-    await fetch("https://your-api-url.com/admin/device-token", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiToken}`,
-      },
-      body: JSON.stringify({ userId, pushToken }),
-    });
-  } catch (err) {
-    console.error("Failed to sync push token with backend:", err);
-  }
-
   if (Platform.OS === "android") {
-    Notifications.setNotificationChannelAsync("default", {
+    await Notifications.setNotificationChannelAsync("default", {
       name: "default",
       importance: 5,
       vibrationPattern: [0, 250, 250, 250],

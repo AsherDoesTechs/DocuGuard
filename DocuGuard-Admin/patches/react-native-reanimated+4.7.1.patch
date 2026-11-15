@@ -1,0 +1,55 @@
+diff --git a/node_modules/react-native-reanimated/android/CMakeLists.txt b/node_modules/react-native-reanimated/android/CMakeLists.txt
+index e2a5bfd..ff0ddda 100644
+--- a/node_modules/react-native-reanimated/android/CMakeLists.txt
++++ b/node_modules/react-native-reanimated/android/CMakeLists.txt
+@@ -1,5 +1,6 @@
+ project(Reanimated)
+ cmake_minimum_required(VERSION 3.16)
++set(CMAKE_SUPPRESS_REGENERATION ON)
+ 
+ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+ 
+@@ -36,13 +37,21 @@ set(COMMON_CPP_DIR "${CMAKE_SOURCE_DIR}/../Common/cpp")
+ set(NATIVEVIEW_DIR "${CMAKE_SOURCE_DIR}/../Common/NativeView")
+ set(PACKAGE_ROOT_DIR "${CMAKE_SOURCE_DIR}/..")
+ set(CODEGEN_OUTPUT_DIR "${BUILD_DIR}/generated/source/codegen/jni")
++set(REANIMATED_COMMON_BUILD_DIR "${CMAKE_SOURCE_DIR}/.reanimated-common")
++set(REANIMATED_NATIVEVIEW_BUILD_DIR "${CMAKE_SOURCE_DIR}/.reanimated-nativeview")
++if(NOT EXISTS "${REANIMATED_COMMON_BUILD_DIR}")
++  file(COPY "${COMMON_CPP_DIR}/reanimated" DESTINATION "${REANIMATED_COMMON_BUILD_DIR}")
++endif()
++if(NOT EXISTS "${REANIMATED_NATIVEVIEW_BUILD_DIR}")
++  file(COPY "${NATIVEVIEW_DIR}/react" DESTINATION "${REANIMATED_NATIVEVIEW_BUILD_DIR}")
++endif()
+ 
+-file(GLOB_RECURSE REANIMATED_COMMON_CPP_SOURCES CONFIGURE_DEPENDS
+-     "${COMMON_CPP_DIR}/reanimated/*.cpp")
+-file(GLOB_RECURSE REANIMATED_ANDROID_CPP_SOURCES CONFIGURE_DEPENDS
++file(GLOB_RECURSE REANIMATED_COMMON_CPP_SOURCES
++     "${REANIMATED_COMMON_BUILD_DIR}/reanimated/*.cpp")
++file(GLOB_RECURSE REANIMATED_ANDROID_CPP_SOURCES
+      "${ANDROID_CPP_DIR}/reanimated/*.cpp")
+-file(GLOB_RECURSE REANIMATED_NATIVEVIEW_CPP_SOURCES CONFIGURE_DEPENDS
+-     "${NATIVEVIEW_DIR}/react/renderer/components/rnreanimated/*.cpp")
++file(GLOB_RECURSE REANIMATED_NATIVEVIEW_CPP_SOURCES
++     "${REANIMATED_NATIVEVIEW_BUILD_DIR}/react/renderer/components/rnreanimated/*.cpp")
+ 
+ find_package(fbjni REQUIRED CONFIG)
+ find_package(ReactAndroid REQUIRED CONFIG)
+@@ -108,3 +117,4 @@ target_link_libraries(
+   fbjni::fbjni
+   android
+   react-native-worklets::worklets)
++target_link_libraries(reanimated c++_shared)
+diff --git a/node_modules/react-native-reanimated/android/build.gradle.kts b/node_modules/react-native-reanimated/android/build.gradle.kts
+index 46728e5..efa5fdc 100644
+--- a/node_modules/react-native-reanimated/android/build.gradle.kts
++++ b/node_modules/react-native-reanimated/android/build.gradle.kts
+@@ -206,6 +206,7 @@ android {
+             cmake {
+                 arguments(
+                     "-DANDROID_STL=c++_shared",
++                    "-DCMAKE_OBJECT_PATH_MAX=128",
+                     "-DANDROID_TOOLCHAIN=clang",
+                     "-DREACT_NATIVE_DIR=${toPlatformFileString(reactNativeRootDir.path)}",
+                     "-DIS_REANIMATED_EXAMPLE_APP=$IS_REANIMATED_EXAMPLE_APP",

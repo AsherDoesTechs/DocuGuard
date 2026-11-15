@@ -1,13 +1,515 @@
 diff --git a/node_modules/react-native-biometric-signature/android/src/main/java/com/biometricsignature/BiometricSignatureModule.kt b/node_modules/react-native-biometric-signature/android/src/main/java/com/biometricsignature/BiometricSignatureModule.kt
-index 34b2bf3..5c07c94 100644
+index 34b2bf3..96672e9 100644
 --- a/node_modules/react-native-biometric-signature/android/src/main/java/com/biometricsignature/BiometricSignatureModule.kt
 +++ b/node_modules/react-native-biometric-signature/android/src/main/java/com/biometricsignature/BiometricSignatureModule.kt
-@@ -942,7 +942,7 @@ class BiometricSignatureModule(reactContext: ReactApplicationContext) :
+@@ -1,5 +1,6 @@
+ package com.biometricsignature
+ 
++import android.util.Log
+ import android.app.KeyguardManager
+ import android.content.Context
+ import android.content.SharedPreferences
+@@ -55,6 +56,7 @@ class BiometricSignatureModule(reactContext: ReactApplicationContext) :
+   private val managedKeys: SharedPreferences
+     get() = appContext.getSharedPreferences(MANAGED_KEYS_PREFS, Context.MODE_PRIVATE)
+   private val moduleScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
++  private val signingLogTag = "DocuGuardBioSign"
+ 
+   override fun invalidate() {
+     moduleScope.cancel()
+@@ -293,9 +295,11 @@ class BiometricSignatureModule(reactContext: ReactApplicationContext) :
+           publicKeyFor(alias)
+         }
+         val signature = withContext(Dispatchers.IO) {
+-          Signature.getInstance(signatureAlgorithmForKey(privateKey)).apply {
+-            initSign(privateKey)
+-          }
++         Signature.getInstance(signatureAlgorithmForKey(privateKey)).apply {
++  Log.e(signingLogTag, "SIGN_STAGE: initSign starting")
++  initSign(privateKey)
++  Log.e(signingLogTag, "SIGN_STAGE: initSign completed")
++}
+         }
+         val allowDeviceCredentials = config.boolean("allowDeviceCredentials", false)
+         val promptInfo = promptInfo(
+@@ -314,6 +318,12 @@ class BiometricSignatureModule(reactContext: ReactApplicationContext) :
+           promise,
+           onSuccess = { result ->
+             val authedSignature = result.cryptoObject?.signature
++            Log.e(
++  signingLogTag,
++  "SIGN_STAGE: authentication callback received; " +
++    "cryptoObjectPresent=${result.cryptoObject != null}; " +
++    "signaturePresent=${authedSignature != null}"
++)
+             if (authedSignature == null) {
+               promise.resolve(errorMap("promptError", "Biometric signature object was unavailable."))
+               return@showPrompt
+@@ -322,8 +332,16 @@ class BiometricSignatureModule(reactContext: ReactApplicationContext) :
+             moduleScope.launch {
+               try {
+                 val map = withContext(Dispatchers.IO) {
+-                  authedSignature.update(payload.toByteArray(StandardCharsets.UTF_8))
+-                  val signatureBytes = authedSignature.sign()
++                 Log.e(signingLogTag, "SIGN_STAGE: update starting")
++authedSignature.update(payload.toByteArray(StandardCharsets.UTF_8))
++Log.e(signingLogTag, "SIGN_STAGE: update completed")
++
++Log.e(signingLogTag, "SIGN_STAGE: sign starting")
++val signatureBytes = authedSignature.sign()
++Log.e(
++  signingLogTag,
++  "SIGN_STAGE: sign completed; signatureBytes=${signatureBytes.size}"
++)
+                   Arguments.createMap().also {
+                     putEncodedBytes(it, signatureBytes, signatureFormat, "signature", "signatureBytes")
+                     putPublicKey(it, publicKey, keyFormat, "publicKey", "publicKeyBytes")
+@@ -333,10 +351,22 @@ class BiometricSignatureModule(reactContext: ReactApplicationContext) :
+                   }
+                 }
+                 promise.resolve(map)
+-              } catch (error: CancellationException) {
++                          } catch (error: CancellationException) {
+                 throw error
+               } catch (error: Throwable) {
+-                promise.resolve(errorMap(normalizeThrowable(error), error.message ?: "Failed to sign payload."))
++                Log.e(
++                  signingLogTag,
++                  "SIGN_STAGE: signing exception; type=${error.javaClass.name}; " +
++                    "message=${error.message}",
++                  error
++                )
++
++                promise.resolve(
++                  errorMap(
++                    normalizeThrowable(error),
++                    error.message ?: "Failed to sign payload."
++                  )
++                )
+               }
+             }
+           }
+@@ -519,10 +549,6 @@ class BiometricSignatureModule(reactContext: ReactApplicationContext) :
+           val store = keyStore
+           val aliases = managedAliases().toMutableSet()
+           store.aliases().iterator().forEach { alias ->
+-            // Match both Flutter-compatible aliases ("biometric_key",
+-            // "biometric_key_<user>") and any legacy entries still hanging
+-            // around under the old DEFAULT_ALIAS_PREFIX from an older
+-            // install of this RN plugin.
+             val isManaged = alias == DEFAULT_KEY_ALIAS ||
+               alias.startsWith(USER_ALIAS_PREFIX) ||
+               alias.startsWith(DEFAULT_ALIAS_PREFIX)
+@@ -821,11 +847,6 @@ class BiometricSignatureModule(reactContext: ReactApplicationContext) :
+       .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+       .setKeySize(AES_KEY_SIZE)
+ 
+-    // Hybrid EC wraps software decrypting key material with a non-exportable
+-    // Android Keystore/StrongBox AES key. Public decrypt calls still require a
+-    // biometric prompt before unwrapping; keeping this wrapping key available
+-    // for encryption avoids requiring a second CryptoObject prompt during
+-    // createKeys.
+     configureStrongBox(builder, useStrongBox)
+ 
+     keyGenerator.init(builder.build())
+@@ -936,42 +957,84 @@ class BiometricSignatureModule(reactContext: ReactApplicationContext) :
+     ) + rawKey
+   }
+ 
+-  private fun showPrompt(
++   private fun showPrompt(
+     promptInfo: BiometricPrompt.PromptInfo,
+     cryptoObject: BiometricPrompt.CryptoObject?,
      promise: Promise,
      onSuccess: (BiometricPrompt.AuthenticationResult) -> Unit
    ) {
 -    val activity = currentActivity as? FragmentActivity
-+    val activity = reactApplicationContext.currentActivity as? FragmentActivity
-     if (activity == null) {
-       promise.resolve(errorMap("notSupported", "The current Activity must extend FragmentActivity."))
+-    if (activity == null) {
+-      promise.resolve(errorMap("notSupported", "The current Activity must extend FragmentActivity."))
++    val currentActivity = reactApplicationContext.currentActivity
++    val fragmentActivity = currentActivity as? FragmentActivity
++
++    if (fragmentActivity == null) {
++      promise.resolve(
++        errorMap(
++          "promptError",
++          "Current activity is not a FragmentActivity or is null."
++        )
++      )
        return
+     }
+ 
+-    val executor = ContextCompat.getMainExecutor(activity)
++    val executor = ContextCompat.getMainExecutor(fragmentActivity)
++
+     val prompt = BiometricPrompt(
+-      activity,
++      fragmentActivity,
+       executor,
+       object : BiometricPrompt.AuthenticationCallback() {
+-        override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+-          promise.resolve(errorMap(normalizePromptError(errorCode), errString.toString()))
++
++        override fun onAuthenticationError(
++          errorCode: Int,
++          errString: CharSequence
++        ) {
++          promise.resolve(
++            errorMap(
++              normalizePromptError(errorCode),
++              errString.toString()
++            )
++          )
+         }
+ 
+-        override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
++        override fun onAuthenticationSucceeded(
++          result: BiometricPrompt.AuthenticationResult
++        ) {
++          Log.e(
++            signingLogTag,
++            "SIGN_STAGE: Android authentication succeeded"
++          )
++
+           try {
+             onSuccess(result)
+           } catch (error: Throwable) {
+-            promise.resolve(errorMap(normalizeThrowable(error), error.message ?: "Authentication failed."))
++            Log.e(
++              signingLogTag,
++              "SIGN_STAGE: authentication callback exception; " +
++                "type=${error.javaClass.name}; " +
++                "message=${error.message}",
++              error
++            )
++
++            promise.resolve(
++              errorMap(
++                normalizeThrowable(error),
++                error.message ?: "Authentication failed."
++              )
++            )
+           }
+         }
+ 
+         override fun onAuthenticationFailed() {
+-          promise.resolve(errorMap("promptError", "Biometric authentication failed."))
++          promise.resolve(
++            errorMap(
++              "promptError",
++              "Biometric authentication failed."
++            )
++          )
+         }
+       }
+     )
+ 
+-    activity.runOnUiThread {
++    fragmentActivity.runOnUiThread {
+       if (cryptoObject == null) {
+         prompt.authenticate(promptInfo)
+       } else {
+@@ -1069,123 +1132,123 @@ class BiometricSignatureModule(reactContext: ReactApplicationContext) :
+   }
+ 
+   private fun resolveBiometricTypes(): List<String> {
+-      val pm = appContext.packageManager
+-      val biometricManager = BiometricManager.from(appContext)
+-      val canAuth = biometricManager.canAuthenticate(
+-          BiometricManager.Authenticators.BIOMETRIC_STRONG
+-      ) == BiometricManager.BIOMETRIC_SUCCESS
+-
+-      if (!canAuth) return emptyList()
+-
+-      val hasFace = pm.hasSystemFeature(PackageManager.FEATURE_FACE)
+-      val hasFingerprint = pm.hasSystemFeature(PackageManager.FEATURE_FINGERPRINT)
+-      val hasIris = pm.hasSystemFeature(PackageManager.FEATURE_IRIS)
+-      val featureBackedTypes = mutableListOf<String>()
+-      if (hasFace) featureBackedTypes.add("face")
+-      if (hasFingerprint) featureBackedTypes.add("fingerprint")
+-      if (hasIris) featureBackedTypes.add("iris")
+-
+-      var buttonLabel: String? = null
+-      try {
+-          val getStringsMethod = BiometricManager::class.java.getMethod(
+-              "getStrings", Int::class.javaPrimitiveType
+-          )
+-          val strings = getStringsMethod.invoke(
+-              biometricManager, BiometricManager.Authenticators.BIOMETRIC_STRONG
+-          )
+-          if (strings != null) {
+-              val getButtonLabel = strings.javaClass.getMethod("getButtonLabel")
+-              val getPromptMessage = try {
+-                  strings.javaClass.getMethod("getPromptMessage")
+-              } catch (_: Exception) {
+-                  null
+-              }
+-
+-              buttonLabel = listOfNotNull(
+-                  (getButtonLabel.invoke(strings) as? CharSequence)?.toString(),
+-                  (getPromptMessage?.invoke(strings) as? CharSequence)?.toString()
+-              ).joinToString(" ")
+-          }
+-      } catch (_: Exception) {}
+-
+-      val systemRes = Resources.getSystem()
+-
+-      val faceTerms = listOfNotNull(
+-          getFrameworkString(systemRes, "face_icon_content_description"),
+-          getFrameworkString(systemRes, "biometric_face_icon_description"),
+-          getFrameworkString(systemRes, "face_sensor_privacy_title"),
+-          getFrameworkString(systemRes, "face_error_not_recognized"),
+-          getFrameworkString(systemRes, "face_error_lockout"),
+-          getFrameworkString(systemRes, "face_error_lockout_permanent"),
+-          getFrameworkString(systemRes, "face_acquired_too_bright"),
+-          getFrameworkString(systemRes, "face_authenticated"),
+-          getFrameworkString(systemRes, "biometric_dialog_use_face"),
+-          getFrameworkString(systemRes, "face_unlock_recognizing")
++    val pm = appContext.packageManager
++    val biometricManager = BiometricManager.from(appContext)
++    val canAuth = biometricManager.canAuthenticate(
++      BiometricManager.Authenticators.BIOMETRIC_STRONG
++    ) == BiometricManager.BIOMETRIC_SUCCESS
++
++    if (!canAuth) return emptyList()
++
++    val hasFace = pm.hasSystemFeature(PackageManager.FEATURE_FACE)
++    val hasFingerprint = pm.hasSystemFeature(PackageManager.FEATURE_FINGERPRINT)
++    val hasIris = pm.hasSystemFeature(PackageManager.FEATURE_IRIS)
++    val featureBackedTypes = mutableListOf<String>()
++    if (hasFace) featureBackedTypes.add("face")
++    if (hasFingerprint) featureBackedTypes.add("fingerprint")
++    if (hasIris) featureBackedTypes.add("iris")
++
++    var buttonLabel: String? = null
++    try {
++      val getStringsMethod = BiometricManager::class.java.getMethod(
++        "getStrings", Int::class.javaPrimitiveType
+       )
+-
+-      val fingerprintTerms = listOfNotNull(
+-          getFrameworkString(systemRes, "fingerprint_icon_content_description"),
+-          getFrameworkString(systemRes, "biometric_fingerprint_icon_description"),
+-          getFrameworkString(systemRes, "fingerprint_setup_notification_title"),
+-          getFrameworkString(systemRes, "fingerprint_error_not_match"),
+-          getFrameworkString(systemRes, "fingerprint_error_lockout"),
+-          getFrameworkString(systemRes, "fingerprint_error_lockout_permanent"),
+-          getFrameworkString(systemRes, "fingerprint_authenticated"),
+-          getFrameworkString(systemRes, "biometric_dialog_use_fingerprint")
++      val strings = getStringsMethod.invoke(
++        biometricManager, BiometricManager.Authenticators.BIOMETRIC_STRONG
+       )
++      if (strings != null) {
++        val getButtonLabel = strings.javaClass.getMethod("getButtonLabel")
++        val getPromptMessage = try {
++          strings.javaClass.getMethod("getPromptMessage")
++        } catch (_: Exception) {
++          null
++        }
+ 
+-      val irisTerms = listOfNotNull(
+-          getFrameworkString(systemRes, "iris_icon_content_description"),
+-          getFrameworkString(systemRes, "biometric_iris_icon_description"),
+-          getFrameworkString(systemRes, "iris_error_not_recognized"),
+-          getFrameworkString(systemRes, "iris_error_lockout")
+-      )
++        buttonLabel = listOfNotNull(
++          (getButtonLabel.invoke(strings) as? CharSequence)?.toString(),
++          (getPromptMessage?.invoke(strings) as? CharSequence)?.toString()
++        ).joinToString(" ")
++      }
++    } catch (_: Exception) {}
++
++    val systemRes = Resources.getSystem()
++
++    val faceTerms = listOfNotNull(
++      getFrameworkString(systemRes, "face_icon_content_description"),
++      getFrameworkString(systemRes, "biometric_face_icon_description"),
++      getFrameworkString(systemRes, "face_sensor_privacy_title"),
++      getFrameworkString(systemRes, "face_error_not_recognized"),
++      getFrameworkString(systemRes, "face_error_lockout"),
++      getFrameworkString(systemRes, "face_error_lockout_permanent"),
++      getFrameworkString(systemRes, "face_acquired_too_bright"),
++      getFrameworkString(systemRes, "face_authenticated"),
++      getFrameworkString(systemRes, "biometric_dialog_use_face"),
++      getFrameworkString(systemRes, "face_unlock_recognizing")
++    )
+ 
+-      if (buttonLabel.isNullOrBlank()) return featureBackedTypes
++    val fingerprintTerms = listOfNotNull(
++      getFrameworkString(systemRes, "fingerprint_icon_content_description"),
++      getFrameworkString(systemRes, "biometric_fingerprint_icon_description"),
++      getFrameworkString(systemRes, "fingerprint_setup_notification_title"),
++      getFrameworkString(systemRes, "fingerprint_error_not_match"),
++      getFrameworkString(systemRes, "fingerprint_error_lockout"),
++      getFrameworkString(systemRes, "fingerprint_error_lockout_permanent"),
++      getFrameworkString(systemRes, "fingerprint_authenticated"),
++      getFrameworkString(systemRes, "biometric_dialog_use_fingerprint")
++    )
+ 
+-      val labelMatchedTypes = mutableListOf<String>()
+-      if (hasFace && matchesLabel(buttonLabel, faceTerms)) {
+-          labelMatchedTypes.add("face")
+-      }
++    val irisTerms = listOfNotNull(
++      getFrameworkString(systemRes, "iris_icon_content_description"),
++      getFrameworkString(systemRes, "biometric_iris_icon_description"),
++      getFrameworkString(systemRes, "iris_error_not_recognized"),
++      getFrameworkString(systemRes, "iris_error_lockout")
++    )
+ 
+-      if (hasFingerprint && matchesLabel(buttonLabel, fingerprintTerms)) {
+-          labelMatchedTypes.add("fingerprint")
+-      }
++    if (buttonLabel.isNullOrBlank()) return featureBackedTypes
+ 
+-      if (hasIris && matchesLabel(buttonLabel, irisTerms)) {
+-          labelMatchedTypes.add("iris")
+-      }
++    val labelMatchedTypes = mutableListOf<String>()
++    if (hasFace && matchesLabel(buttonLabel, faceTerms)) {
++      labelMatchedTypes.add("face")
++    }
++
++    if (hasFingerprint && matchesLabel(buttonLabel, fingerprintTerms)) {
++      labelMatchedTypes.add("fingerprint")
++    }
+ 
+-      return if (labelMatchedTypes.isNotEmpty()) labelMatchedTypes else featureBackedTypes
++    if (hasIris && matchesLabel(buttonLabel, irisTerms)) {
++      labelMatchedTypes.add("iris")
++    }
++
++    return if (labelMatchedTypes.isNotEmpty()) labelMatchedTypes else featureBackedTypes
+   }
+ 
+   private fun getFrameworkString(res: Resources, name: String): String? {
+-      return try {
+-          val id = res.getIdentifier(name, "string", "android")
+-          if (id != 0) res.getString(id) else null
+-      } catch (_: Exception) {
+-          null
+-      }
++    return try {
++      val id = res.getIdentifier(name, "string", "android")
++      if (id != 0) res.getString(id) else null
++    } catch (_: Exception) {
++      null
++    }
+   }
+ 
+   private fun matchesLabel(buttonLabel: String?, terms: List<String>): Boolean {
+-      if (buttonLabel.isNullOrBlank() || terms.isEmpty()) return false
+-      return terms.any { term ->
+-          if (buttonLabel.contains(term, ignoreCase = true)) return@any true
+-
+-          val hasCJK = term.any { Character.isIdeographic(it.code) }
+-          if (hasCJK) {
+-              (0 until term.length - 1).any { i ->
+-                  val bigram = term.substring(i, i + 2)
+-                  bigram.any { Character.isIdeographic(it.code) } &&
+-                          buttonLabel.contains(bigram)
+-              }
+-          } else {
+-              term.split("\\s+".toRegex())
+-                  .filter { it.length >= 3 }
+-                  .any { word -> buttonLabel.contains(word, ignoreCase = true) }
+-          }
++    if (buttonLabel.isNullOrBlank() || terms.isEmpty()) return false
++    return terms.any { term ->
++      if (buttonLabel.contains(term, ignoreCase = true)) return@any true
++
++      val hasCJK = term.any { Character.isIdeographic(it.code) }
++      if (hasCJK) {
++        (0 until term.length - 1).any { i ->
++          val bigram = term.substring(i, i + 2)
++          bigram.any { Character.isIdeographic(it.code) } &&
++            buttonLabel.contains(bigram)
++        }
++      } else {
++        term.split("\\s+".toRegex())
++          .filter { it.length >= 3 }
++          .any { word -> buttonLabel.contains(word, ignoreCase = true) }
+       }
++    }
+   }
+ 
+   private fun authenticationType(result: BiometricPrompt.AuthenticationResult): String {
+@@ -1237,10 +1300,6 @@ class BiometricSignatureModule(reactContext: ReactApplicationContext) :
+ 
+   private fun normalizeAlias(keyAlias: String?): String {
+     val trimmed = keyAlias?.takeIf { it.isNotBlank() } ?: return DEFAULT_KEY_ALIAS
+-    // Mirror Flutter `biometricKeyAlias`: user-supplied "foo" maps to
+-    // "biometric_key_foo" in the AndroidKeyStore. Caller-supplied aliases
+-    // that already carry the Flutter prefix are passed through verbatim so
+-    // we don't double-prefix on a re-call from a Flutter-aware client.
+     return if (trimmed == DEFAULT_KEY_ALIAS || trimmed.startsWith(USER_ALIAS_PREFIX)) {
+       trimmed
+     } else {
+@@ -1322,37 +1381,33 @@ class BiometricSignatureModule(reactContext: ReactApplicationContext) :
+ 
+   companion object {
+     const val NAME = NativeBiometricSignatureSpec.NAME
+-    private const val ANDROID_KEYSTORE = "AndroidKeyStore"
+-    // Default KeyStore alias and user-alias prefix chosen for byte-compatibility
+-    // with the Flutter `biometric_signature` plugin (Constants.kt:6-13).
+-    // Both plugins must agree so that two apps sharing the same applicationID
+-    // and signing certificate can read each other's key material.
+-    private const val DEFAULT_KEY_ALIAS = "biometric_key"
+-    private const val USER_ALIAS_PREFIX = "biometric_key_"
+-    private const val DEFAULT_ALIAS_PREFIX = "com.visionflutter.biometric_signature"
+-    private const val DEFAULT_SIGNATURE_TYPE = "ecdsa"
+-    private const val DECRYPT_ALIAS_SUFFIX = ".decrypt"
+-    private const val HYBRID_EC_WRAP_SUFFIX = ".hybrid_ec.wrap"
+-    private const val HYBRID_EC_PUBLIC_KEY_SUFFIX = ".hybrid_ec.public_key"
+-    private const val HYBRID_EC_WRAPPED_PRIVATE_KEY_SUFFIX = ".hybrid_ec.wrapped_private_key"
+-    private const val HYBRID_EC_IV_SUFFIX = ".hybrid_ec.iv"
+-    private const val MANAGED_KEYS_PREFS = "react_native_biometric_signature"
+-    private const val MANAGED_KEYS_SET = "managed_key_aliases"
+-    private const val EC_KEY_SIZE = 256
+-    private const val RSA_KEY_SIZE = 2048
+-    private const val AES_KEY_SIZE = 256
+-    private const val AES_KEY_SIZE_BYTES = 32
+-    private const val GCM_IV_SIZE = 12
+-    private const val GCM_TAG_SIZE = 16
+-    private const val GCM_TAG_BITS = 128
+-    private const val RAW_P256_PUBLIC_KEY_SIZE = 65
+-    private const val X509_P256_PUBLIC_KEY_SIZE = 91
+-    private const val ECDH_ALGORITHM = "ECDH"
+-    private const val ECDSA_SIGNATURE_ALGORITHM = "SHA256withECDSA"
+-    private const val RSA_SIGNATURE_ALGORITHM = "SHA256withRSA"
+-    private const val RSA_DECRYPT_ALGORITHM = "RSA/ECB/OAEPWithSHA-256AndMGF1Padding"
+-    private const val ECIES_DECRYPT_ALGORITHM = "ECIES-X963-SHA256-AESGCM"
+-    private const val AES_GCM_ALGORITHM = "AES/GCM/NoPadding"
+-    private const val BIOMETRIC_PROMPT_ERROR_UNSUPPORTED = 16
++    const val ANDROID_KEYSTORE = "AndroidKeyStore"
++    const val DEFAULT_KEY_ALIAS = "biometric_key"
++    const val USER_ALIAS_PREFIX = "biometric_key_"
++    const val DEFAULT_ALIAS_PREFIX = "com.visionflutter.biometric_signature"
++    const val DEFAULT_SIGNATURE_TYPE = "ecdsa"
++    const val DECRYPT_ALIAS_SUFFIX = ".decrypt"
++    const val HYBRID_EC_WRAP_SUFFIX = ".hybrid_ec.wrap"
++    const val HYBRID_EC_PUBLIC_KEY_SUFFIX = ".hybrid_ec.public_key"
++    const val HYBRID_EC_WRAPPED_PRIVATE_KEY_SUFFIX = ".hybrid_ec.wrapped_private_key"
++    const val HYBRID_EC_IV_SUFFIX = ".hybrid_ec.iv"
++    const val MANAGED_KEYS_PREFS = "react_native_biometric_signature"
++    const val MANAGED_KEYS_SET = "managed_key_aliases"
++    const val EC_KEY_SIZE = 256
++    const val RSA_KEY_SIZE = 2048
++    const val AES_KEY_SIZE = 256
++    const val AES_KEY_SIZE_BYTES = 32
++    const val GCM_IV_SIZE = 12
++    const val GCM_TAG_SIZE = 16
++    const val GCM_TAG_BITS = 128
++    const val RAW_P256_PUBLIC_KEY_SIZE = 65
++    const val X509_P256_PUBLIC_KEY_SIZE = 91
++    const val ECDH_ALGORITHM = "ECDH"
++    const val ECDSA_SIGNATURE_ALGORITHM = "SHA256withECDSA"
++    const val RSA_SIGNATURE_ALGORITHM = "SHA256withRSA"
++    const val RSA_DECRYPT_ALGORITHM = "RSA/ECB/OAEPWithSHA-256AndMGF1Padding"
++    const val ECIES_DECRYPT_ALGORITHM = "ECIES-X963-SHA256-AESGCM"
++    const val AES_GCM_ALGORITHM = "AES/GCM/NoPadding"
++    const val BIOMETRIC_PROMPT_ERROR_UNSUPPORTED = 16
+   }
+ }
+\ No newline at end of file

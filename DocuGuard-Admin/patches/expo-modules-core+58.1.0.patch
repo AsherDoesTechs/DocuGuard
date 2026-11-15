@@ -1,0 +1,118 @@
+diff --git a/node_modules/expo-modules-core/android/CMakeLists.txt b/node_modules/expo-modules-core/android/CMakeLists.txt
+index c8229ee..72e4594 100644
+--- a/node_modules/expo-modules-core/android/CMakeLists.txt
++++ b/node_modules/expo-modules-core/android/CMakeLists.txt
+@@ -3,6 +3,7 @@ set(CMAKE_VERBOSE_MAKEFILE ON)
+ set(CMAKE_CXX_STANDARD 20)
+ 
+ project(expo-modules-core)
++set(CMAKE_SUPPRESS_REGENERATION ON)
+ 
+ include(${CMAKE_SOURCE_DIR}/cmake/variables.cmake)
+ include(${CMAKE_SOURCE_DIR}/cmake/common.cmake)
+diff --git a/node_modules/expo-modules-core/android/build.gradle b/node_modules/expo-modules-core/android/build.gradle
+index 6d9ca64..c184cd2 100644
+--- a/node_modules/expo-modules-core/android/build.gradle
++++ b/node_modules/expo-modules-core/android/build.gradle
+@@ -185,6 +185,7 @@ android {
+       cmake {
+         def cppArguments = [
+           "-DANDROID_STL=c++_shared",
++          "-DCMAKE_OBJECT_PATH_MAX=128",
+           "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON",
+           "-DREACT_NATIVE_DIR=${expoModuleExtension.reactNativeDir}",
+           "-DREACT_NATIVE_TARGET_VERSION=${expoModuleExtension.reactNativeVersion.minor}",
+diff --git a/node_modules/expo-modules-core/android/cmake/jsi.cmake b/node_modules/expo-modules-core/android/cmake/jsi.cmake
+index 97d00bd..1b1e24e 100644
+--- a/node_modules/expo-modules-core/android/cmake/jsi.cmake
++++ b/node_modules/expo-modules-core/android/cmake/jsi.cmake
+@@ -1,5 +1,9 @@
+-file(GLOB common_sources_jsi "${COMMON_DIR}/JSI/*.cpp")
+-file(GLOB android_sources_jsi "${ANDROID_SRC_DIR}/jsi/*.cpp")
++file(GLOB common_sources_jsi
++  RELATIVE "${CMAKE_SOURCE_DIR}"
++  "${EXPO_COMMON_BUILD_DIR}/JSI/*.cpp")
++file(GLOB android_sources_jsi
++  RELATIVE "${CMAKE_SOURCE_DIR}"
++  "${ANDROID_SRC_DIR}/jsi/*.cpp")
+ 
+ add_library(
+   expo-modules-jsi
+@@ -18,3 +22,5 @@ target_include_directories(
+   "${COMMON_DIR}/JSI"
+   "${ANDROID_SRC_DIR}/jsi"
+ )
++
++target_link_libraries(expo-modules-jsi PRIVATE c++_shared)
+diff --git a/node_modules/expo-modules-core/android/cmake/main.cmake b/node_modules/expo-modules-core/android/cmake/main.cmake
+index 82fa0b2..7b4c080 100644
+--- a/node_modules/expo-modules-core/android/cmake/main.cmake
++++ b/node_modules/expo-modules-core/android/cmake/main.cmake
+@@ -1,14 +1,16 @@
+ file(
+   GLOB
+   common_sources
+-  "${COMMON_DIR}/*.cpp"
+-  "${COMMON_DIR}/fabric/*.cpp"
++  RELATIVE "${CMAKE_SOURCE_DIR}"
++  "${EXPO_COMMON_BUILD_DIR}/*.cpp"
++  "${EXPO_COMMON_BUILD_DIR}/fabric/*.cpp"
+ )
+ 
+ set(main_dir ${ANDROID_SRC_DIR}/main/cpp)
+ file(
+   GLOB
+   sources_android
++  RELATIVE "${CMAKE_SOURCE_DIR}"
+   "${main_dir}/*.cpp"
+   "${main_dir}/types/*.cpp"
+   "${main_dir}/javaclasses/*.cpp"
+@@ -50,4 +52,5 @@ target_link_libraries(
+   android
+   ${NEW_ARCHITECTURE_DEPENDENCIES}
+   expo-modules-jsi
++  c++_shared
+ )
+diff --git a/node_modules/expo-modules-core/android/cmake/modulesV2.cmake b/node_modules/expo-modules-core/android/cmake/modulesV2.cmake
+index 85ac526..c445380 100644
+--- a/node_modules/expo-modules-core/android/cmake/modulesV2.cmake
++++ b/node_modules/expo-modules-core/android/cmake/modulesV2.cmake
+@@ -1 +1,3 @@
+ add_subdirectory(${EXPO_MODULES_V2_CPP_DIR} expo-modules-v2-build)
++
++target_link_libraries(expo-modules-v2 PRIVATE c++_shared)
+diff --git a/node_modules/expo-modules-core/android/cmake/variables.cmake b/node_modules/expo-modules-core/android/cmake/variables.cmake
+index df31998..4eb11e2 100644
+--- a/node_modules/expo-modules-core/android/cmake/variables.cmake
++++ b/node_modules/expo-modules-core/android/cmake/variables.cmake
+@@ -11,6 +11,10 @@ createVarAsBoolToInt(UNIT_TEST_INT ${UNIT_TEST})
+ 
+ set(ANDROID_SRC_DIR ${CMAKE_SOURCE_DIR}/src)
+ set(COMMON_DIR ${CMAKE_SOURCE_DIR}/../common/cpp)
++set(EXPO_COMMON_BUILD_DIR ${CMAKE_SOURCE_DIR}/.expo-common)
++if(NOT EXISTS "${EXPO_COMMON_BUILD_DIR}")
++  file(COPY "${COMMON_DIR}/" DESTINATION "${EXPO_COMMON_BUILD_DIR}")
++endif()
+ 
+ include("${REACT_NATIVE_DIR}/ReactAndroid/cmake-utils/folly-flags.cmake")
+ 
+diff --git a/node_modules/expo-modules-core/android/cmake/worklets.cmake b/node_modules/expo-modules-core/android/cmake/worklets.cmake
+index 1031554..5845187 100644
+--- a/node_modules/expo-modules-core/android/cmake/worklets.cmake
++++ b/node_modules/expo-modules-core/android/cmake/worklets.cmake
+@@ -3,6 +3,7 @@ set(main_dir ${ANDROID_SRC_DIR}/main/cpp)
+ file(
+   GLOB
+   worklets_sources
++  RELATIVE "${CMAKE_SOURCE_DIR}"
+   "${main_dir}/worklets/*.cpp"
+ )
+ 
+@@ -41,6 +42,7 @@ target_link_libraries(
+   ${NEW_ARCHITECTURE_DEPENDENCIES}
+   expo-modules-jsi
+   expo-modules-core
++  c++_shared
+ )
+ 
+ find_package(react-native-worklets CONFIG QUIET)

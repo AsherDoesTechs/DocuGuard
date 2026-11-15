@@ -1,468 +1,138 @@
-import React, { useCallback, useEffect, useState } from "react";
-import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+﻿import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
+import { getAdminSystemHealth, type SystemHealthData } from "../services/adminApi";
 import { getAdminToken } from "../services/adminSession";
-
-type SystemHealthData = {
-  status: "healthy" | "degraded" | "critical";
-  uptime: string;
-  database: {
-    status: "connected" | "disconnected";
-    latencyMs: number;
-  };
-  supabaseStorage: {
-    status: "operational" | "degraded" | "down";
-    bucketUsageBytes: number;
-    totalFiles: number;
-  };
-  azureOcr: {
-    status: "operational" | "degraded" | "down";
-    pendingQueueCount: number;
-    successRate24h: number; // percentage e.g. 99.4
-  };
-  lastChecked: string;
-};
+import { AdminBottomNav } from "../components/AdminBottomNav";
+import { AdminColors, AdminRadii } from "../theme/adminTheme";
+import { Badge, Card, IconButton, ProgressBar, ScreenHeader, StatCard } from "../components/ui";
 
 export default function AdminHealthScreen() {
   const [health, setHealth] = useState<SystemHealthData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
-  const fetchHealthMetrics = useCallback(async () => {
-    setLoading(true);
+  const fetchHealth = useCallback(async (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true); else setLoading(true);
     setErrorMessage("");
-
     try {
       const token = await getAdminToken();
-      if (!token) {
-        router.replace("/");
-        return;
-      }
-
-      const API_BASE_URL =
-        process.env.EXPO_PUBLIC_API_BASE_URL ??
-        "https://docuguard-api-onoj.onrender.com";
-      const response = await fetch(`${API_BASE_URL}/admin/health`, {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: "application/json",
-        },
-      });
-
-      if (response.status === 401) {
-        router.replace("/");
-        throw new Error("Session expired. Please sign in again.");
-      }
-
-      if (!response.ok) {
-        throw new Error(
-          "Failed to retrieve system health metrics from the server.",
-        );
-      }
-
-      const data = await response.json();
-      setHealth(data.health || data);
+      if (!token) { router.replace("/"); return; }
+      const data = await getAdminSystemHealth(token);
+      setHealth(((data as any).health ?? (data as any)) as SystemHealthData);
     } catch (error) {
-      setErrorMessage(
-        error instanceof Error
-          ? error.message
-          : "An unexpected error occurred.",
-      );
-    } finally {
-      setLoading(false);
-    }
+      setErrorMessage(error instanceof Error ? error.message : "Unable to load health metrics.");
+    } finally { setLoading(false); setRefreshing(false); }
   }, []);
 
-useEffect(() => {
-  // Initial API request; fetchHealthMetrics manages loading and data state.
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-  void fetchHealthMetrics();
-}, [fetchHealthMetrics]);
+  useEffect(() => { void fetchHealth(); }, [fetchHealth]);
 
-  const formatBytes = (bytes: number) => {
-    if (!bytes || bytes === 0) return "0 MB";
-    const mb = bytes / (1024 * 1024);
-    if (mb > 1024) {
-      return (mb / 1024).toFixed(2) + " GB";
-    }
-    return mb.toFixed(2) + " MB";
-  };
+  const analytics = useMemo(() => {
+    if (!health) return null;
+    const dbOk = health.database?.status === "connected";
+    const storageOk = health.supabaseStorage?.status === "operational";
+    const ocrOk = health.azureOcr?.status === "operational";
+    const score = [dbOk, storageOk, ocrOk].filter(Boolean).length;
+    const healthScore = Math.round((score / 3) * 100);
+    const ocrRate = Number(health.azureOcr?.successRate24h ?? 0);
+    const queue = Number(health.azureOcr?.pendingQueueCount ?? 0);
+    const latency = Number(health.database?.latencyMs ?? 0);
+    const risk: "Low"|"Moderate"|"High" = !dbOk || !storageOk ? "High" : !ocrOk || queue > 20 || ocrRate < 80 ? "Moderate" : "Low";
+    const prediction = !dbOk ? "Database connectivity issue — operations may be impacted." : !storageOk ? "Storage degraded — uploads/downloads may be affected." : queue > 20 ? `OCR queue elevated (${queue}). Expect slower processing.` : latency > 500 ? `DB latency high (${latency}ms).` : "Infrastructure signals stable.";
+    return { dbOk, storageOk, ocrOk, healthScore, ocrRate, queue, latency, risk, prediction };
+  }, [health]);
+
+  const formatBytes = (bytes: number) => { if (!bytes || bytes <= 0) return "0 MB"; const mb = bytes / (1024 * 1024); return mb > 1024 ? `${(mb / 1024).toFixed(2)} GB` : `${mb.toFixed(2)} MB`; };
+  const statusTone = (ok: boolean) => (ok ? "success" : "danger");
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      {/* Header */}
-      <View style={styles.headerRow}>
-        <View>
-          <Text style={styles.title}>System Health & Storage</Text>
-          <Text style={styles.subtitle}>
-            Monitor database, Supabase storage, and Azure OCR pipeline status
-          </Text>
-        </View>
-        <Pressable
-          style={styles.refreshButton}
-          onPress={() => void fetchHealthMetrics()}
-        >
-          <Ionicons name="refresh-outline" size={18} color="#204D91" />
-          <Text style={styles.refreshText}>Refresh</Text>
-        </Pressable>
+    <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
+      <View style={styles.screen}>
+        <ScreenHeader title="System Health" subtitle="Infrastructure & predictions" right={<IconButton icon="refresh-outline" onPress={() => void fetchHealth()} />} />
+
+        {loading ? (
+          <View style={styles.center}><ActivityIndicator size="large" color={AdminColors.primary} /><Text style={styles.muted}>Running diagnostics…</Text></View>
+        ) : errorMessage ? (
+          <View style={{ paddingHorizontal: 20, flex: 1 }}><Card><Text style={styles.errorTitle}>Diagnostics failed</Text><Text style={styles.muted}>{errorMessage}</Text><Text style={styles.errorHint}>Check token, network, and that /admin/health is available on the server.</Text><Pressable style={styles.retryBtn} onPress={() => void fetchHealth()}><Text style={styles.retryText}>Try again</Text></Pressable></Card></View>
+        ) : health && analytics ? (
+          <ScrollView style={styles.scroll} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void fetchHealth(true)} tintColor={AdminColors.primary} />}>
+            <View style={styles.row}>
+              <StatCard label="Health Score" value={`${analytics.healthScore}%`} icon="fitness-outline" color={analytics.healthScore === 100 ? AdminColors.success : AdminColors.warning} bg={analytics.healthScore === 100 ? AdminColors.successSoft : AdminColors.warningSoft} />
+              <StatCard label="OCR 24h" value={`${analytics.ocrRate}%`} icon="scan-outline" color={AdminColors.primary} bg={AdminColors.primarySoft} hint={`${analytics.queue} queued`} />
+            </View>
+
+            <Card title="Prediction & Risk" subtitle="Derived from live service signals">
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                <Text style={{ fontSize: 13, color: AdminColors.textSecondary }}>Operational risk</Text>
+                <Badge label={analytics.risk} tone={analytics.risk === "High" ? "danger" : analytics.risk === "Moderate" ? "warning" : "success"} />
+              </View>
+              <View style={{ gap: 8 }}>
+                <View style={styles.mRow}><Text style={styles.mLabel}>Service availability</Text><Text style={styles.mVal}>{analytics.healthScore}%</Text></View>
+                <ProgressBar value={analytics.healthScore} color={analytics.healthScore === 100 ? AdminColors.success : AdminColors.warning} />
+                <View style={styles.mRow}><Text style={styles.mLabel}>OCR success (24h)</Text><Text style={styles.mVal}>{analytics.ocrRate}%</Text></View>
+                <ProgressBar value={analytics.ocrRate} color={analytics.ocrRate >= 90 ? AdminColors.success : AdminColors.warning} />
+              </View>
+              <View style={styles.insight}><Ionicons name="sparkles-outline" size={14} color={AdminColors.primary} /><Text style={styles.insightText}>{analytics.prediction}</Text></View>
+            </Card>
+
+            <Card title="Services" subtitle={`Last checked: ${health.lastChecked ? new Date(health.lastChecked).toLocaleString() : "—"}`}>
+              <View style={{ gap: 12 }}>
+                <View style={styles.serviceRow}>
+                  <View style={[styles.sIcon, { backgroundColor: analytics.dbOk ? AdminColors.successSoft : AdminColors.dangerSoft }]}><Ionicons name="server-outline" size={18} color={analytics.dbOk ? AdminColors.success : AdminColors.danger} /></View>
+                  <View style={{ flex: 1 }}><Text style={styles.sTitle}>Database</Text><Text style={styles.sMeta}>Latency {analytics.latency} ms</Text></View>
+                  <Badge label={String(health.database?.status || "unknown")} tone={statusTone(analytics.dbOk) as any} />
+                </View>
+                <View style={styles.serviceRow}>
+                  <View style={[styles.sIcon, { backgroundColor: analytics.storageOk ? AdminColors.successSoft : AdminColors.warningSoft }]}><Ionicons name="cloud-outline" size={18} color={analytics.storageOk ? AdminColors.success : AdminColors.warning} /></View>
+                  <View style={{ flex: 1 }}><Text style={styles.sTitle}>Supabase Storage</Text><Text style={styles.sMeta}>{health.supabaseStorage?.totalFiles ?? 0} files · {formatBytes(Number(health.supabaseStorage?.bucketUsageBytes || 0))}</Text></View>
+                  <Badge label={String(health.supabaseStorage?.status || "unknown")} tone={(analytics.storageOk ? "success" : "warning") as any} />
+                </View>
+                <View style={styles.serviceRow}>
+                  <View style={[styles.sIcon, { backgroundColor: analytics.ocrOk ? AdminColors.successSoft : AdminColors.warningSoft }]}><Ionicons name="scan-outline" size={18} color={analytics.ocrOk ? AdminColors.success : AdminColors.warning} /></View>
+                  <View style={{ flex: 1 }}><Text style={styles.sTitle}>Azure OCR</Text><Text style={styles.sMeta}>{analytics.queue} pending · {analytics.ocrRate}% success (24h)</Text></View>
+                  <Badge label={String(health.azureOcr?.status || "unknown")} tone={(analytics.ocrOk ? "success" : "warning") as any} />
+                </View>
+              </View>
+            </Card>
+
+            <Card title="System Summary">
+              <Text style={styles.summaryText}>Overall status: <Text style={{ fontWeight: "700", color: AdminColors.text }}>{String(health.status || "unknown").toUpperCase()}</Text></Text>
+              <Text style={styles.summaryText}>Uptime: <Text style={{ fontWeight: "700", color: AdminColors.text }}>{health.uptime || "—"}</Text></Text>
+              <Text style={styles.summaryHint}>Analytics and predictions are computed from currently available admin telemetry.</Text>
+            </Card>
+          </ScrollView>
+        ) : null}
+
+        <AdminBottomNav />
       </View>
-
-      {/* Content Body */}
-      {loading ? (
-        <View style={styles.centerContainer}>
-          <ActivityIndicator size="large" color="#204D91" />
-          <Text style={styles.centerText}>
-            Running system health diagnostics...
-          </Text>
-        </View>
-      ) : errorMessage ? (
-        <View style={styles.errorContainer}>
-          <Ionicons name="alert-circle-outline" size={32} color="#9B2C2C" />
-          <Text style={styles.errorTitle}>Diagnostics Failed</Text>
-          <Text style={styles.errorText}>{errorMessage}</Text>
-          <Pressable
-            style={styles.retryButton}
-            onPress={() => void fetchHealthMetrics()}
-          >
-            <Text style={styles.retryButtonText}>Try again</Text>
-          </Pressable>
-        </View>
-      ) : health ? (
-        <View style={styles.gridContainer}>
-          {/* Overall Status Card */}
-          <View style={styles.card}>
-            <View style={styles.cardHeader}>
-              <Text style={styles.cardTitle}>Overall System Status</Text>
-              <View
-                style={[
-                  styles.badge,
-                  health.status === "healthy"
-                    ? styles.badgeGreen
-                    : styles.badgeRed,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.badgeText,
-                    health.status === "healthy"
-                      ? styles.badgeTextGreen
-                      : styles.badgeTextRed,
-                  ]}
-                >
-                  {health.status.toUpperCase()}
-                </Text>
-              </View>
-            </View>
-            <Text style={styles.cardSubtitle}>
-              Server Uptime: {health.uptime}
-            </Text>
-            <Text style={styles.timestampText}>
-              Last checked: {new Date(health.lastChecked).toLocaleTimeString()}
-            </Text>
-          </View>
-
-          {/* Database Card */}
-          <View style={styles.card}>
-            <View style={styles.cardHeader}>
-              <View style={styles.cardTitleRow}>
-                <Ionicons name="server-outline" size={20} color="#204D91" />
-                <Text style={styles.cardTitle}>Database Connection</Text>
-              </View>
-              <View
-                style={[
-                  styles.badge,
-                  health.database.status === "connected"
-                    ? styles.badgeGreen
-                    : styles.badgeRed,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.badgeText,
-                    health.database.status === "connected"
-                      ? styles.badgeTextGreen
-                      : styles.badgeTextRed,
-                  ]}
-                >
-                  {health.database.status.toUpperCase()}
-                </Text>
-              </View>
-            </View>
-            <Text style={styles.metricDetail}>
-              Query Latency:{" "}
-              <Text style={styles.metricHighlight}>
-                {health.database.latencyMs} ms
-              </Text>
-            </Text>
-          </View>
-
-          {/* Supabase Storage Card */}
-          <View style={styles.card}>
-            <View style={styles.cardHeader}>
-              <View style={styles.cardTitleRow}>
-                <Ionicons name="cloud-outline" size={20} color="#204D91" />
-                <Text style={styles.cardTitle}>Supabase Storage Vault</Text>
-              </View>
-              <View
-                style={[
-                  styles.badge,
-                  health.supabaseStorage.status === "operational"
-                    ? styles.badgeGreen
-                    : styles.badgeYellow,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.badgeText,
-                    health.supabaseStorage.status === "operational"
-                      ? styles.badgeTextGreen
-                      : styles.badgeTextYellow,
-                  ]}
-                >
-                  {health.supabaseStorage.status.toUpperCase()}
-                </Text>
-              </View>
-            </View>
-            <View style={styles.metricRow}>
-              <Text style={styles.metricDetail}>
-                Total Vault Files:{" "}
-                <Text style={styles.metricHighlight}>
-                  {health.supabaseStorage.totalFiles}
-                </Text>
-              </Text>
-              <Text style={styles.metricDetail}>
-                Storage Footprint:{" "}
-                <Text style={styles.metricHighlight}>
-                  {formatBytes(health.supabaseStorage.bucketUsageBytes)}
-                </Text>
-              </Text>
-            </View>
-          </View>
-
-          {/* Azure OCR Pipeline Card */}
-          <View style={styles.card}>
-            <View style={styles.cardHeader}>
-              <View style={styles.cardTitleRow}>
-                <Ionicons
-                  name="document-text-outline"
-                  size={20}
-                  color="#204D91"
-                />
-                <Text style={styles.cardTitle}>
-                  Azure Document Intelligence OCR
-                </Text>
-              </View>
-              <View
-                style={[
-                  styles.badge,
-                  health.azureOcr.status === "operational"
-                    ? styles.badgeGreen
-                    : styles.badgeYellow,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.badgeText,
-                    health.azureOcr.status === "operational"
-                      ? styles.badgeTextGreen
-                      : styles.badgeTextYellow,
-                  ]}
-                >
-                  {health.azureOcr.status.toUpperCase()}
-                </Text>
-              </View>
-            </View>
-            <View style={styles.metricRow}>
-              <Text style={styles.metricDetail}>
-                Pending OCR Queue:{" "}
-                <Text style={styles.metricHighlight}>
-                  {health.azureOcr.pendingQueueCount}
-                </Text>
-              </Text>
-              <Text style={styles.metricDetail}>
-                24h Success Rate:{" "}
-                <Text style={styles.metricHighlight}>
-                  {health.azureOcr.successRate24h}%
-                </Text>
-              </Text>
-            </View>
-          </View>
-        </View>
-      ) : null}
-    </ScrollView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flexGrow: 1,
-    padding: 24,
-    backgroundColor: "#F3F6FB",
-  },
-  headerRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 24,
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: "800",
-    color: "#172B4D",
-  },
-  subtitle: {
-    fontSize: 13,
-    color: "#68778D",
-    marginTop: 2,
-  },
-  refreshButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: "#DCE4EF",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
-  },
-  refreshText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#204D91",
-  },
-  gridContainer: {
-    gap: 16,
-  },
-  card: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 16,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: "#E4EAF3",
-    shadowColor: "#15366B",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.03,
-    shadowRadius: 10,
-    elevation: 2,
-  },
-  cardHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 10,
-  },
-  cardTitleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-  cardTitle: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#172B4D",
-  },
-  cardSubtitle: {
-    fontSize: 13,
-    color: "#68778D",
-    marginBottom: 4,
-  },
-  timestampText: {
-    fontSize: 11,
-    color: "#8A96A8",
-    marginTop: 2,
-  },
-  metricRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginTop: 6,
-  },
-  metricDetail: {
-    fontSize: 13,
-    color: "#68778D",
-  },
-  metricHighlight: {
-    fontWeight: "700",
-    color: "#172B4D",
-  },
-  badge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-  },
-  badgeGreen: {
-    backgroundColor: "#DEF7EC",
-  },
-  badgeYellow: {
-    backgroundColor: "#FEF3C7",
-  },
-  badgeRed: {
-    backgroundColor: "#FDE8E8",
-  },
-  badgeText: {
-    fontSize: 10,
-    fontWeight: "700",
-  },
-  badgeTextGreen: {
-    color: "#03543F",
-  },
-  badgeTextYellow: {
-    color: "#92400E",
-  },
-  badgeTextRed: {
-    color: "#9B1C1C",
-  },
-  centerContainer: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 80,
-  },
-  centerText: {
-    color: "#68778D",
-    marginTop: 10,
-    fontSize: 14,
-  },
-  errorContainer: {
-    padding: 24,
-    alignItems: "center",
-    backgroundColor: "#FFFFFF",
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#E4EAF3",
-    marginTop: 20,
-  },
-  errorTitle: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#9B2C2C",
-    marginTop: 10,
-  },
-  errorText: {
-    fontSize: 13,
-    color: "#68778D",
-    textAlign: "center",
-    marginTop: 4,
-    marginBottom: 16,
-  },
-  retryButton: {
-    backgroundColor: "#204D91",
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 8,
-  },
-  retryButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "700",
-    fontSize: 13,
-  },
+  safeArea: { flex: 1, backgroundColor: AdminColors.background },
+  screen: { flex: 1 },
+  scroll: { flex: 1 },
+  content: { paddingHorizontal: 20, paddingBottom: 24, gap: 14 },
+  row: { flexDirection: "row", gap: 12 },
+  center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 10 },
+  muted: { fontSize: 13, color: AdminColors.textSecondary, lineHeight: 19 },
+  errorTitle: { fontSize: 16, fontWeight: "700", color: AdminColors.dangerText, marginBottom: 4 },
+  errorHint: { fontSize: 12, color: AdminColors.textMuted, marginTop: 6, lineHeight: 17 },
+  retryBtn: { alignSelf: "flex-start", marginTop: 12, backgroundColor: AdminColors.primary, paddingHorizontal: 14, paddingVertical: 10, borderRadius: AdminRadii.sm },
+  retryText: { color: "#fff", fontWeight: "700", fontSize: 13 },
+  mRow: { flexDirection: "row", justifyContent: "space-between" },
+  mLabel: { fontSize: 12, color: AdminColors.textSecondary },
+  mVal: { fontSize: 12, fontWeight: "700", color: AdminColors.text },
+  insight: { flexDirection: "row", gap: 8, marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: AdminColors.border },
+  insightText: { flex: 1, fontSize: 13, color: AdminColors.textSecondary, lineHeight: 18 },
+  serviceRow: { flexDirection: "row", alignItems: "center", gap: 12 },
+  sIcon: { width: 40, height: 40, borderRadius: 12, alignItems: "center", justifyContent: "center" },
+  sTitle: { fontSize: 14, fontWeight: "700", color: AdminColors.text },
+  sMeta: { fontSize: 12, color: AdminColors.textSecondary, marginTop: 2 },
+  summaryText: { fontSize: 14, color: AdminColors.textSecondary, marginBottom: 6 },
+  summaryHint: { fontSize: 12, color: AdminColors.textMuted, marginTop: 6, lineHeight: 17 },
 });

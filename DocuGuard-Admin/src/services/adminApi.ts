@@ -1,14 +1,23 @@
 import { router } from "expo-router";
 import { clearAdminToken } from "./adminSession";
 
-const API_BASE_URL =
-  process.env.EXPO_PUBLIC_API_BASE_URL ??
-  "https://docuguard-api-onoj.onrender.com";
+const DEFAULT_API_BASE_URL = "https://docuguard-api-onoj.onrender.com";
+const API_BASE_URL = (
+  (typeof process !== "undefined" && process.env.EXPO_PUBLIC_API_BASE_URL) ||
+  DEFAULT_API_BASE_URL
+).replace(/\/+$/, "");
+
+export function getAdminApiBaseUrl() {
+  return API_BASE_URL;
+}
 
 export type AdminUser = {
   id: number | string;
   email: string;
   name?: string | null;
+  role?: "admin" | "user" | "moderator" | string;
+  status?: "active" | "suspended" | "pending" | string;
+  createdAt?: string;
 };
 
 export type PendingAdminUser = {
@@ -52,9 +61,50 @@ type OverviewResponse = {
   metrics: AdminMetrics;
 };
 
+export type VaultDocument = {
+  id: string | number;
+  title: string;
+  fileName: string;
+  fileSize: number;
+  ownerEmail: string;
+  ocrStatus: "completed" | "pending" | "failed" | string;
+  createdAt: string;
+};
+
+export type AuditLogEntry = {
+  id: string | number;
+  action: string;
+  actor: string;
+  severity: "info" | "warning" | "critical" | string;
+  ipAddress?: string;
+  timestamp: string;
+  details?: string;
+};
+
+export type SystemHealthData = {
+  status: "healthy" | "degraded" | "critical" | string;
+  uptime: string;
+  database: {
+    status: "connected" | "disconnected" | string;
+    latencyMs: number;
+  };
+  supabaseStorage: {
+    status: "operational" | "degraded" | "down" | string;
+    bucketUsageBytes: number;
+    totalFiles: number;
+  };
+  azureOcr: {
+    status: "operational" | "degraded" | "down" | string;
+    pendingQueueCount: number;
+    successRate24h: number;
+  };
+  lastChecked: string;
+};
+
 type ApiErrorBody = {
   error?: string;
   code?: string;
+  [key: string]: any;
 };
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -77,8 +127,12 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     );
   } catch (netError) {
     console.error(`[AdminApi Network Error] ${method} ${path}:`, netError);
+    const originHint =
+      typeof window !== "undefined" && window.location?.origin
+        ? ` from ${window.location.origin}`
+        : "";
     throw new Error(
-      "Unable to connect to DocuGuard. Check your internet connection and try again.",
+      `Unable to connect to DocuGuard API (${API_BASE_URL}${path})${originHint}. Check internet, server status, EXPO_PUBLIC_API_BASE_URL, and server CORS_ALLOWED_ORIGINS for this origin.`,
     );
   }
 
@@ -110,7 +164,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   }
 
   if (!response.ok) {
-    const body = data as ApiErrorBody;
+    const body = (data || {}) as ApiErrorBody;
     console.warn(
       `[AdminApi Error Body] ${method} ${path} (${response.status}):`,
       body,
@@ -132,6 +186,10 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   }
 
   return data as T;
+}
+
+function authHeaders(token: string): Record<string, string> {
+  return { Authorization: `Bearer ${token}` };
 }
 
 /**
@@ -211,9 +269,47 @@ export async function getAdminOverview(
 ): Promise<OverviewResponse> {
   return request<OverviewResponse>("/admin/overview", {
     method: "GET",
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
+    headers: authHeaders(token),
+  });
+}
+
+export async function getAdminUsers(token: string): Promise<{ status?: string; users: AdminUser[] } | AdminUser[]> {
+  return request<{ status?: string; users: AdminUser[] } | AdminUser[]>("/admin/users", {
+    method: "GET",
+    headers: authHeaders(token),
+  });
+}
+
+export async function updateAdminUserStatus(
+  token: string,
+  userId: string | number,
+  status: "active" | "suspended",
+): Promise<any> {
+  return request(`/admin/users/${encodeURIComponent(String(userId))}/status`, {
+    method: "PATCH",
+    headers: authHeaders(token),
+    body: JSON.stringify({ status }),
+  });
+}
+
+export async function getAdminDocuments(token: string): Promise<{ status?: string; documents: VaultDocument[] } | VaultDocument[]> {
+  return request<{ status?: string; documents: VaultDocument[] } | VaultDocument[]>("/admin/documents", {
+    method: "GET",
+    headers: authHeaders(token),
+  });
+}
+
+export async function getAdminLogs(token: string): Promise<{ status?: string; logs: AuditLogEntry[] } | AuditLogEntry[]> {
+  return request<{ status?: string; logs: AuditLogEntry[] } | AuditLogEntry[]>("/admin/logs", {
+    method: "GET",
+    headers: authHeaders(token),
+  });
+}
+
+export async function getAdminSystemHealth(token: string): Promise<{ status?: string; health: SystemHealthData } | SystemHealthData> {
+  return request<{ status?: string; health: SystemHealthData } | SystemHealthData>("/admin/health", {
+    method: "GET",
+    headers: authHeaders(token),
   });
 }
 
@@ -224,9 +320,7 @@ export async function logoutAdmin(token: string): Promise<void> {
   try {
     await request("/admin-auth/logout", {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
+      headers: authHeaders(token),
     });
   } catch (error) {
     console.warn(

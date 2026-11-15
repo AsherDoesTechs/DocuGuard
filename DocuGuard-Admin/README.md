@@ -1,56 +1,65 @@
-# Welcome to your Expo app 👋
+﻿# DocuGuard Admin (PWA-ready)
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Expo Router admin portal configured for web/PWA output and future Capacitor wrapping. **Only this folder was modified for this setup.**
 
-## Get started
+## What changed for PWA
 
-1. Install dependencies
+- `app.json` web output set to `single` (SPA/static export-friendly) with PWA metadata.
+- `src/app/+html.tsx` adds web head tags, manifest link, Apple/mobile web app meta, and icons.
+- `public/manifest.webmanifest`, `public/sw.js`, and `public/icons/*` added for installability/app shell caching.
+- `src/app/_layout.tsx` registers the service worker on web.
+- Web-safe fallbacks added:
+  - `src/services/adminSession.ts`: uses `localStorage` on web, `expo-secure-store` on native.
+  - `src/services/adminBiometrics.ts`: hardware-backed key signing/enrollment is native-only; web shows a clear unsupported message (Capacitor/native required for device-bound auth).
+  - `src/services/notificationService.tsx`, `src/utils/updates.ts`: web-safe no-op guards.
 
-   ```bash
-   npm install
-   ```
-
-2. Start the app
-
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **src/app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
+## Run as web / PWA (dev)
 
 ```bash
-npm run reset-project
+npm install
+npm run web
 ```
 
-This command will move the starter code to the **example** directory and create a blank **src/app** directory where you can start developing.
+Open in a browser and install when prompted/supported.
 
-### Other setup steps
+## Build & preview PWA
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+```bash
+npm run build:web
+npm run preview:web
+```
 
-## Learn more
+`build:web` exports to `dist/` (static web output). `preview:web` serves the exported build locally for install/service-worker testing.
 
-To learn more about developing your project with Expo, look at the following resources:
+## Native (unchanged workflows)
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+```bash
+npm run start
+npm run android
+npm run ios
+```
 
-## Join the community
+## Future: Capacitor (planned)
 
-Join our community of developers creating universal apps.
+This app is prepared as a web-first shell for Capacitor later:
+1. Build web assets: `npm run build:web` (outputs `dist/`).
+2. Add Capacitor in this folder (`@capacitor/core`, `@capacitor/cli`, platforms) and point `webDir` to `dist`.
+3. Rewire device-bound admin security to Capacitor/native plugins (secure storage, biometrics/keystore/signing) while keeping the same API flow.
+4. Keep service worker/PWA behavior for browser installs and use native bridges when running inside Capacitor.
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+## Connect to deployed backend (recommended)
+
+The admin app fetches data from the DocuGuard API (`/admin/*`, `/admin-auth/*`). For production/deployed use:
+
+1. Copy `.env.example` to `.env` and set:
+   - `EXPO_PUBLIC_API_BASE_URL=https://<your-deployed-api>` (default: `https://docuguard-api-onoj.onrender.com`)
+2. Restart `npm run web` / rebuild (`npm run build:web`) after changing env vars (`EXPO_PUBLIC_*` is embedded at build/start time).
+3. Ensure the **deployed DocuGuard-Server** allows this admin web origin in CORS:
+   - Server env: `CORS_ALLOWED_ORIGINS=https://<admin-web-domain>` (comma-separated for multiple exact origins).
+   - In production, missing/wrong CORS origin causes browser `TypeError: Failed to fetch`.
+4. Sign in with a valid admin account that exists/has admin role in the **deployed** database.
+
+## Notes
+
+- No `DocuGuard-Server`, mobile app, or other workspace folders were changed as part of this PWA setup.
+- Device-bound cryptographic admin login/enrollment remains a native/Capacitor capability; web build is installable but does not perform hardware key signing.

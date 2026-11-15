@@ -29,8 +29,18 @@
       ]
     },
     "web": {
-      "output": "server",
-      "favicon": "./assets/images/Icon.png"
+      "output": "single",
+      "favicon": "./assets/images/favicon.png",
+      "bundler": "metro",
+      "name": "DocuGuard Admin",
+      "shortName": "DG Admin",
+      "description": "DocuGuard Administration Portal",
+      "lang": "en",
+      "themeColor": "#15366B",
+      "backgroundColor": "#0A192F",
+      "display": "standalone",
+      "orientation": "portrait",
+      "startUrl": "/"
     },
     "plugins": [
       "expo-router",

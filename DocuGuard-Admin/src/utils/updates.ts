@@ -1,13 +1,16 @@
-import * as Updates from "expo-updates";
-import { Alert } from "react-native";
+﻿import { Alert, Platform } from "react-native";
 
 export async function checkForAppUpdates() {
   if (__DEV__) {
     console.log("Skipping OTA update check in development mode.");
     return;
   }
+  if (Platform.OS === "web") {
+    return;
+  }
 
   try {
+    const Updates = await import("expo-updates");
     const update = await Updates.checkForUpdateAsync();
 
     if (update.isAvailable) {

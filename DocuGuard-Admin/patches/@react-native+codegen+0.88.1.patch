@@ -1,0 +1,19 @@
+diff --git a/node_modules/@react-native/codegen/lib/generators/modules/GenerateModuleJniH.js b/node_modules/@react-native/codegen/lib/generators/modules/GenerateModuleJniH.js
+index f60625f..cfc0f05 100644
+--- a/node_modules/@react-native/codegen/lib/generators/modules/GenerateModuleJniH.js
++++ b/node_modules/@react-native/codegen/lib/generators/modules/GenerateModuleJniH.js
+@@ -57,7 +57,13 @@ const CMakeListsTemplate = ({
+ cmake_minimum_required(VERSION 3.13)
+ set(CMAKE_VERBOSE_MAKEFILE on)
+ 
+-file(GLOB react_codegen_SRCS CONFIGURE_DEPENDS *.cpp react/renderer/components/${libraryName}/*.cpp)
++set(REACT_CODEGEN_SOURCE_DIR "\${CMAKE_CURRENT_BINARY_DIR}/react_codegen_sources")
++if(NOT EXISTS "\${REACT_CODEGEN_SOURCE_DIR}")
++  file(COPY "\${CMAKE_CURRENT_SOURCE_DIR}/." DESTINATION "\${REACT_CODEGEN_SOURCE_DIR}")
++endif()
++file(GLOB react_codegen_SRCS CONFIGURE_DEPENDS
++  "\${REACT_CODEGEN_SOURCE_DIR}/*.cpp"
++  "\${REACT_CODEGEN_SOURCE_DIR}/react/renderer/components/${libraryName}/*.cpp")
+ 
+ add_library(
+   react_codegen_${targetName}
