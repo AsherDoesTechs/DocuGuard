@@ -5,6 +5,7 @@ import {
   StyleSheet,
   Pressable,
   Animated as RNAnimated,
+  useWindowDimensions,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -29,13 +30,14 @@ export const TabBar: React.FC<TabBarProps> = React.memo(
   ({ tabs, activeTab, onTabPress, disabled = false }) => {
     const insets = useSafeAreaInsets();
     const colors = useColors();
+    const { width } = useWindowDimensions();
+    const isTablet = width >= 768;
 
     const scaleValues = useRef<Record<string, RNAnimated.Value>>({});
     const animations = useRef<Record<string, RNAnimated.CompositeAnimation>>(
       {},
     );
 
-    // Keep an animated value for each tab without changing hook order.
     tabs.forEach((tab) => {
       if (!scaleValues.current[tab.name]) {
         scaleValues.current[tab.name] = new RNAnimated.Value(1);
@@ -73,7 +75,6 @@ export const TabBar: React.FC<TabBarProps> = React.memo(
         const currentAnim = scaleValues.current[tab.name];
         const previousAnim = scaleValues.current[safeActiveTab];
 
-        // Stop any previous animation for this tab before starting another.
         animations.current[tab.name]?.stop();
 
         if (currentAnim) {
@@ -135,7 +136,7 @@ export const TabBar: React.FC<TabBarProps> = React.memo(
     return (
       <View
         style={[
-          styles.container,
+          isTablet ? styles.containerTablet : styles.container,
           {
             backgroundColor: colors.tabBarBackground,
             borderColor: colors.tabBarBorder,
@@ -289,6 +290,21 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderRadius: 30,
     width: undefined,
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.14,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  containerTablet: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "center",
+    marginHorizontal: 0,
+    marginBottom: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 30,
+    width: "90%",
+    maxWidth: 720,
     shadowOffset: { width: 0, height: 5 },
     shadowOpacity: 0.14,
     shadowRadius: 12,

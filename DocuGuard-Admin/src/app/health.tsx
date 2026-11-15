@@ -144,7 +144,7 @@ function ServiceRow({ icon, title, meta, status, ok, warn }: { icon: any; title:
 function SummaryRow({ label, value }: { label: string; value: string }) { return <View style={styles.summaryRow}><Text style={styles.summaryLabel}>{label}</Text><Text style={styles.summaryValue}>{value}</Text></View>; }
 
 const styles = StyleSheet.create({
-  safeArea:{flex:1,backgroundColor:AdminColors.background}, screen:{flex:1}, scroll:{flex:1}, content:{paddingHorizontal:20,paddingBottom:110},
+  safeArea:{flex:1,backgroundColor:AdminColors.background}, screen:{flex:1}, scroll:{flex:1}, content:{paddingHorizontal:20,paddingBottom:16},
   muted:{fontSize:13,color:AdminColors.textSecondary,lineHeight:19}, errorTitle:{fontSize:16,fontWeight:"700",color:AdminColors.dangerText,marginBottom:4},
   retryBtn:{alignSelf:"flex-start",marginTop:12,backgroundColor:AdminColors.primary,paddingHorizontal:14,paddingVertical:10,borderRadius:AdminRadii.sm}, retryText:{color:"#fff",fontWeight:"700",fontSize:13},
   mRow:{flexDirection:"row",justifyContent:"space-between"}, mLabel:{fontSize:12,color:AdminColors.textSecondary}, mVal:{fontSize:12,fontWeight:"700",color:AdminColors.text},

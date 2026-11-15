@@ -154,11 +154,16 @@ exports.getDocuments = async (req, res) => {
     const fileSizeExpr = hasColumn(cols, "file_size")
       ? `d.file_size AS "fileSize"`
       : "0::bigint AS \"fileSize\"";
-    const ocrExpr = hasColumn(cols, "ocr_status")
-      ? `COALESCE(d.ocr_status, 'pending') AS "ocrStatus"`
+    const ocrCol = hasColumn(cols, "ocr_status")
+      ? "ocr_status"
       : hasColumn(cols, "ocrStatus")
-        ? `COALESCE(d."ocrStatus", 'pending') AS "ocrStatus"`
-        : "'unknown'::text AS \"ocrStatus\"";
+        ? '"ocrStatus"'
+        : hasColumn(cols, "processing_status")
+          ? "processing_status"
+          : null;
+    const ocrExpr = ocrCol
+      ? `COALESCE(d.${ocrCol}, 'pending') AS "ocrStatus"`
+      : "'unknown'::text AS \"ocrStatus\"";
     const createdExpr = hasColumn(cols, "created_at")
       ? `d.created_at AS "createdAt"`
       : "NULL::timestamptz AS \"createdAt\"";
@@ -293,7 +298,13 @@ exports.getSystemHealth = async (req, res) => {
     const fileSizeExpr = hasColumn(docCols, "file_size")
       ? "COALESCE(SUM(file_size), 0)::bigint"
       : "0::bigint";
-    const hasOcrStatus = hasColumn(docCols, "ocr_status") || hasColumn(docCols, "ocrStatus");
+    const hasOcrStatusCol = hasColumn(docCols, "ocr_status") || hasColumn(docCols, "ocrStatus");
+    const ocrColRef = hasColumn(docCols, "ocr_status")
+      ? "ocr_status"
+      : hasColumn(docCols, "ocrStatus")
+        ? '"ocrStatus"'
+        : null;
+    const hasProcessingStatus = hasColumn(docCols, "processing_status");
     const hasCreated = hasColumn(docCols, "created_at");
     const hasUpdated = hasColumn(docCols, "updated_at");
 
@@ -305,25 +316,25 @@ exports.getSystemHealth = async (req, res) => {
          FROM public.documents
          WHERE ${whereStatus}`,
       ),
-      hasOcrStatus
+      hasOcrStatusCol
         ? db.query(
             `SELECT
-               COUNT(*) FILTER (WHERE LOWER(COALESCE(ocr_status::text, 'pending')) = 'pending')::int AS "pendingCount",
-               COUNT(*) FILTER (WHERE LOWER(COALESCE(ocr_status::text, '')) = 'completed')::int AS "completedCount",
-               COUNT(*) FILTER (WHERE LOWER(COALESCE(ocr_status::text, '')) NOT IN ('completed','pending','unknown',''))::int AS "failedCount",
-               COUNT(*)::int AS "totalCount",
-               COUNT(*) FILTER (
-                 WHERE LOWER(COALESCE(ocr_status::text, '')) = 'completed'
-                   AND ${hasUpdated ? "COALESCE(updated_at, created_at)" : hasCreated ? "created_at" : "NOW()"} >= NOW() - INTERVAL '24 hours'
-               )::int AS "completed24h",
-               COUNT(*) FILTER (
-                 WHERE LOWER(COALESCE(ocr_status::text, '')) NOT IN ('completed','pending','unknown','')
-                   AND ${hasUpdated ? "COALESCE(updated_at, created_at)" : hasCreated ? "created_at" : "NOW()"} >= NOW() - INTERVAL '24 hours'
-               )::int AS "failed24h"
+               COUNT(*) FILTER (WHERE LOWER(COALESCE(${ocrColRef}::text, 'pending')) = 'pending')::int AS "pendingCount",
+               COUNT(*) FILTER (WHERE LOWER(COALESCE(${ocrColRef}::text, '')) = 'completed')::int AS "completedCount",
+               COUNT(*) FILTER (WHERE LOWER(COALESCE(${ocrColRef}::text, '')) NOT IN ('completed','pending','unknown',''))::int AS "failedCount"
              FROM public.documents
              WHERE ${whereStatus}`,
           )
-        : Promise.resolve({ rows: [{}] }),
+        : hasProcessingStatus
+          ? db.query(
+              `SELECT
+                 COUNT(*) FILTER (WHERE LOWER(COALESCE(processing_status,'pending')) IN ('pending','processing','manual_review'))::int AS "pendingCount",
+                 COUNT(*) FILTER (WHERE LOWER(COALESCE(processing_status,'')) IN ('completed','verified'))::int AS "completedCount",
+                 COUNT(*) FILTER (WHERE LOWER(COALESCE(processing_status,'')) IN ('failed','rejected'))::int AS "failedCount"
+               FROM public.documents
+               WHERE ${whereStatus}`,
+            )
+          : Promise.resolve({ rows: [{}] }),
     ]);
 
     const azureEndpoint = String(process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT || process.env.AZURE_ENDPOINT || "").trim();
@@ -333,18 +344,14 @@ exports.getSystemHealth = async (req, res) => {
     const pendingQueueCount = Number(ocr.pendingCount || 0);
     const completedCount = Number(ocr.completedCount || 0);
     const failedCount = Number(ocr.failedCount || 0);
-    const completed24h = Number(ocr.completed24h || 0);
-    const failed24h = Number(ocr.failed24h || 0);
-    const finished24h = completed24h + failed24h;
-    const finishedAll = completedCount + failedCount;
-    const successRate24h = finished24h > 0 ? Math.round((completed24h / finished24h) * 1000) / 10 : finishedAll > 0 ? Math.round((completedCount / finishedAll) * 1000) / 10 : 0;
+    const successRate24h = completedCount + failedCount > 0 ? Math.round((completedCount / (completedCount + failedCount)) * 1000) / 10 : 0;
 
     let azureStatus = "unknown";
     let azureIssue = "";
     if (!azureConfigured) {
       azureStatus = "not_configured";
       azureIssue = "Azure Document Intelligence credentials are not configured on the server (AZURE_ENDPOINT/AZURE_KEY or AZURE_DOCUMENT_INTELLIGENCE_*).";
-    } else if (!hasOcrStatus) {
+    } else if (!hasOcrStatusCol && !hasProcessingStatus) {
       azureStatus = "configured";
       azureIssue = "Azure credentials are configured, but OCR status tracking is unavailable in the current database schema.";
     } else if (failedCount > 0 && failedCount >= Math.max(3, Math.ceil((completedCount + failedCount) * 0.2))) {

@@ -315,12 +315,13 @@ exports.createOcrDraft = async (req, res) => {
          s3_key,
          file_url,
          file_type,
-         processing_status
+         processing_status,
+         ocr_status
        )
               VALUES (
          $1, $2, $3, $4, $5, $6, $7,
          $8, $9, $10, CURRENT_TIMESTAMP,
-         $11, $12, $13, $14
+         $11, $12, $13, $14, $15
        )
        RETURNING
          id,
@@ -354,6 +355,7 @@ exports.createOcrDraft = async (req, res) => {
         key,
         null,
         normalizedFileType,
+        "pending",
         "pending",
       ],
     );
@@ -480,7 +482,9 @@ exports.processDocument = async (req, res) => {
     await db.query(
       `
       UPDATE documents
-      SET processing_status = 'processing'
+      SET processing_status = 'processing',
+          ocr_status = 'pending',
+          ocr_error = NULL
       WHERE id = $1
         AND user_id = $2
       `,
@@ -501,14 +505,20 @@ exports.processDocument = async (req, res) => {
       (documentTypeValidation.status === "manual_review" &&
         documentTypeValidation.reason === "low_classification_confidence")
     ) {
+      const mismatchMsg =
+        documentTypeValidation.message ||
+        "Verification halted. The uploaded document does not match the required ID layout or type.";
       await db.query(
         `
         UPDATE documents
-        SET processing_status = 'failed'
+        SET processing_status = 'failed',
+            ocr_status = 'failed',
+            ocr_error = $3,
+            ocr_completed_at = NOW()
         WHERE id = $1
           AND user_id = $2
         `,
-        [documentId, userId],
+        [documentId, userId, mismatchMsg],
       );
       try {
         await syncDocumentFromAuthoritative(userId, documentId, "UPDATE");
@@ -549,14 +559,19 @@ exports.processDocument = async (req, res) => {
     }
 
     if (documentTypeValidation.status === "processing_error") {
+      const procErrMsg =
+        documentTypeValidation.message || "Document processing failed";
       await db.query(
         `
         UPDATE documents
-        SET processing_status = 'failed'
+        SET processing_status = 'failed',
+            ocr_status = 'failed',
+            ocr_error = $3,
+            ocr_completed_at = NOW()
         WHERE id = $1
           AND user_id = $2
         `,
-        [documentId, userId],
+        [documentId, userId, procErrMsg],
       );
 
       try {
@@ -598,14 +613,20 @@ exports.processDocument = async (req, res) => {
       });
     }
     if (documentTypeValidation.status === "manual_review") {
+      const reviewMsg =
+        documentTypeValidation.message ||
+        "The document could not be processed confidently. Please review it manually.";
       await db.query(
         `
         UPDATE documents
-        SET processing_status = 'manual_review'
+        SET processing_status = 'manual_review',
+            ocr_status = 'failed',
+            ocr_error = $3,
+            ocr_completed_at = NOW()
         WHERE id = $1
           AND user_id = $2
         `,
-        [documentId, userId],
+        [documentId, userId, reviewMsg],
       );
 
       try {
@@ -698,7 +719,10 @@ exports.processDocument = async (req, res) => {
         risk_level = CASE WHEN risk_level IS NULL OR risk_level = ''
           THEN COALESCE($8, risk_level) ELSE risk_level END,
         ocr_data = $9,
-        processing_status = 'completed'
+        processing_status = 'completed',
+        ocr_status = 'completed',
+        ocr_error = NULL,
+        ocr_completed_at = NOW()
       WHERE id = $10
         AND user_id = $11
       RETURNING *, ${UPDATED_AT_ISO_SQL} AS "updatedAt"
@@ -712,8 +736,6 @@ exports.processDocument = async (req, res) => {
         extractedData.expiryDate,
         extractedData.riskScore,
         extractedData.riskLevel,
-        // The raw analyzer payload is kept so a bad extraction can be
-        // investigated or re-run instead of being discarded.
         JSON.stringify(extractedData.raw ?? null),
         documentId,
         userId,
@@ -809,28 +831,20 @@ exports.processDocument = async (req, res) => {
 
     try {
       if (req.body?.documentId) {
+        const failMsg =
+          error?.message || "Document processing failed";
         await db.query(
           `
           UPDATE documents
-          SET processing_status = 'failed'
+          SET processing_status = 'failed',
+              ocr_status = 'failed',
+              ocr_error = $3,
+              ocr_completed_at = NOW()
           WHERE id = $1
             AND user_id = $2
           `,
-          [req.body.documentId, req.user.userId],
+          [req.body.documentId, req.user.userId, String(failMsg).slice(0, 2000)],
         );
-        /*
-         * Mirror the row the server actually wrote, not a payload built from the
-         * request body.
-         *
-         * The mirror is an upsert into the same table the update above just
-         * wrote, so a payload that leaves a field out does not leave the field
-         * alone - it clears it. A partial payload used to erase the title, the
-         * expiry date, the document number, the issuer, the storage key and
-         * the risk fields, and to replace the title with "Scanned Document".
-         *
-         * The persisted row is fetched, scoped by this account, and mirrored
-         * as it is. When the row cannot be read, nothing is mirrored at all.
-         */
         await syncDocumentFromAuthoritative(
           req.user.userId,
           req.body.documentId,
@@ -1216,9 +1230,9 @@ exports.createDocument = async (req, res) => {
         `INSERT INTO documents (
            user_id, title, category, issuer, document_number,
            issue_date, expiry_date, notes, enable_alerts, status, created_at,
-           s3_key, file_url, file_type, processing_status
+           s3_key, file_url, file_type, processing_status, ocr_status
          )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'active', CURRENT_TIMESTAMP, $10, $11, $12, $13)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'active', CURRENT_TIMESTAMP, $10, $11, $12, $13, $14)
          RETURNING id, title, category, issuer, document_number AS "documentNumber",
                    issue_date AS "issueDate", expiry_date AS "expiryDate", notes, status, enable_alerts AS "enableAlerts",
                    file_url AS "fileUrl", file_type AS "fileType", s3_key AS "s3Key",
@@ -1238,6 +1252,7 @@ exports.createDocument = async (req, res) => {
           fileUrl || null,
           fileType || null,
           s3Key ? "processing" : "completed",
+          s3Key ? "pending" : "completed",
         ],
       );
 
