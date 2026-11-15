@@ -149,7 +149,7 @@ export default function AdminHealthScreen() {
             <Card title="Services" subtitle={`Last checked: ${health.lastChecked ? new Date(health.lastChecked).toLocaleString() : "—"}`}>
               <View style={{ gap: 12 }}>
                 <ServiceRow icon="server-outline" title="Database" meta={`Latency ${analytics.latency} ms`} status={String(health.database?.status||"unknown")} ok={analytics.dbOk} />
-                <ServiceRow icon="cloud-outline" title="Storage" meta={`${health.supabaseStorage?.totalFiles ?? 0} files · ${fmtBytes(Number(health.supabaseStorage?.bucketUsageBytes || 0))}`} status={String(health.supabaseStorage?.status||"unknown")} ok={analytics.storageOk} />
+                <ServiceRow icon="cloud-outline" title="Storage" meta={`${health.supabaseStorage?.totalFiles ?? 0} files${Number(health.supabaseStorage?.bucketUsageBytes || 0) > 0 ? ` · ${fmtBytes(Number(health.supabaseStorage?.bucketUsageBytes || 0))}` : " · size not stored in DB (add file_size column or compute from object metadata)"}`} status={String(health.supabaseStorage?.status||"unknown")} ok={analytics.storageOk} />
                 <ServiceRow
                   icon="scan-outline"
                   title="Azure OCR"
