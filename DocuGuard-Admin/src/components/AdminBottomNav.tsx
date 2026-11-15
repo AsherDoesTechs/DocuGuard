@@ -17,7 +17,7 @@ const TABS = [
 export function AdminBottomNav() {
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
-  const { width, height } = useWindowDimensions();
+  const { width } = useWindowDimensions();
   const isVertical = width >= 768;
 
   if (isVertical) {
@@ -102,10 +102,10 @@ const styles = StyleSheet.create({
   },
   floatWrap: {
     position: "absolute",
-    zIndex: 50,
+    zIndex: 999,
     justifyContent: "center",
     alignItems: "center",
-    ...(Platform.OS === "web" ? ({ pointerEvents: "none" } as any) : {}),
+    ...(Platform.OS === "web" ? ({ position: "fixed", pointerEvents: "none" } as any) : {}),
   },
   floatPillVertical: {
     flexDirection: "column",
@@ -118,6 +118,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 6,
     gap: 2,
+    pointerEvents: "auto",
     ...(Platform.OS === "web"
       ? ({ boxShadow: "0 8px 24px rgba(16,24,40,0.12)" } as any)
       : {
