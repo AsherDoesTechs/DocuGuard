@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, FlatList, RefreshControl, Share, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
+import { Alert, FlatList, Platform, RefreshControl, Share, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
@@ -188,9 +188,22 @@ export default function AdminDocumentsScreen() {
             .join(",")
         );
       });
-      await Share.share({ message: rows.join("\n"), title: "Documents Export" });
+      const csv = rows.join("\n");
+      const filename = `documents-export-${new Date().toISOString().slice(0, 10)}.csv`;
+
+      if (Platform.OS === "web" && typeof document !== "undefined") {
+        const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
+        return;
+      }
+      await Share.share({ message: csv, title: "Documents Export" });
     } catch {
-      Alert.alert("Export unavailable", "Could not share export.");
+      Alert.alert("Export unavailable", "Could not share/export.");
     }
   };
 
