@@ -10,7 +10,6 @@ import {
   Platform,
   UIManager,
   DeviceEventEmitter,
-  Alert,
 } from "react-native";
 import { LayoutAnimation } from "react-native";
 import Animated, { FadeInDown } from "react-native-reanimated";
@@ -19,7 +18,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
-import { Card, StatusBadge, EmptyState, TagFilter } from "../../components/ui";
+import { Card, StatusBadge, EmptyState, TagFilter, AlertModal } from "../../components/ui";
 import SearchBar from "@/components/ui/SearchBar";
 import { DOCUMENT_CATEGORIES } from "../../constants";
 import { useTheme } from "@/context/ThemeContext";
@@ -177,6 +176,16 @@ interface DocumentItemProps {
   onMoveToTrash?: (id: number) => void;
   onRestore?: (id: number) => void;
   onPermanentDelete?: (id: number) => void;
+  showConfirmModal: (
+    title: string,
+    message: string,
+    onConfirm: () => void,
+    options?: {
+      type?: "default" | "warning" | "error";
+      confirmText?: string;
+      confirmStyle?: "default" | "destructive";
+    }
+  ) => void;
 }
 
 const DocumentItem = React.memo(
@@ -191,6 +200,7 @@ const DocumentItem = React.memo(
     onMoveToTrash,
     onRestore,
     onPermanentDelete,
+    showConfirmModal,
   }: DocumentItemProps) => {
     const syncIcon = getSyncIcon(doc);
     const localId = typeof doc.id === "number" ? doc.id : null;
@@ -347,13 +357,11 @@ const DocumentItem = React.memo(
                         accessibilityLabel={`Archive ${doc.title || "document"}`}
                         onPress={(e) => {
                           e.stopPropagation?.();
-                          Alert.alert(
+                          showConfirmModal(
                             "Archive Document",
                             `Archive "${doc.title || "this document"}"?`,
-                            [
-                              { text: "Cancel", style: "cancel" },
-                              { text: "Archive", onPress: () => onArchiveToggle?.(localId, true) },
-                            ],
+                            () => onArchiveToggle?.(localId, true),
+                            { confirmText: "Archive" }
                           );
                         }}
                         style={{
@@ -378,13 +386,11 @@ const DocumentItem = React.memo(
                         accessibilityLabel={`Move ${doc.title || "document"} to trash`}
                         onPress={(e) => {
                           e.stopPropagation?.();
-                          Alert.alert(
+                          showConfirmModal(
                             "Move to Trash",
                             `Move "${doc.title || "this document"}" to trash?`,
-                            [
-                              { text: "Cancel", style: "cancel" },
-                              { text: "Trash", style: "destructive", onPress: () => onMoveToTrash?.(localId) },
-                            ],
+                            () => onMoveToTrash?.(localId),
+                            { confirmText: "Trash", confirmStyle: "destructive", type: "warning" }
                           );
                         }}
                         style={{
@@ -413,13 +419,11 @@ const DocumentItem = React.memo(
                         accessibilityLabel={`Unarchive ${doc.title || "document"}`}
                         onPress={(e) => {
                           e.stopPropagation?.();
-                          Alert.alert(
+                          showConfirmModal(
                             "Unarchive Document",
                             `Unarchive "${doc.title || "this document"}"?`,
-                            [
-                              { text: "Cancel", style: "cancel" },
-                              { text: "Unarchive", onPress: () => onArchiveToggle?.(localId, false) },
-                            ],
+                            () => onArchiveToggle?.(localId, false),
+                            { confirmText: "Unarchive" }
                           );
                         }}
                         style={{
@@ -444,13 +448,11 @@ const DocumentItem = React.memo(
                         accessibilityLabel={`Move ${doc.title || "document"} to trash`}
                         onPress={(e) => {
                           e.stopPropagation?.();
-                          Alert.alert(
+                          showConfirmModal(
                             "Move to Trash",
                             `Move "${doc.title || "this document"}" to trash?`,
-                            [
-                              { text: "Cancel", style: "cancel" },
-                              { text: "Trash", style: "destructive", onPress: () => onMoveToTrash?.(localId) },
-                            ],
+                            () => onMoveToTrash?.(localId),
+                            { confirmText: "Trash", confirmStyle: "destructive", type: "warning" }
                           );
                         }}
                         style={{
@@ -479,13 +481,11 @@ const DocumentItem = React.memo(
                         accessibilityLabel={`Restore ${doc.title || "document"}`}
                         onPress={(e) => {
                           e.stopPropagation?.();
-                          Alert.alert(
+                          showConfirmModal(
                             "Restore Document",
                             `Restore "${doc.title || "this document"}" from trash?`,
-                            [
-                              { text: "Cancel", style: "cancel" },
-                              { text: "Restore", onPress: () => onRestore?.(localId) },
-                            ],
+                            () => onRestore?.(localId),
+                            { confirmText: "Restore" }
                           );
                         }}
                         style={{
@@ -510,13 +510,11 @@ const DocumentItem = React.memo(
                         accessibilityLabel={`Delete ${doc.title || "document"} permanently`}
                         onPress={(e) => {
                           e.stopPropagation?.();
-                          Alert.alert(
+                          showConfirmModal(
                             "Delete Permanently",
                             `Permanently delete "${doc.title || "this document"}"? This cannot be undone.`,
-                            [
-                              { text: "Cancel", style: "cancel" },
-                              { text: "Delete", style: "destructive", onPress: () => onPermanentDelete?.(localId) },
-                            ],
+                            () => onPermanentDelete?.(localId),
+                            { confirmText: "Delete", confirmStyle: "destructive", type: "error" }
                           );
                         }}
                         style={{
@@ -586,6 +584,42 @@ export default function DocumentsScreen() {
   const [syncStatusModalVisible, setSyncStatusModalVisible] = useState(false);
   const [ocrSearchIds, setOcrSearchIds] = useState<Set<number> | null>(null);
   const [viewMode, setViewMode] = useState<"active" | "archived" | "trash">("active");
+
+  // Confirmation modal state
+  const [confirmModal, setConfirmModal] = useState<{
+    visible: boolean;
+    title: string;
+    message: string;
+    type: "default" | "warning" | "error";
+    onConfirm: () => void;
+    confirmText: string;
+    confirmStyle?: "default" | "destructive";
+  } | null>(null);
+
+  const showConfirmModal = useCallback((
+    title: string,
+    message: string,
+    onConfirm: () => void,
+    options?: {
+      type?: "default" | "warning" | "error";
+      confirmText?: string;
+      confirmStyle?: "default" | "destructive";
+    }
+  ) => {
+    setConfirmModal({
+      visible: true,
+      title,
+      message,
+      type: options?.type || "default",
+      onConfirm,
+      confirmText: options?.confirmText || "Confirm",
+      confirmStyle: options?.confirmStyle,
+    });
+  }, []);
+
+  const hideConfirmModal = useCallback(() => {
+    setConfirmModal(null);
+  }, []);
 
   const [documents, setDocuments] = useState<LocalDocument[]>([]);
   const [archivedDocs, setArchivedDocs] = useState<LocalDocument[]>([]);
@@ -1157,6 +1191,7 @@ export default function DocumentsScreen() {
                     onMoveToTrash={handleMoveToTrash}
                     onRestore={handleRestoreDocument}
                     onPermanentDelete={handlePermanentDelete}
+                    showConfirmModal={showConfirmModal}
                   />
                 </Animated.View>
               ))
@@ -1396,6 +1431,26 @@ export default function DocumentsScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Confirmation Modal */}
+      <AlertModal
+        visible={!!confirmModal}
+        title={confirmModal?.title || ""}
+        message={confirmModal?.message}
+        type={confirmModal?.type || "default"}
+        buttons={[
+          { text: "Cancel", style: "cancel", onPress: hideConfirmModal },
+          {
+            text: confirmModal?.confirmText || "Confirm",
+            style: confirmModal?.confirmStyle || "default",
+            onPress: () => {
+              confirmModal?.onConfirm();
+              hideConfirmModal();
+            },
+          },
+        ]}
+        onDismiss={hideConfirmModal}
+      />
 
       {/* Floating Add Document button */}
       <TouchableOpacity
