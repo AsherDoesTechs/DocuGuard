@@ -29,7 +29,7 @@ export function AdminBottomNav() {
           {
             top: Math.max(insets.top, 24),
             bottom: Math.max(insets.bottom, 24),
-            right: Math.max(insets.right, 12),
+            right: Math.max(insets.right, 4),
           },
         ]}
       >
@@ -115,8 +115,8 @@ const styles = StyleSheet.create({
     borderRadius: 28,
     borderWidth: 1,
     borderColor: AdminColors.border,
-    paddingVertical: 10,
-    paddingHorizontal: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 4,
     gap: 2,
     pointerEvents: "auto",
     ...(Platform.OS === "web"
