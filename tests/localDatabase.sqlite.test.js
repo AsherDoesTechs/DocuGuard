@@ -53,9 +53,7 @@ function readTemplateLiteral(marker) {
    * interpolation is replaced with the scoped variant, which is the one that
    * runs for a signed-in account.
    */
-  return source
-    .slice(open + 1, close)
-    .replace(/\$\{[^}]*\}/g, "user_id = ?");
+  return source.slice(open + 1, close).replace(/\$\{[^}]*\}/g, "user_id = ?");
 }
 
 /**
@@ -115,32 +113,36 @@ test(
     const insert = readTemplateLiteral("INSERT INTO documents");
 
     const now = new Date().toISOString();
-    const info = db.prepare(insert).run(
-      7,
-      "Passport",
-      "identification",
-      "DFA",
-      "P123",
-      "2024-01-01",
-      null,
-      "a note",
-      "active",
-      1,
-      30,
-      JSON.stringify([7, 30]),
-      "file:///cache/scan.jpg",
-      "image/jpeg",
-      "7/abc.jpg",
-      "completed",
-      null,
-      null,
-      1,
-      "pending",
-      42,
-      null,
-      now,
-      now,
-    );
+    const info = db
+      .prepare(insert)
+      .run(
+        7,
+        "Passport",
+        "identification",
+        "DFA",
+        "P123",
+        "2024-01-01",
+        null,
+        "a note",
+        "active",
+        1,
+        30,
+        JSON.stringify([7, 30]),
+        "file:///cache/scan.jpg",
+        "image/jpeg",
+        "7/abc.jpg",
+        null,
+        null,
+        "completed",
+        null,
+        null,
+        1,
+        "pending",
+        42,
+        null,
+        now,
+        now,
+      );
 
     assert.equal(info.changes, 1, "exactly one row may be inserted");
 
@@ -176,6 +178,8 @@ test(
       "active",
       1,
       30,
+      null,
+      null,
       null,
       null,
       null,
@@ -229,21 +233,14 @@ test(
   { skip: skip ? "node:sqlite is not available" : false },
   () => {
     const db = createDatabase();
-    const update = readTemplateLiteral(
-      "SET cloud_id = COALESCE(?, cloud_id)",
-    );
+    const update = readTemplateLiteral("SET cloud_id = COALESCE(?, cloud_id)");
 
     db.prepare(
       `INSERT INTO documents (user_id, title, needs_sync, sync_status, cloud_id, server_updated_at)
        VALUES (7, 'Passport', 1, 'pending', 42, '2026-10-20T15:27:11.123456Z')`,
     ).run();
 
-    db.prepare(update).run(
-      42,
-      "2026-10-21T09:00:00.500000Z",
-      1,
-      7,
-    );
+    db.prepare(update).run(42, "2026-10-21T09:00:00.500000Z", 1, 7);
 
     const row = db.prepare("SELECT * FROM documents WHERE id = 1").get();
     assert.equal(row.needs_sync, 0);
@@ -273,7 +270,11 @@ test(
       "2026-10-20T15:27:11.123456Z",
       "a missing revision must not erase the known one",
     );
-    assert.equal(row.cloud_id, 42, "a missing cloud id must not erase the known one");
+    assert.equal(
+      row.cloud_id,
+      42,
+      "a missing cloud id must not erase the known one",
+    );
     assert.equal(row.needs_sync, 0);
   },
 );
@@ -325,12 +326,14 @@ test(
     assert.equal(visible.length, 0, "a tombstone must never be rendered");
 
     const queued = db
-      .prepare(
-        `SELECT id FROM documents WHERE needs_sync = 1 AND user_id = ?`,
-      )
+      .prepare(`SELECT id FROM documents WHERE needs_sync = 1 AND user_id = ?`)
       .all(7);
 
-    assert.equal(queued.length, 1, "a tombstone must still be pushed to the server");
+    assert.equal(
+      queued.length,
+      1,
+      "a tombstone must still be pushed to the server",
+    );
   },
 );
 
@@ -391,6 +394,9 @@ test(
         id INTEGER PRIMARY KEY,
         name TEXT,
         email TEXT,
+        occupation TEXT DEFAULT '',
+        phone TEXT DEFAULT '',
+        serial_number TEXT DEFAULT '',
         document_count INTEGER DEFAULT 0,
         expiring_count INTEGER DEFAULT 0,
         expired_count INTEGER DEFAULT 0,
@@ -408,14 +414,17 @@ test(
       7,
       "User",
       "user@example.com",
-      0,
-      0,
-      0,
-      1,
-      1,
-      1,
-      0,
-      1,
+      "", // occupation
+      "", // phone
+      "DG-USER-0007", // serial_number
+      0, // document_count
+      0, // expiring_count
+      0, // expired_count
+      1, // notifications_enabled
+      1, // notify_email
+      1, // notify_expiry
+      0, // two_factor
+      1, // preferences_dirty
     );
 
     assert.equal(info.changes, 1, "exactly one row may be inserted");
@@ -455,10 +464,18 @@ test(
       CREATE TABLE IF NOT EXISTS document_history (id INTEGER PRIMARY KEY, document_id INTEGER, action TEXT);
     `);
 
-    db.prepare(`INSERT INTO documents (user_id, title) VALUES (7, 'Mine')`).run();
-    db.prepare(`INSERT INTO documents (user_id, title) VALUES (8, 'Theirs')`).run();
-    db.prepare(`INSERT INTO reminders (user_id, title) VALUES (7, 'Mine')`).run();
-    db.prepare(`INSERT INTO reminders (user_id, title) VALUES (8, 'Theirs')`).run();
+    db.prepare(
+      `INSERT INTO documents (user_id, title) VALUES (7, 'Mine')`,
+    ).run();
+    db.prepare(
+      `INSERT INTO documents (user_id, title) VALUES (8, 'Theirs')`,
+    ).run();
+    db.prepare(
+      `INSERT INTO reminders (user_id, title) VALUES (7, 'Mine')`,
+    ).run();
+    db.prepare(
+      `INSERT INTO reminders (user_id, title) VALUES (8, 'Theirs')`,
+    ).run();
     db.prepare(
       `INSERT INTO user_profile (id, name, preferences_dirty) VALUES (7, 'User 7', 0), (8, 'User 8', 0)`,
     ).run();
@@ -473,8 +490,12 @@ test(
        VALUES ('documents', 1, 'update', 'pending'),
               ('documents', 2, 'update', 'pending')`,
     ).run();
-    db.prepare(`INSERT INTO document_tags (document_id, tag) VALUES (1, 'important')`).run();
-    db.prepare(`INSERT INTO document_history (document_id, action) VALUES (1, 'created')`).run();
+    db.prepare(
+      `INSERT INTO document_tags (document_id, tag) VALUES (1, 'important')`,
+    ).run();
+    db.prepare(
+      `INSERT INTO document_history (document_id, action) VALUES (1, 'created')`,
+    ).run();
 
     const purgeStatements = [
       readTemplateLiteral("DELETE FROM document_tags WHERE document_id IN"),
@@ -484,7 +505,6 @@ test(
       readTemplateLiteral("DELETE FROM login_sessions WHERE user_id = ?"),
       readTemplateLiteral("DELETE FROM user_settings WHERE user_id = ?"),
       readTemplateLiteral("DELETE FROM user_profile WHERE id = ?"),
-
     ];
 
     for (const statement of purgeStatements) {
@@ -512,7 +532,11 @@ test(
       .prepare("SELECT COUNT(*) AS c FROM reminders WHERE user_id = 8")
       .get().c;
 
-    assert.equal(mineReminders, 0, "the purged account's reminders must be gone");
+    assert.equal(
+      mineReminders,
+      0,
+      "the purged account's reminders must be gone",
+    );
     assert.equal(
       theirsReminders,
       1,

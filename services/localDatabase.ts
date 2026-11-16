@@ -937,6 +937,7 @@ export async function initDatabase() {
         email TEXT,
         occupation TEXT DEFAULT '',
         phone TEXT DEFAULT '',
+        serial_number TEXT DEFAULT '',
         document_count INTEGER DEFAULT 0,
         expiring_count INTEGER DEFAULT 0,
         expired_count INTEGER DEFAULT 0,
@@ -974,6 +975,12 @@ export async function initDatabase() {
     if (!profileColumns.has("phone")) {
       await database.execAsync(
         `ALTER TABLE user_profile ADD COLUMN phone TEXT DEFAULT ''`,
+      );
+    }
+
+    if (!profileColumns.has("serial_number")) {
+      await database.execAsync(
+        `ALTER TABLE user_profile ADD COLUMN serial_number TEXT DEFAULT ''`,
       );
     }
 
@@ -2529,13 +2536,17 @@ export async function saveUserProfile(profile: LocalUserProfile) {
         ? 1
         : 0;
 
+  const serialNumber =
+    (profile.serialNumber && String(profile.serialNumber).trim()) ||
+    `DG-USER-${String(userId).padStart(4, "0")}`;
+
   await run(
     `
     INSERT OR REPLACE INTO user_profile
-      (id, name, email, occupation, phone, document_count, expiring_count, expired_count,
+      (id, name, email, occupation, phone, serial_number, document_count, expiring_count, expired_count,
        notifications_enabled, notify_email, notify_expiry, two_factor,
        preferences_dirty)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
     [
       userId,
@@ -2543,6 +2554,7 @@ export async function saveUserProfile(profile: LocalUserProfile) {
       profile.email,
       profile.occupation || "",
       profile.phone || "",
+      serialNumber,
       profile.documentCount,
       profile.expiringCount,
       profile.expiredCount,
@@ -2589,6 +2601,7 @@ export async function updateLocalNotificationPreferences(fields: {
     email: existing?.email ?? "",
     occupation: existing?.occupation ?? "",
     phone: existing?.phone ?? "",
+    serialNumber: existing?.serialNumber,
     documentCount: existing?.documentCount ?? 0,
     expiringCount: existing?.expiringCount ?? 0,
     expiredCount: existing?.expiredCount ?? 0,
@@ -2621,7 +2634,9 @@ export async function getUserProfile(): Promise<LocalUserProfile | null> {
   if (userId === null) return null;
 
   const row = await querySingle<LocalUserProfile>(
-    `SELECT id, name, email, occupation, phone, document_count AS "documentCount",
+    `SELECT id, name, email, occupation, phone,
+            COALESCE(NULLIF(serial_number, ''), 'DG-USER-' || printf('%04d', id)) AS "serialNumber",
+            document_count AS "documentCount",
             expiring_count AS "expiringCount", expired_count AS "expiredCount",
             notifications_enabled AS "notificationsEnabled",
             notify_email AS "notifyEmail", notify_expiry AS "notifyExpiry",

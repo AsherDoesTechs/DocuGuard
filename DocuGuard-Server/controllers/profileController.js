@@ -20,7 +20,9 @@ exports.getProfile = async (req, res) => {
   const userId = req.user.userId;
   try {
     const userRes = await db.query(
-      `SELECT name, email, occupation, phone, security_level AS "securityLevel", notifications_enabled AS "notifyPush",
+      `SELECT id,
+       COALESCE(NULLIF(BTRIM(display_id), ''), 'DG-USER-' || LPAD(id::text, 4, '0')) AS "serialNumber",
+       name, email, occupation, phone, security_level AS "securityLevel", notifications_enabled AS "notifyPush",
        email_alerts AS "notifyEmail", expiry_alerts AS "notifyExpiry", two_factor AS "twoFactor",
        two_factor_secret AS "twoFactorSecret",
        two_factor_enabled_at AS "twoFactorEnabledAt",

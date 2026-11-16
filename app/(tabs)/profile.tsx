@@ -541,9 +541,15 @@ export default function ProfileScreen() {
       const localProfile = (await getUserProfile()) as any;
       const localDocs = await getAllDocuments();
 
+      const fallbackSerial =
+        activeUserId !== null
+          ? `DG-USER-${String(activeUserId).padStart(4, "0")}`
+          : "DG-USER-0000";
       let serialNumber =
         localProfile?.serialNumber ||
-        `DG-USER-${String(localDocs.length).padStart(4, "0")}`;
+        (activeUserId !== null
+          ? `DG-USER-${String(activeUserId).padStart(4, "0")}`
+          : "DG-USER-0000");
 
       if (localProfile) {
         setUser({
@@ -609,6 +615,16 @@ export default function ProfileScreen() {
           setIsCustomOccupation(true);
         }
 
+        const resolvedSerialNumber =
+          res.data.serialNumber ||
+          res.data.user?.serialNumber ||
+          subData.serialNumber ||
+          (res.data.id
+            ? `DG-USER-${String(res.data.id).padStart(4, "0")}`
+            : activeUserId !== null
+              ? `DG-USER-${String(activeUserId).padStart(4, "0")}`
+              : "DG-USER-0000");
+
         setUser((prev) => ({
           ...prev!,
           ...res.data,
@@ -619,12 +635,7 @@ export default function ProfileScreen() {
               : res.data.storageUsedMB === null
                 ? null
                 : undefined,
-          serialNumber:
-            res.data.serialNumber ||
-            res.data.user?.serialNumber ||
-            subData.serialNumber ||
-            prev?.serialNumber ||
-            "DG-USER-0000",
+          serialNumber: resolvedSerialNumber,
           subscription: {
             planName:
               subData.planName || prev?.subscription?.planName || "Free",
@@ -634,8 +645,7 @@ export default function ProfileScreen() {
               subData.storageUsed || prev?.subscription?.storageUsed || 0,
             storageTotal:
               subData.storageTotal || prev?.subscription?.storageTotal || 50,
-            serialNumber:
-              subData.serialNumber || prev?.subscription?.serialNumber,
+            serialNumber: resolvedSerialNumber,
           },
         }));
 
@@ -704,6 +714,24 @@ export default function ProfileScreen() {
                 notifyEmail: resolvedEmail,
                 notificationsEnabled: resolvedPush,
                 notifyExpiry: resolvedExpiry,
+                serialNumber: resolvedSerialNumber,
+                preferencesDirty: false,
+              });
+            } else if (activeUserId !== null) {
+              await saveUserProfile({
+                id: activeUserId,
+                name: res.data.name || "",
+                email: res.data.email || "",
+                occupation: res.data.occupation || "",
+                phone: res.data.phone || "",
+                serialNumber: resolvedSerialNumber,
+                documentCount: parseInt(res.data.documentCount || 0),
+                expiringCount: parseInt(res.data.expiringCount || 0),
+                expiredCount: parseInt(res.data.expiredCount || 0),
+                notifyEmail: resolvedEmail,
+                notificationsEnabled: resolvedPush,
+                notifyExpiry: resolvedExpiry,
+                twoFactor: Boolean(res.data.twoFactor),
                 preferencesDirty: false,
               });
             }

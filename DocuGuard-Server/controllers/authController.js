@@ -79,6 +79,22 @@ exports.register = async (req, res, next) => {
     );
 
     const newUser = result.rows[0];
+    const serialNumber = `DG-USER-${String(newUser.id).padStart(4, "0")}`;
+    try {
+      await db.query(
+        `UPDATE users SET display_id = COALESCE(NULLIF(BTRIM(display_id), ''), $2) WHERE id = $1`,
+        [newUser.id, serialNumber],
+      );
+    } catch (displayIdErr) {
+      // Column may not exist yet on older databases; profile fallback still uses user id.
+      if (displayIdErr?.code !== "42703") {
+        warn("Auth", "Failed to persist user display ID", {
+          userId: newUser.id,
+          error: displayIdErr.message,
+        });
+      }
+    }
+    newUser.serialNumber = serialNumber;
     info("Auth", "User registered", {
       userId: newUser.id,
       email: newUser.email,
@@ -113,7 +129,12 @@ exports.register = async (req, res, next) => {
     res.status(201).json({
       message:
         "User registered successfully. Please check your email to verify your account.",
-      user: { id: newUser.id, email: newUser.email, name: newUser.name },
+      user: {
+        id: newUser.id,
+        email: newUser.email,
+        name: newUser.name,
+        serialNumber: newUser.serialNumber,
+      },
       emailSent,
     });
   } catch (err) {
