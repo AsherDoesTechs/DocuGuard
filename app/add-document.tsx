@@ -1011,6 +1011,7 @@ export default function AddDocumentScreen() {
   const [selectedFile, setSelectedFile] = useState<SelectedFileItem | null>(
     null,
   );
+  const [scannedPageUris, setScannedPageUris] = useState<string[]>([]);
   const [scannerVisible, setScannerVisible] = useState<boolean>(false);
 
   const [ocrLoading, setOcrLoading] = useState<boolean>(false);
@@ -1071,6 +1072,7 @@ export default function AddDocumentScreen() {
     uploadedFileRef.current = null;
     captureSourceRef.current = null;
     ocrDraftIdRef.current = null;
+    setScannedPageUris([]);
   }
 
   function selectDocumentType(type: "legal" | "non-legal") {
@@ -1475,13 +1477,15 @@ export default function AddDocumentScreen() {
       }
     }
 
-    const pageCount = fileMime === "application/pdf" ? imageArray.length : 1;
+    const pageUris = imageArray.map((img) => img.uri);
+    const pageCount = pageUris.length;
     setSelectedFile({
       name: fileName,
       uri: fileUri,
       size: 0,
       mimeType: fileMime,
     });
+    setScannedPageUris(pageCount > 1 ? pageUris : []);
     captureSourceRef.current = "scan";
     // Reset form fields for fresh scan
     setTitle(specificDocument?.title || "");
@@ -1687,6 +1691,8 @@ export default function AddDocumentScreen() {
         fileType: selectedFile?.mimeType ?? undefined,
         s3Key,
         cloudId,
+        pageCount: scannedPageUris.length > 1 ? scannedPageUris.length : undefined,
+        pageImages: scannedPageUris.length > 1 ? scannedPageUris : undefined,
       };
 
       /*

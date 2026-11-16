@@ -14,6 +14,8 @@ export interface LocalDocument {
   fileUrl?: string;
   fileType?: string;
   s3Key?: string;
+  pageCount?: number | null;
+  pageImages?: string[];
   processingStatus: string;
   /** Null until a real detector assesses the document. Never derived from OCR. */
   riskScore?: number | null;

@@ -86,6 +86,7 @@ export default function DocumentViewerScreen() {
   const [error, setError] = useState<string | null>(null);
   const [document, setDocument] = useState<LocalDocument | null>(null);
   const [fileUri, setFileUri] = useState<string | null>(null);
+  const [pageUris, setPageUris] = useState<string[]>([]);
   const [retrying, setRetrying] = useState(false);
 
   const fetchFreshRemoteUri = useCallback(async (doc: LocalDocument) => {
@@ -136,8 +137,20 @@ export default function DocumentViewerScreen() {
         if (!mounted) return;
         setDocument(doc);
 
-        const uri = await resolveInitialUri(doc);
-        if (mounted) setFileUri(uri);
+        const pages = Array.isArray((doc as any).pageImages)
+          ? ((doc as any).pageImages as string[]).filter(
+              (u) => typeof u === "string" && u.length > 0,
+            )
+          : [];
+        if (pages.length > 1) {
+          if (mounted) {
+            setPageUris(pages);
+            setFileUri(pages[0]);
+          }
+        } else {
+          const uri = await resolveInitialUri(doc);
+          if (mounted) setFileUri(uri);
+        }
       } catch (e: any) {
         if (mounted) setError(e?.message || "Could not open document file.");
       } finally {
@@ -149,8 +162,11 @@ export default function DocumentViewerScreen() {
     };
   }, [docId, resolveInitialUri]);
 
-  const canRenderImage = isImageType(document?.fileType, fileUri);
-  const isPdf = isPdfType(document?.fileType, fileUri || document?.fileUrl || null);
+  const isMultiPage = pageUris.length > 1;
+  const canRenderImage =
+    isMultiPage || isImageType(document?.fileType, fileUri);
+  const isPdf =
+    !isMultiPage && isPdfType(document?.fileType, fileUri || document?.fileUrl || null);
 
   const handleOpenExternal = async () => {
     if (!fileUri || !document) return;
@@ -309,19 +325,42 @@ export default function DocumentViewerScreen() {
           minimumZoomScale={1}
           showsVerticalScrollIndicator={false}
         >
-          <Image
-            key={fileUri}
-            source={{ uri: fileUri }}
-            style={styles.image}
-            resizeMode="contain"
-            onError={handleImageError}
-          />
-          {retrying ? (
-            <View style={styles.retryOverlay}>
-              <ActivityIndicator size="small" color={colors.primary} />
-              <Text style={styles.mutedSmall}>Retrying image...</Text>
-            </View>
-          ) : null}
+          {isMultiPage ? (
+            <>
+              <Text style={styles.pageCountText}>
+                {pageUris.length} pages
+              </Text>
+              {pageUris.map((uri, idx) => (
+                <View key={`${uri}-${idx}`} style={styles.pageBlock}>
+                  <Text style={styles.pageLabel}>Page {idx + 1}</Text>
+                  <Image
+                    source={{ uri }}
+                    style={styles.image}
+                    resizeMode="contain"
+                    onError={() => {
+                      if (idx === 0) handleImageError();
+                    }}
+                  />
+                </View>
+              ))}
+            </>
+          ) : (
+            <>
+              <Image
+                key={fileUri || "image"}
+                source={{ uri: fileUri as string }}
+                style={styles.image}
+                resizeMode="contain"
+                onError={handleImageError}
+              />
+              {retrying ? (
+                <View style={styles.retryOverlay}>
+                  <ActivityIndicator size="small" color={colors.primary} />
+                  <Text style={styles.mutedSmall}>Retrying image...</Text>
+                </View>
+              ) : null}
+            </>
+          )}
         </ScrollView>
       ) : isPdf ? (
         <View style={styles.center}>
@@ -368,8 +407,11 @@ const createStyles = (colors: any) =>
     mutedSmall: { fontSize: 12, color: colors.textMuted, textAlign: "center" },
     errorText: { fontSize: 14, color: colors.error, textAlign: "center" },
     viewer: { flex: 1 },
-    imageContainer: { flexGrow: 1, alignItems: "center", justifyContent: "center", padding: 16 },
+    imageContainer: { flexGrow: 1, alignItems: "center", justifyContent: "flex-start", padding: 16, gap: 12 },
     image: { width: "100%", height: 600, backgroundColor: colors.surface },
+    pageBlock: { width: "100%", alignItems: "center", marginBottom: 16 },
+    pageLabel: { fontSize: 13, fontWeight: "600", color: colors.textSecondary, marginBottom: 6, alignSelf: "flex-start" },
+    pageCountText: { fontSize: 13, fontWeight: "700", color: colors.primary, marginBottom: 8, alignSelf: "flex-start" },
     retryOverlay: { marginTop: 12, alignItems: "center", gap: 6 },
     button: {
       marginTop: 8,

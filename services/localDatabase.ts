@@ -144,6 +144,32 @@ function normalizeDocumentRow<T>(row: T): T {
   if (typeof record.needsSync === "number") {
     record.needsSync = record.needsSync !== 0;
   }
+  const rawPageImages = record.pageImages ?? (record as any).page_images;
+  if (typeof rawPageImages === "string") {
+    try {
+      const parsed = JSON.parse(rawPageImages);
+      record.pageImages = Array.isArray(parsed)
+        ? parsed.filter((v: unknown): v is string => typeof v === "string" && v.length > 0)
+        : undefined;
+    } catch {
+      record.pageImages = undefined;
+    }
+  } else if (Array.isArray(rawPageImages)) {
+    record.pageImages = rawPageImages.filter(
+      (v: unknown): v is string => typeof v === "string" && v.length > 0,
+    );
+  } else {
+    delete record.pageImages;
+  }
+  const pcRaw = record.pageCount ?? (record as any).page_count;
+  if (pcRaw == null || pcRaw === "") {
+    delete record.pageCount;
+  } else {
+    const pc = Number(pcRaw);
+    record.pageCount = Number.isFinite(pc) && pc > 0 ? Math.floor(pc) : undefined;
+  }
+  delete (record as any).page_images;
+  delete (record as any).page_count;
   return row;
 }
 
@@ -179,6 +205,8 @@ const DOC_COLUMNS = `
   file_url AS "fileUrl",
   file_type AS "fileType",
   s3_key AS "s3Key",
+  page_count AS "pageCount",
+  page_images AS "pageImages",
   processing_status AS "processingStatus",
   risk_score AS "riskScore",
   risk_level AS "riskLevel",
@@ -759,6 +787,8 @@ export async function initDatabase() {
         file_url TEXT,
         file_type TEXT,
         s3_key TEXT,
+        page_count INTEGER,
+        page_images TEXT,
         processing_status TEXT DEFAULT 'completed',
         -- NULL means no detector has assessed this document. A default of 0/'Low'
         -- would make "never checked" indistinguishable from "checked and safe".
@@ -851,6 +881,16 @@ export async function initDatabase() {
     if (!existingColumns.has("processing_status")) {
       await database.execAsync(
         `ALTER TABLE documents ADD COLUMN processing_status TEXT DEFAULT 'completed'`,
+      );
+    }
+    if (!existingColumns.has("page_count")) {
+      await database.execAsync(
+        `ALTER TABLE documents ADD COLUMN page_count INTEGER`,
+      );
+    }
+    if (!existingColumns.has("page_images")) {
+      await database.execAsync(
+        `ALTER TABLE documents ADD COLUMN page_images TEXT`,
       );
     }
 
@@ -1181,6 +1221,8 @@ export async function createDocument(
             file_url,
             file_type,
             s3_key,
+            page_count,
+            page_images,
             processing_status,
             risk_score,
             risk_level,
@@ -1191,7 +1233,7 @@ export async function createDocument(
             created_at,
             updated_at
           )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
         userId,
         doc.title ?? "",
@@ -1210,6 +1252,8 @@ export async function createDocument(
         doc.fileUrl || null,
         doc.fileType || null,
         doc.s3Key || null,
+        doc.pageCount ?? (Array.isArray(doc.pageImages) && doc.pageImages.length > 0 ? doc.pageImages.length : null),
+        Array.isArray(doc.pageImages) && doc.pageImages.length > 0 ? JSON.stringify(doc.pageImages) : null,
         doc.processingStatus || "completed",
         doc.riskScore ?? null,
         doc.riskLevel ?? null,
@@ -1911,6 +1955,8 @@ export async function restoreLocalBackup(
             file_url,
             file_type,
             s3_key,
+            page_count,
+            page_images,
             processing_status,
             risk_score,
             risk_level,
@@ -1920,7 +1966,7 @@ export async function restoreLocalBackup(
             server_updated_at,
             created_at,
             updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             expectedUserId,
             document.title,
@@ -1937,6 +1983,8 @@ export async function restoreLocalBackup(
             null,
             document.fileType ?? null,
             null,
+            (document as any).pageCount ?? (Array.isArray((document as any).pageImages) && (document as any).pageImages.length > 0 ? (document as any).pageImages.length : null),
+            (Array.isArray((document as any).pageImages) && (document as any).pageImages.length > 0 ? JSON.stringify((document as any).pageImages) : null),
             document.processingStatus,
             document.riskScore ?? null,
             document.riskLevel ?? null,
@@ -2128,6 +2176,8 @@ const UPDATE_COLUMN_MAP: Record<string, string> = {
   fileType: "file_type",
   s3Key: "s3_key",
   processingStatus: "processing_status",
+  pageCount: "page_count",
+  pageImages: "page_images",
   riskScore: "risk_score",
   riskLevel: "risk_level",
   syncStatus: "sync_status",
@@ -2146,7 +2196,9 @@ export async function updateDocument(id: number, doc: Partial<LocalDocument>) {
       if (!(key in doc)) continue;
       const value = (doc as Record<string, unknown>)[key];
       assignments.push(`${column} = ?`);
-      if (typeof value === "boolean") {
+      if (key === "pageImages") {
+        values.push(Array.isArray(value) && value.length > 0 ? JSON.stringify(value) : null);
+      } else if (typeof value === "boolean") {
         values.push(value ? 1 : 0);
       } else {
         values.push(value ?? null);
@@ -3002,7 +3054,11 @@ export async function logDocumentAction(
     `INSERT INTO document_history 
        (document_id, action, title, category, issuer, document_number, 
         issue_date, expiry_date, notes, status, file_url, file_type, 
-        s3_key, processing_status, risk_score, risk_level, created_at)
+                    s3_key,
+            page_count,
+            page_images,
+            processing_status,
+            risk_score, risk_level, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       docId,

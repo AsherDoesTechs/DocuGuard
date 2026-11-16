@@ -126,8 +126,15 @@ export default function HomeScreen() {
         (doc as any).filePath ||
         (doc as any).uri;
 
+      const pageImages = Array.isArray((doc as any).pageImages)
+        ? ((doc as any).pageImages as string[]).filter(
+            (u) => typeof u === "string" && u.length > 0,
+          )
+        : [];
       let candidate: string | null = null;
-      if (typeof rawImage === "string" && rawImage.trim()) {
+      if (pageImages.length > 0) {
+        candidate = pageImages[0];
+      } else if (typeof rawImage === "string" && rawImage.trim()) {
         const trimmed = rawImage.trim();
         if (
           trimmed.startsWith("file://") ||
@@ -143,7 +150,9 @@ export default function HomeScreen() {
       }
 
       const isImage =
-        isImageDocument(doc, candidate) || isImageDocument(doc, null);
+        pageImages.length > 0 ||
+        isImageDocument(doc, candidate) ||
+        isImageDocument(doc, null);
       if (!isImage) return null;
 
       if (candidate && (candidate.startsWith("file://") || candidate.startsWith("content://"))) {
@@ -787,17 +796,32 @@ export default function HomeScreen() {
                           <View style={styles.recentDocumentRow}>
                             <View style={styles.recentPreviewFrame}>
                               {isImagePreview ? (
-                                <Image
-                                  source={{ uri: resolvedPreviewUri as string }}
-                                  style={styles.recentPreviewImage}
-                                  resizeMode="cover"
-                                  onError={() =>
-                                    setRecentPreviewUris((prev) => ({
-                                      ...prev,
-                                      [recentKey]: null,
-                                    }))
-                                  }
-                                />
+                                <>
+                                  <Image
+                                    source={{ uri: resolvedPreviewUri as string }}
+                                    style={styles.recentPreviewImage}
+                                    resizeMode="cover"
+                                    onError={() =>
+                                      setRecentPreviewUris((prev) => ({
+                                        ...prev,
+                                        [recentKey]: null,
+                                      }))
+                                    }
+                                  />
+                                  {Array.isArray((doc as any).pageImages) &&
+                                  (doc as any).pageImages.length > 1 ? (
+                                    <View style={styles.pageBadge}>
+                                      <Ionicons
+                                        name="documents-outline"
+                                        size={10}
+                                        color="#fff"
+                                      />
+                                      <Text style={styles.pageBadgeText}>
+                                        {(doc as any).pageImages.length}
+                                      </Text>
+                                    </View>
+                                  ) : null}
+                                </>
                               ) : (
                                 <View style={styles.recentPreviewFallback}>
                                   <Ionicons
@@ -815,6 +839,11 @@ export default function HomeScreen() {
                                   <Text style={styles.previewFallbackText}>
                                     {resolvedPreviewUri ? "File" : "Preview"}
                                   </Text>
+                                  {((doc as any).pageCount || 0) > 1 ? (
+                                    <Text style={styles.pageBadgeTextAlt}>
+                                      {(doc as any).pageCount} pages
+                                    </Text>
+                                  ) : null}
                                 </View>
                               )}
                             </View>
@@ -1242,10 +1271,33 @@ const createStyles = (COLORS: any) =>
       backgroundColor: COLORS.primaryLight,
     },
 
-    recentPreviewImage: {
-      width: "100%",
-      height: "100%",
-    },
+  recentPreviewImage: {
+    width: "100%",
+    height: "100%",
+  },
+  pageBadge: {
+    position: "absolute",
+    right: 4,
+    bottom: 4,
+    backgroundColor: "rgba(0,0,0,0.65)",
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+  },
+  pageBadgeText: {
+    color: "#fff",
+    fontSize: 10,
+    fontWeight: "700",
+  },
+  pageBadgeTextAlt: {
+    color: COLORS.primary,
+    fontSize: 10,
+    fontWeight: "700",
+    marginTop: 2,
+  },
 
     recentPreviewFallback: {
       flex: 1,
