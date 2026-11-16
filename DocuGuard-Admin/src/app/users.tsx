@@ -1,5 +1,5 @@
 ﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, FlatList, Platform, Pressable, RefreshControl, Share, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
+import { FlatList, Platform, Pressable, RefreshControl, Share, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
@@ -7,6 +7,8 @@ import { getAdminUsers, updateAdminUserStatus, logoutAdmin, type AdminUser } fro
 import { getAdminId, getAdminToken, clearAdminToken } from "../services/adminSession";
 import { requireSensitiveActionAuth } from "../services/adminSensitiveAuth";
 import { useAdminToast } from "../components/AdminToast";
+import { AdminConfirmModal } from "../components/AdminConfirmModal";
+import { AdminMessageModal } from "../components/AdminMessageModal";
 import {
   getAdminUiSettings,
   setAdminUiSettings,
@@ -50,6 +52,8 @@ export default function AdminUsersScreen() {
   const [ui, setUi] = useState(getAdminUiSettings());
   const [lastSync, setLastSync] = useState<Date | null>(null);
   const [updatingId, setUpdatingId] = useState<string | number | null>(null);
+  const [confirmState, setConfirmState] = useState<{ user: AdminUser; nextStatus: "active" | "suspended" } | null>(null);
+  const [messageState, setMessageState] = useState<{ title: string; message: string; tone?: "default" | "danger" } | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const toast = useAdminToast();
 
@@ -70,7 +74,8 @@ export default function AdminUsersScreen() {
         return;
       }
       const data = await getAdminUsers(token);
-      setUsers((Array.isArray(data) ? data : (data as any)?.users || []) as AdminUser[]);
+      const raw = (Array.isArray(data) ? data : (data as any)?.users || []) as AdminUser[];
+      setUsers(raw.filter((u) => String(u.role || "user").toLowerCase() !== "admin"));
       setLastSync(new Date());
     } catch (error) {
       if (!silent) setErrorMessage(error instanceof Error ? error.message : "Unable to load users.");
@@ -130,66 +135,41 @@ export default function AdminUsersScreen() {
   }, [users, searchQuery, filter, sort]);
 
   const handleToggleStatus = (user: AdminUser) => {
-    if (typeof window !== "undefined") {
-      window.alert(`Suspend/Activate clicked (id: ${String(user.id)})`);
-    }
     const status = String(user.status || "active");
     const nextStatus = status === "active" ? "suspended" : "active";
     const label = ui.privacyMode ? "Selected account" : user.email || user.name || "User";
-    const message = `${label} will be ${nextStatus}.`;
+    setConfirmState({ user, nextStatus });
+  };
 
-    const runUpdate = async () => {
-      setUpdatingId(user.id);
-      try {
-        const token = await getAdminToken();
-        if (!token) {
-          toast.error("Not signed in. Please sign in again.");
-          router.replace("/");
-          return;
-        }
-        const res: any = await updateAdminUserStatus(token, user.id, nextStatus);
-        const updated = res?.user;
-        if (updated && typeof updated === "object") {
-          setUsers((prev) =>
-            prev.map((u) =>
-              String(u.id) === String(user.id)
-                ? { ...u, ...updated, status: String(updated.status || nextStatus) }
-                : u
-            )
-          );
-        } else {
-          setUsers((prev) =>
-            prev.map((u) => (String(u.id) === String(user.id) ? { ...u, status: nextStatus } : u))
-          );
-        }
-        toast.success(`User ${nextStatus === "suspended" ? "suspended" : "activated"}.`);
-      } catch (err: any) {
-        const msg =
-          err?.response?.data?.error || err?.data?.error || err?.message || "Could not update status.";
-        toast.error(msg);
-      } finally {
-        setUpdatingId(null);
+  const runStatusUpdate = async () => {
+    const pending = confirmState;
+    setConfirmState(null);
+    if (!pending) return;
+    const { user, nextStatus } = pending;
+    setUpdatingId(user.id);
+    try {
+      const token = await getAdminToken();
+      if (!token) {
+        toast.error("Not signed in. Please sign in again.");
+        router.replace("/");
+        return;
       }
-    };
-
-    if (typeof window !== "undefined") {
-      const ok = window.confirm(`${nextStatus === "suspended" ? "Suspend" : "Activate"} user?\n\n${message}`);
-      if (ok) void runUpdate();
-      return;
+      const res: any = await updateAdminUserStatus(token, user.id, nextStatus);
+      const updated = res?.user;
+      if (updated && typeof updated === "object") {
+        setUsers((prev) =>
+          prev.map((u) => (String(u.id) === String(user.id) ? { ...u, ...updated, status: String(updated.status || nextStatus) } : u))
+        );
+      } else {
+        setUsers((prev) => prev.map((u) => (String(u.id) === String(user.id) ? { ...u, status: nextStatus } : u)));
+      }
+      toast.success(`User ${nextStatus === "suspended" ? "suspended" : "activated"}.`);
+    } catch (err: any) {
+      const msg = err?.response?.data?.error || err?.data?.error || err?.message || "Could not update status.";
+      toast.error(msg);
+    } finally {
+      setUpdatingId(null);
     }
-
-    Alert.alert(
-      `${nextStatus === "suspended" ? "Suspend" : "Activate"} user`,
-      message,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Confirm",
-          style: nextStatus === "suspended" ? "destructive" : "default",
-          onPress: () => void runUpdate(),
-        },
-      ]
-    );
   };
 
   const exportUsers = async () => {
@@ -197,8 +177,7 @@ export default function AdminUsersScreen() {
       const hint = await getAdminId();
       const ok = await requireSensitiveActionAuth({ adminIdHint: hint });
       if (!ok) {
-        if (typeof window !== "undefined") window.alert("Export cancelled: verification required.");
-        else Alert.alert("Verification required", "Biometric/identity confirmation failed or was cancelled.");
+        setMessageState({ title: "Verification required", message: "Verification was cancelled or failed.", tone: "danger" });
         return;
       }
       const rows = [["id", "name", "email", "role", "status", "createdAt"].join(",")];
@@ -229,7 +208,7 @@ export default function AdminUsersScreen() {
       }
       await Share.share({ message: csv, title: "Users Export" });
     } catch {
-      Alert.alert("Export unavailable", "Could not export users.");
+      setMessageState({ title: "Export unavailable", message: "Could not export users.", tone: "danger" });
     }
   };
 
@@ -456,6 +435,22 @@ export default function AdminUsersScreen() {
             </PressableScale>
           </View>
         }
+      />
+      <AdminConfirmModal
+        visible={!!confirmState}
+        title={confirmState?.nextStatus === "suspended" ? "Suspend user" : "Activate user"}
+        message={confirmState ? `${ui.privacyMode ? "Selected account" : confirmState.user.email || confirmState.user.name || "User"} will be ${confirmState.nextStatus}.` : ""}
+        confirmLabel={confirmState?.nextStatus === "suspended" ? "Suspend" : "Activate"}
+        destructive={confirmState?.nextStatus === "suspended"}
+        onCancel={() => setConfirmState(null)}
+        onConfirm={() => void runStatusUpdate()}
+      />
+      <AdminMessageModal
+        visible={!!messageState}
+        title={messageState?.title ?? ""}
+        message={messageState?.message ?? ""}
+        tone={messageState?.tone}
+        onDismiss={() => setMessageState(null)}
       />
     </SafeAreaView>
   );
