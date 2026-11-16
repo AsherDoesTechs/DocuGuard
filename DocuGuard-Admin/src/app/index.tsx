@@ -37,6 +37,7 @@ import { AdminColors, AdminRadii } from "../theme/adminTheme";
 
 export default function AdminLoginScreen() {
   const [adminId, setAdminId] = useState("");
+  const [password, setPassword] = useState("");
   const [totpCode, setTotpCode] = useState("");
   const [enrollmentToken, setEnrollmentToken] = useState("");
   const [devToken, setDevToken] = useState("");
@@ -45,6 +46,8 @@ export default function AdminLoginScreen() {
   const [loading, setLoading] = useState(false);
   const [checkingSession, setCheckingSession] = useState(true);
   const [showAdminId, setShowAdminId] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showJwtToken, setShowJwtToken] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -64,12 +67,16 @@ export default function AdminLoginScreen() {
 
   const handleSignIn = async () => {
     if (Platform.OS === "web") {
-      if (!devToken.trim()) {
-        Alert.alert("Admin token required", "Paste a valid admin bearer token to access the dashboard.");
+      if (!adminId.trim()) {
+        Alert.alert("Admin ID required", "Enter your Admin ID.");
         return;
       }
-      if (!adminId.trim()) {
-        Alert.alert("Admin ID required", "Enter your Admin ID before continuing.");
+      if (!password.trim()) {
+        Alert.alert("Password required", "Enter your password.");
+        return;
+      }
+      if (!devToken.trim()) {
+        Alert.alert("JWT token required", "Paste a valid admin JWT/bearer token.");
         return;
       }
       setLoading(true);
@@ -77,6 +84,7 @@ export default function AdminLoginScreen() {
         setDevAdminToken(devToken.trim());
         await saveAdminToken(devToken.trim());
         await saveAdminId(adminId.trim());
+        setPassword("");
         router.replace("/dashboard");
       } finally {
         setLoading(false);
@@ -85,6 +93,7 @@ export default function AdminLoginScreen() {
     }
 
     if (!adminId.trim()) { Alert.alert("Missing information", "Enter your Admin ID."); return; }
+    if (!password.trim()) { Alert.alert("Missing information", "Enter your password."); return; }
     if (requiresTwoFactor && !totpCode.trim()) { Alert.alert("Verification required", "Enter the authenticator code."); return; }
 
     setLoading(true);
@@ -95,7 +104,7 @@ export default function AdminLoginScreen() {
         Alert.alert("Device enrollment required", "This device key is not registered. Enroll to continue.");
         return;
       }
-      const login = await adminLogin(adminId, "CRYPTO_KEY_AUTH", requiresTwoFactor ? totpCode : undefined);
+      const login = await adminLogin(adminId, password, requiresTwoFactor ? totpCode : undefined);
       if (login.requiresTwoFactor) {
         setRequiresTwoFactor(true);
         setTotpCode("");
@@ -112,6 +121,7 @@ export default function AdminLoginScreen() {
       await saveAdminId(String(verified.user?.id ?? adminId.trim()));
       setRequiresTwoFactor(false);
       setTotpCode("");
+      setPassword("");
       router.replace("/dashboard");
     } catch (error: any) {
       const msg = error?.response?.data?.error || error?.response?.data?.message || error?.message || "Sign-in failed.";
@@ -197,26 +207,50 @@ export default function AdminLoginScreen() {
                   </View>
                 </View>
                 <View style={styles.field}>
+                  <Text style={styles.label}>Password</Text>
+                  <View style={styles.tokenBox}>
+                    <TextInput
+                      style={styles.adminIdInput}
+                      value={password}
+                      onChangeText={setPassword}
+                      placeholder="Enter password"
+                      placeholderTextColor={AdminColors.textMuted}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      secureTextEntry={!showPassword}
+                      editable={!loading}
+                    />
+                    <Pressable onPress={() => setShowPassword((v) => !v)} style={styles.eyeBtn}>
+                      <Ionicons name={showPassword ? "eye-off-outline" : "eye-outline"} size={18} color={AdminColors.textSecondary} />
+                    </Pressable>
+                  </View>
+                </View>
+                <View style={styles.field}>
                   <Text style={styles.label}>JWT / Bearer Token</Text>
-                  <TextInput
-                    style={styles.tokenInputArea}
-                    value={devToken}
-                    onChangeText={setDevToken}
-                    placeholder="Paste admin JWT/session token"
-                    placeholderTextColor={AdminColors.textMuted}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    multiline
-                    secureTextEntry
-                    editable={!loading}
-                  />
+                  <View style={styles.tokenBox}>
+                    <TextInput
+                      style={styles.tokenInputArea}
+                      value={devToken}
+                      onChangeText={setDevToken}
+                      placeholder="Paste admin JWT/session token"
+                      placeholderTextColor={AdminColors.textMuted}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      multiline
+                      secureTextEntry={!showJwtToken}
+                      editable={!loading}
+                    />
+                    <Pressable onPress={() => setShowJwtToken((v) => !v)} style={styles.eyeBtn}>
+                      <Ionicons name={showJwtToken ? "eye-off-outline" : "eye-outline"} size={18} color={AdminColors.textSecondary} />
+                    </Pressable>
+                  </View>
                 </View>
                 <Pressable style={({ pressed }) => [styles.primaryBtn, pressed && !loading && { opacity: 0.9 }, loading && { opacity: 0.6 }]} onPress={handleSignIn} disabled={loading}>
                   {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryText}>Open Dashboard</Text>}
                 </Pressable>
                 <View style={styles.infoBox}>
                   <Ionicons name="information-circle-outline" size={16} color={AdminColors.primary} />
-                  <Text style={styles.infoText}>Enter your Admin ID and JWT token to load live DocuGuard admin data. Credentials are stored locally for this session.</Text>
+                  <Text style={styles.infoText}>Enter your Admin ID, password, and JWT token to access live DocuGuard admin data. Credentials are stored locally for this session.</Text>
                 </View>
               </>
             ) : enrollmentMode ? (
@@ -248,6 +282,25 @@ export default function AdminLoginScreen() {
                     />
                     <Pressable onPress={() => setShowAdminId((v) => !v)} style={styles.eyeBtn}>
                       <Ionicons name={showAdminId ? "eye-off-outline" : "eye-outline"} size={18} color={AdminColors.textSecondary} />
+                    </Pressable>
+                  </View>
+                </View>
+                <View style={styles.field}>
+                  <Text style={styles.label}>Password</Text>
+                  <View style={styles.tokenBox}>
+                    <TextInput
+                      style={styles.adminIdInput}
+                      value={password}
+                      onChangeText={setPassword}
+                      placeholder="Enter password"
+                      placeholderTextColor={AdminColors.textMuted}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      secureTextEntry={!showPassword}
+                      editable={!loading}
+                    />
+                    <Pressable onPress={() => setShowPassword((v) => !v)} style={styles.eyeBtn}>
+                      <Ionicons name={showPassword ? "eye-off-outline" : "eye-outline"} size={18} color={AdminColors.textSecondary} />
                     </Pressable>
                   </View>
                 </View>
@@ -289,7 +342,7 @@ const styles = StyleSheet.create({
   input: { height: 50, borderRadius: 14, borderWidth: 1, borderColor: AdminColors.border, backgroundColor: AdminColors.surfaceAlt, paddingHorizontal: 14, color: AdminColors.text, fontSize: 14 },
   tokenBox: { flexDirection: "row", borderRadius: 14, borderWidth: 1, borderColor: AdminColors.border, backgroundColor: AdminColors.surfaceAlt, overflow: "hidden" },
   adminIdInput: { flex: 1, height: 50, paddingHorizontal: 14, color: AdminColors.text, fontSize: 14 },
-  tokenInputArea: { minHeight: 110, borderRadius: 14, borderWidth: 1, borderColor: AdminColors.border, backgroundColor: AdminColors.surfaceAlt, paddingHorizontal: 14, paddingVertical: 12, color: AdminColors.text, fontSize: 13, textAlignVertical: "top" },
+  tokenInputArea: { flex: 1, minHeight: 110, paddingHorizontal: 14, paddingVertical: 12, color: AdminColors.text, fontSize: 13, textAlignVertical: "top" },
   eyeBtn: { padding: 12, alignSelf: "flex-start" },
   primaryBtn: { height: 50, borderRadius: 14, backgroundColor: AdminColors.primary, alignItems: "center", justifyContent: "center", marginTop: 4 },
   primaryText: { color: "#fff", fontSize: 15, fontWeight: "700" },
