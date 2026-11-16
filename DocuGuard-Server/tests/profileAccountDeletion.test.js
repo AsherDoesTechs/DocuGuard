@@ -2,6 +2,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const bcrypt = require("bcryptjs");
 
 const db = require("../config/db");
 const dataSyncServicePath = require.resolve(
@@ -36,10 +37,21 @@ function makeResponse() {
 
 async function runDeleteAccount({ failOnSql } = {}) {
   const originalWithTransaction = db.withTransaction;
+  const originalQuery = db.query;
+  const originalCompare = bcrypt.compare;
   const queries = [];
   let transactionStarted = false;
   let transactionCommitted = false;
   let transactionRolledBack = false;
+
+  bcrypt.compare = async () => true;
+  db.query = async (sql, params) => {
+    queries.push({ sql, params });
+    if (/SELECT password_hash FROM users/i.test(sql)) {
+      return { rows: [{ password_hash: "hashed" }], rowCount: 1 };
+    }
+    return { rows: [], rowCount: 1 };
+  };
 
   db.withTransaction = async (callback) => {
     transactionStarted = true;
@@ -66,13 +78,15 @@ async function runDeleteAccount({ failOnSql } = {}) {
     }
   };
 
-  const req = { user: { userId: 7 } };
+  const req = { user: { userId: 7 }, body: { password: "current-password" } };
   const res = makeResponse();
 
   try {
     await profileController.deleteAccount(req, res);
   } finally {
     db.withTransaction = originalWithTransaction;
+    db.query = originalQuery;
+    bcrypt.compare = originalCompare;
   }
 
   return {
@@ -96,10 +110,12 @@ test("account deletion runs all expected deletes in one transaction", async () =
   assert.equal(result.transactionCommitted, true);
   assert.equal(result.transactionRolledBack, false);
 
-  const tables = result.queries.map(({ sql }) => {
-    const match = sql.match(/DELETE FROM\s+(\w+)/i);
-    return match ? match[1] : null;
-  });
+  const tables = result.queries
+    .filter(({ sql }) => /DELETE FROM\s+/i.test(sql))
+    .map(({ sql }) => {
+      const match = sql.match(/DELETE FROM\s+(\w+)/i);
+      return match ? match[1] : null;
+    });
 
   assert.deepEqual(tables, [
     "reminders",
@@ -112,11 +128,13 @@ test("account deletion runs all expected deletes in one transaction", async () =
     "users",
   ]);
 
-  for (const query of result.queries) {
+  for (const query of result.queries.filter(({ sql }) => /DELETE FROM\s+/i.test(sql))) {
     assert.deepEqual(query.params, [7]);
   }
 
-  assert.match(result.queries.at(-1).sql, /DELETE FROM users WHERE id = \$1/i);
+  const userDelete = result.queries.find(({ sql }) => /DELETE FROM users/i.test(sql));
+  assert.ok(userDelete);
+  assert.match(userDelete.sql, /DELETE FROM users WHERE id = \$1/i);
 });
 
 test("account deletion reports failure and does not report success when a delete fails", async () => {

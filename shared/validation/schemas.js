@@ -265,7 +265,7 @@ const documentSyncSchema = z
   .object({
   title: z.string().min(1).max(100).trim(),
   category: categorySchema,
-  issuer: z.string().max(150).trim().optional().default(""),
+  issuer: z.string().min(1, "Issuer is required").max(150).trim(),
   documentNumber: z.string().min(1).max(50).transform((val) => val.toUpperCase()),
   issueDate: nullableDateStringSchema,
   expiryDate: nullableDateStringSchema,

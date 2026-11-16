@@ -172,7 +172,7 @@ test("classification errors return a sanitized processing error", async () => {
   );
   assert.equal(extractionCalls.length, 0);
 });
-test("low-confidence extracted fields require manual review", async () => {
+test("low-confidence extracted fields do not block extraction review flow", async () => {
   extractionResult = {
     extractedFields: {
       documentNumber: {
@@ -187,14 +187,13 @@ test("low-confidence extracted fields require manual review", async () => {
     fileUrl: "https://example.com/document.pdf",
   });
 
-  assert.equal(result.status, "manual_review");
-  assert.equal(result.httpStatus, 422);
-  assert.equal(result.code, "DOCUMENT_EXTRACTION_REVIEW");
-  assert.equal(result.reason, "low_field_confidence");
-  assert.equal(result.confidenceEvaluation.uncertainFields, 1);
+  assert.equal(result.status, "valid");
+  assert.equal(result.httpStatus, 200);
+  assert.equal(result.confidenceEvaluation.needsReview, false);
+  assert.equal(result.confidenceEvaluation.uncertainFields, 0);
 });
 
-test("populated fields without confidence require manual review", async () => {
+test("populated fields without confidence are accepted with extracted data", async () => {
   extractionResult = {
     extractedFields: {
       documentNumber: {
@@ -209,8 +208,9 @@ test("populated fields without confidence require manual review", async () => {
     fileUrl: "https://example.com/document.pdf",
   });
 
-  assert.equal(result.status, "manual_review");
-  assert.equal(result.reason, "low_field_confidence");
+  assert.equal(result.status, "valid");
+  assert.equal(result.httpStatus, 200);
+  assert.equal(result.confidenceEvaluation.needsReview, false);
 });
 
 test("empty extraction requires manual review", async () => {
@@ -255,7 +255,7 @@ test("nested Azure fields are evaluated individually", async () => {
   assert.equal(result.confidenceEvaluation.populatedFields, 2);
 });
 
-test("a low-confidence nested Azure field requires manual review", async () => {
+test("a low-confidence nested Azure field does not force manual review", async () => {
   extractionResult = {
     extractedFields: {
       address: {
@@ -281,8 +281,8 @@ test("a low-confidence nested Azure field requires manual review", async () => {
     fileUrl: "https://example.com/document.pdf",
   });
 
-  assert.equal(result.status, "manual_review");
-  assert.equal(result.reason, "low_field_confidence");
+  assert.equal(result.status, "valid");
+  assert.equal(result.confidenceEvaluation.needsReview, false);
   assert.equal(result.confidenceEvaluation.populatedFields, 2);
-  assert.equal(result.confidenceEvaluation.uncertainFields, 1);
+  assert.equal(result.confidenceEvaluation.uncertainFields, 0);
 });

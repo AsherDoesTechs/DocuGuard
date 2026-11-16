@@ -319,22 +319,22 @@ test("conditional sign-out does not clear session when signed-out owner read fai
   );
 });
 
-test("switching to a different account purges the previous owner's data", async () => {
+test("switching to a different account is blocked on a device linked to another account", async () => {
   const harness = createOwnershipHarness({
     values: {
       [LOCAL_USER_ID_KEY]: "17",
     },
   });
 
-  await harness.switchLocalUser(22);
+  await assert.rejects(
+    harness.switchLocalUser(22),
+    /already linked to another DocuGuard account/,
+  );
 
-  assert.deepEqual(harness.purges, [17]);
-  assert.deepEqual(harness.claims, [22]);
-  assert.deepEqual(harness.retryCalls, ["clearAll"]);
-  assert.deepEqual(harness.calls.filter(([op]) => op !== "get"), [
-    ["delete", LAST_SIGNED_OUT_USER_ID_KEY],
-    ["set", LOCAL_USER_ID_KEY, "22"],
-  ]);
+  assert.deepEqual(harness.purges, []);
+  assert.deepEqual(harness.claims, []);
+  assert.deepEqual(harness.retryCalls, []);
+  assert.deepEqual(harness.calls.filter(([op]) => op !== "get"), []);
 });
 
 test("switching to the same account preserves its data and retry history", async () => {

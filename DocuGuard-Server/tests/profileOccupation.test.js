@@ -110,6 +110,7 @@ test("profile update includes occupation in SQL and parameters", async () => {
       name: undefined,
       email: undefined,
       occupation: "Software Developer",
+      phone: undefined,
     },
   ]);
 });

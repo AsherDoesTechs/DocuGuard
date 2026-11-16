@@ -63,7 +63,7 @@ exports.enrollDevice = async (req, res) => {
   const enrollmentToken = req.body?.enrollmentToken || req.body?.token;
   const rawPublicKey = req.body?.publicKeyPem;
   const publicKeyPem = validatePublicKey(rawPublicKey);
-  const suppliedLabel = req.body?.deviceLabel || req.body?.deviceName;
+  const suppliedLabel = req.body?.deviceLabel ?? req.body?.deviceName;
 
   if (!validOpaqueToken(enrollmentToken)) {
     console.log(
@@ -91,10 +91,27 @@ exports.enrollDevice = async (req, res) => {
     );
   }
 
-  const deviceLabel =
-    typeof suppliedLabel === "string"
-      ? suppliedLabel.trim()
-      : "DocuGuard Admin device";
+  let deviceLabel = "DocuGuard Admin device";
+  if (suppliedLabel !== undefined && suppliedLabel !== null) {
+    if (typeof suppliedLabel !== "string") {
+      return sendError(
+        res,
+        400,
+        "Invalid device label.",
+        "ADMIN_DEVICE_LABEL_INVALID",
+      );
+    }
+    const trimmed = suppliedLabel.trim();
+    if (trimmed.length === 0 || trimmed.length > 80) {
+      return sendError(
+        res,
+        400,
+        "Invalid device label.",
+        "ADMIN_DEVICE_LABEL_INVALID",
+      );
+    }
+    deviceLabel = trimmed;
+  }
 
   try {
     const result = await db.withTransaction(async (client) => {

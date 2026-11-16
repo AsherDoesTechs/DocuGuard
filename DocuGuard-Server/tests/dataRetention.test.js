@@ -55,20 +55,20 @@ function assertDeletedPurge(calls, userId, ttlDays) {
   assert.ok(call, `Expected deleted-documents purge for user ${userId}`);
   assert.equal(call.params[0], userId);
   assert.equal(call.params[2], ttlDays);
-  // params[1] is a timestamp string
   assert.equal(typeof call.params[1], "string");
   assert.ok(call.params[1].length > 0);
   return call;
 }
 
-function assertExpiredPurge(calls, userId, ttlDays) {
+function assertNoExpiredPurge(calls, userId) {
   const call = calls.find(
     (c) => c.sql.includes("status <> 'deleted'") && c.params[0] === userId
   );
-  assert.ok(call, `Expected expired-documents purge for user ${userId}`);
-  assert.equal(call.params[0], userId);
-  assert.equal(call.params[1], ttlDays);
-  return call;
+  assert.equal(
+    call,
+    undefined,
+    `Expired documents must not be auto-purged for user ${userId}`,
+  );
 }
 
 test("retention cleanup purges soft-deleted documents past their TTL", async () => {
@@ -81,23 +81,21 @@ test("retention cleanup purges soft-deleted documents past their TTL", async () 
   });
 
   Module._load = function (request, parent, isMain) {
-    if (request === "../config/db") {
-      return db;
-    }
+    if (request === "../config/db") return db;
     return originalLoad.apply(this, arguments);
   };
 
   delete require.cache[require.resolve("../jobs/dataRetention")];
   const { runRetentionCleanup } = require("../jobs/dataRetention");
-
   Module._load = originalLoad;
 
   await runRetentionCleanup();
 
   assertDeletedPurge(dbCalls, 1, 30);
+  assertNoExpiredPurge(dbCalls, 1);
 });
 
-test("retention cleanup purges expired documents past their TTL", async () => {
+test("retention cleanup does not auto-purge expired documents", async () => {
   dbCalls.length = 0;
 
   const users = [{ id: 2, email: "b@example.com" }];
@@ -107,23 +105,20 @@ test("retention cleanup purges expired documents past their TTL", async () => {
   });
 
   Module._load = function (request, parent, isMain) {
-    if (request === "../config/db") {
-      return db;
-    }
+    if (request === "../config/db") return db;
     return originalLoad.apply(this, arguments);
   };
 
   delete require.cache[require.resolve("../jobs/dataRetention")];
   const { runRetentionCleanup } = require("../jobs/dataRetention");
-
   Module._load = originalLoad;
 
   await runRetentionCleanup();
 
-  assertExpiredPurge(dbCalls, 2, 90);
+  assertNoExpiredPurge(dbCalls, 2);
 });
 
-test("retention cleanup uses per-user TTL settings", async () => {
+test("retention cleanup uses per-user deleted TTL and never purges expired rows", async () => {
   dbCalls.length = 0;
 
   const users = [
@@ -136,15 +131,12 @@ test("retention cleanup uses per-user TTL settings", async () => {
   });
 
   Module._load = function (request, parent, isMain) {
-    if (request === "../config/db") {
-      return db;
-    }
+    if (request === "../config/db") return db;
     return originalLoad.apply(this, arguments);
   };
 
   delete require.cache[require.resolve("../jobs/dataRetention")];
   const { runRetentionCleanup } = require("../jobs/dataRetention");
-
   Module._load = originalLoad;
 
   await runRetentionCleanup();
@@ -153,11 +145,9 @@ test("retention cleanup uses per-user TTL settings", async () => {
   assert.ok(userQuery, "Expected user lookup with retention join");
 
   assertDeletedPurge(dbCalls, 1, 7);
-  assertExpiredPurge(dbCalls, 1, 60);
-
-  // User 2 uses defaults: 30 / 90.
   assertDeletedPurge(dbCalls, 2, 30);
-  assertExpiredPurge(dbCalls, 2, 90);
+  assertNoExpiredPurge(dbCalls, 1);
+  assertNoExpiredPurge(dbCalls, 2);
 });
 
 test("retention cleanup handles empty user list gracefully", async () => {
@@ -166,18 +156,16 @@ test("retention cleanup handles empty user list gracefully", async () => {
   const db = makeDb([], {});
 
   Module._load = function (request, parent, isMain) {
-    if (request === "../config/db") {
-      return db;
-    }
+    if (request === "../config/db") return db;
     return originalLoad.apply(this, arguments);
   };
 
   delete require.cache[require.resolve("../jobs/dataRetention")];
   const { runRetentionCleanup } = require("../jobs/dataRetention");
-
   Module._load = originalLoad;
 
   await runRetentionCleanup();
+  assert.equal(dbCalls.filter((c) => c.sql.includes("status = 'deleted'")).length, 0);
 });
 
 test("retention cleanup continues when one user fails", async () => {
@@ -220,15 +208,12 @@ test("retention cleanup continues when one user fails", async () => {
   };
 
   Module._load = function (request, parent, isMain) {
-    if (request === "../config/db") {
-      return db;
-    }
+    if (request === "../config/db") return db;
     return originalLoad.apply(this, arguments);
   };
 
   delete require.cache[require.resolve("../jobs/dataRetention")];
   const { runRetentionCleanup } = require("../jobs/dataRetention");
-
   Module._load = originalLoad;
 
   await runRetentionCleanup();
@@ -239,12 +224,6 @@ test("retention cleanup continues when one user fails", async () => {
 
 /**
  * Audit-log authorization tests.
- *
- * The audit_log table has DELETE revoked from PUBLIC and INSERT granted
- * to PUBLIC. The application must only ever INSERT into audit_log; it must
- * never issue UPDATE or DELETE against it. These tests verify the
- * application-layer discipline by inspecting the SQL the audit service
- * sends to the database.
  */
 
 test("audit service only issues INSERT statements against audit_log", async () => {
@@ -258,9 +237,7 @@ test("audit service only issues INSERT statements against audit_log", async () =
   };
 
   Module._load = function (request, parent, isMain) {
-    if (request === "../config/db") {
-      return dbStub;
-    }
+    if (request === "../config/db") return dbStub;
     return originalLoad.apply(this, arguments);
   };
 
@@ -284,7 +261,6 @@ test("audit service only issues INSERT statements against audit_log", async () =
     outcome: "success",
   });
 
-  // Every statement against audit_log must be an INSERT.
   for (const stmt of sqlStatements) {
     if (stmt.sql.includes("audit_log")) {
       assert.match(
@@ -312,9 +288,7 @@ test("audit service never issues UPDATE or DELETE against audit_log", async () =
   };
 
   Module._load = function (request, parent, isMain) {
-    if (request === "../config/db") {
-      return dbStub;
-    }
+    if (request === "../config/db") return dbStub;
     return originalLoad.apply(this, arguments);
   };
 
@@ -330,7 +304,6 @@ test("audit service never issues UPDATE or DELETE against audit_log", async () =
     outcome: "success",
   });
 
-  // No UPDATE or DELETE against audit_log must ever be emitted.
   const mutating = sqlStatements.filter(
     (s) =>
       s.sql.includes("audit_log") &&

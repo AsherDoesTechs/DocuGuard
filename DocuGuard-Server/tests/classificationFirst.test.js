@@ -7,8 +7,8 @@ const Module = require("node:module");
 process.env.AZURE_ENDPOINT = "https://unit-test.cognitiveservices.azure.com/";
 process.env.AZURE_KEY = "synthetic-test-key";
 process.env.AZURE_CLASSIFIER_ID = "synthetic-classifier";
-process.env.AZURE_CLASSIFICATION_THRESHOLD = "0.85";
-process.env.AZURE_FIELD_CONFIDENCE_THRESHOLD = "0.85";
+process.env.AZURE_CLASSIFICATION_THRESHOLD = "0.50";
+process.env.AZURE_FIELD_CONFIDENCE_THRESHOLD = "0.50";
 process.env.AZURE_MODEL_ROUTES_JSON = JSON.stringify({
   passport: "prebuilt-idDocument",
   invoice: "prebuilt-invoice",
@@ -17,10 +17,22 @@ process.env.AZURE_OCR_TIMEOUT_MS = "5000";
 process.env.AZURE_OCR_MAX_CONCURRENCY = "3";
 
 const state = {
-  classificationResult: { documents: [{ docType: "passport", confidence: 0.95 }] },
-  analysisResult: { documents: [{ fields: { Name: {
-    type: "string", valueString: "Synthetic Person", confidence: 0.95,
-  } } }] },
+  classificationResult: {
+    documents: [{ docType: "passport", confidence: 0.95 }],
+  },
+  analysisResult: {
+    documents: [
+      {
+        fields: {
+          Name: {
+            type: "string",
+            valueString: "Synthetic Person",
+            confidence: 0.95,
+          },
+        },
+      },
+    ],
+  },
   classifyCalls: [],
   analyzeCalls: [],
   stopCalls: 0,
@@ -36,7 +48,9 @@ class MockAzureClient {
     state.classifyCalls.push({ classifierId, url, options });
     return {
       pollUntilDone: async () => state.classificationResult,
-      stopPolling: () => { state.stopCalls += 1; },
+      stopPolling: () => {
+        state.stopCalls += 1;
+      },
     };
   }
 
@@ -44,7 +58,9 @@ class MockAzureClient {
     state.analyzeCalls.push({ modelId, url, options });
     return {
       pollUntilDone: async () => state.analysisResult,
-      stopPolling: () => { state.stopCalls += 1; },
+      stopPolling: () => {
+        state.stopCalls += 1;
+      },
     };
   }
 }
@@ -61,7 +77,9 @@ try {
       return {
         DocumentAnalysisClient: MockAzureClient,
         AzureKeyCredential: class AzureKeyCredential {
-          constructor(key) { this.key = key; }
+          constructor(key) {
+            this.key = key;
+          }
         },
       };
     }
@@ -107,21 +125,37 @@ test("classification uses the configured classifier and HTTPS URL", async () => 
 
 test("classification confidence exactly at threshold is accepted", async () => {
   state.classificationResult = {
-    documents: [{ docType: "passport", confidence: 0.85 }],
+    documents: [{ docType: "passport", confidence: 0.5 }],
   };
 
   const result = await logicEngine.classifyDocument(documentUrl);
 
   assert.equal(result.status, "classified");
-  assert.equal(result.classification.confidence, 0.85);
+  assert.equal(result.classification.confidence, 0.5);
 });
 
 test("low, missing, non-finite, and out-of-range confidence require review", async (t) => {
   const cases = [
-    ["below threshold", { docType: "passport", confidence: 0.849 }, "low_classification_confidence"],
-    ["missing confidence", { docType: "passport" }, "invalid_classification_confidence"],
-    ["non-finite confidence", { docType: "passport", confidence: NaN }, "invalid_classification_confidence"],
-    ["out-of-range confidence", { docType: "passport", confidence: 1.1 }, "invalid_classification_confidence"],
+    [
+      "below threshold",
+      { docType: "passport", confidence: 0.499 },
+      "low_classification_confidence",
+    ],
+    [
+      "missing confidence",
+      { docType: "passport" },
+      "invalid_classification_confidence",
+    ],
+    [
+      "non-finite confidence",
+      { docType: "passport", confidence: NaN },
+      "invalid_classification_confidence",
+    ],
+    [
+      "out-of-range confidence",
+      { docType: "passport", confidence: 1.1 },
+      "invalid_classification_confidence",
+    ],
   ];
 
   for (const [label, document, expectedReason] of cases) {
@@ -180,15 +214,17 @@ test("unmapped classifier label requires review rather than fallback extraction"
 test("extraction uses the exact configured model and preserves classification metadata", async () => {
   resetCalls();
   state.analysisResult = {
-    documents: [{
-      fields: {
-        Name: {
-          type: "string",
-          valueString: "Synthetic Person",
-          confidence: 0.95,
+    documents: [
+      {
+        fields: {
+          Name: {
+            type: "string",
+            valueString: "Synthetic Person",
+            confidence: 0.95,
+          },
         },
       },
-    }],
+    ],
   };
 
   const result = await logicEngine.extractClassifiedDocumentData(

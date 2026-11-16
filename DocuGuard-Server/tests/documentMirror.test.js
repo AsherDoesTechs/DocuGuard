@@ -619,7 +619,13 @@ test("C: rejected document types broadcast the failed processing status", async 
   );
 
   assert.ok(failedUpdate, "the rejected document must be marked failed");
-  assert.deepEqual(failedUpdate.params, [DOCUMENT_ID, USER_ID]);
+  assert.deepEqual(failedUpdate.params.slice(0, 2), [DOCUMENT_ID, USER_ID]);
+  assert.ok(
+    String(failedUpdate.params[2] || "").includes(
+      "The uploaded document does not match the selected category.",
+    ),
+    "the rejected document update should persist the failure reason",
+  );
   assert.ok(
     calls.indexOf(failedUpdate) <
       calls.findIndex((call) => isAuthoritativeSelect(call.sql)),
