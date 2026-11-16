@@ -20,6 +20,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import * as SecureStore from "expo-secure-store";
+import * as Print from "expo-print";
 import * as DocumentPicker from "expo-document-picker";
 import { recordAuditLog } from "@/services/auditService";
 
@@ -1443,15 +1444,43 @@ export default function AddDocumentScreen() {
     images: Array<{ uri: string }> | { uri: string };
   }) {
     setScannerVisible(false);
-    const imageArray = Array.isArray(data.images) ? data.images : [data.images];
+    const imageArray = (Array.isArray(data.images) ? data.images : [data.images]).filter(
+      (img): img is { uri: string } => !!img?.uri,
+    );
     const firstImage = imageArray[0];
+    if (!firstImage?.uri) return;
 
     resetOcrState();
+
+    let fileUri = firstImage.uri;
+    let fileMime = "image/jpeg";
+    let fileName = "scanned-document.jpg";
+
+    if (imageArray.length > 1) {
+      try {
+        const pagesHtml = imageArray
+          .map(
+            (img, idx) =>
+              `<div style="page-break-after:${idx < imageArray.length - 1 ? "always" : "auto"};margin:0;padding:0;width:100%;height:100vh;display:flex;align-items:center;justify-content:center;"><img src="${img.uri}" style="max-width:100%;max-height:100vh;width:auto;height:auto;object-fit:contain;" /></div>`,
+          )
+          .join("");
+        const { uri: pdfUri } = await Print.printToFileAsync({
+          html: `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1.0" /></head><body style="margin:0;padding:0;">${pagesHtml}</body></html>`,
+        });
+        fileUri = pdfUri;
+        fileMime = "application/pdf";
+        fileName = `scanned-document-${imageArray.length}-pages.pdf`;
+      } catch (e) {
+        console.warn("Failed to combine scanned pages into PDF, using first page.", e);
+      }
+    }
+
+    const pageCount = fileMime === "application/pdf" ? imageArray.length : 1;
     setSelectedFile({
-      name: "Scanned Document",
-      uri: firstImage.uri,
+      name: fileName,
+      uri: fileUri,
       size: 0,
-      mimeType: "image/jpeg",
+      mimeType: fileMime,
     });
     captureSourceRef.current = "scan";
     // Reset form fields for fresh scan
@@ -1465,7 +1494,10 @@ export default function AddDocumentScreen() {
     setFieldErrors({});
 
     setStep(4);
-    void processScan(firstImage.uri, "image/jpeg", "scanned-document.jpg");
+    void processScan(firstImage.uri, "image/jpeg", "scanned-page-1.jpg");
+    if (pageCount > 1) {
+      feedbackService.info(`Scanned ${pageCount} pages into one document.`);
+    }
   }
 
   function openDatePicker(field: "issueDate" | "expiryDate") {
@@ -2374,7 +2406,7 @@ export default function AddDocumentScreen() {
           visible={scannerVisible}
           onScanSuccess={(data: any) => {
             if (data.images && data.images.length > 0) {
-              handleScanSuccess({ images: [{ uri: data.images[0].uri }] });
+              void handleScanSuccess({ images: data.images });
             }
           }}
           onClose={() => setScannerVisible(false)}
