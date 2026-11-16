@@ -32,6 +32,7 @@ function catLabel(c: string) {
 export default function AdminDocumentsScreen() {
   const { width } = useWindowDimensions();
   const isWideNav = width >= 768;
+  const navInset = isWideNav ? 96 : 20;
   const [documents, setDocuments] = useState<VaultDocument[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [ocrFilter, setOcrFilter] = useState<OcrFilter>("all");
@@ -283,7 +284,7 @@ export default function AdminDocumentsScreen() {
         {loading && documents.length === 0 ? (
           <SkeletonScreen />
         ) : errorMessage ? (
-          <View style={{ paddingHorizontal: isWideNav ? 160 : 20 }}>
+          <View style={{ paddingHorizontal: navInset }}>
             <Card>
               <Text style={styles.errorTitle}>Could not load documents</Text>
               <Text style={styles.muted}>{errorMessage}</Text>
@@ -297,7 +298,7 @@ export default function AdminDocumentsScreen() {
             data={filteredDocs}
             keyExtractor={(item) => String(item.id)}
             renderItem={renderItem}
-            contentContainerStyle={[styles.list, { gap: ui.compactMode ? 8 : 10, paddingRight: isWideNav ? 160 : 20 }]}
+            contentContainerStyle={[styles.list, { gap: ui.compactMode ? 8 : 10, paddingRight: navInset }]}
             style={{ flex: 1 }}
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"

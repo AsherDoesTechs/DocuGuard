@@ -40,6 +40,7 @@ const REFRESH_MS = 15000;
 export default function AdminUsersScreen() {
   const { width } = useWindowDimensions();
   const isWideNav = width >= 768;
+  const navInset = isWideNav ? 96 : 20;
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
@@ -319,7 +320,7 @@ export default function AdminUsersScreen() {
             data={filteredUsers}
             keyExtractor={(item) => String(item.id)}
             renderItem={renderItem}
-            contentContainerStyle={[styles.list, { gap: ui.compactMode ? 8 : 10, paddingRight: isWideNav ? 160 : 20 }]}
+            contentContainerStyle={[styles.list, { gap: ui.compactMode ? 8 : 10, paddingRight: navInset }]}
             style={{ flex: 1 }}
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"

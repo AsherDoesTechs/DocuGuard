@@ -18,34 +18,27 @@ export function AdminBottomNav() {
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
-  const isSidebar = width >= 900;
+  const isFloating = width >= 768;
 
-  if (isSidebar) {
+  if (isFloating) {
     return (
       <View
         pointerEvents="box-none"
         style={[
-          styles.sidebarWrap,
+          styles.floatWrap,
           {
-            top: Math.max(insets.top, 16),
-            bottom: Math.max(insets.bottom, 16),
-            left: Math.max(insets.left, 16),
+            top: Math.max(insets.top, 24),
+            bottom: Math.max(insets.bottom, 24),
+            right: Math.max(insets.right, 16),
           },
         ]}
       >
-        <View style={styles.sidebar}>
-          <View style={styles.brandBlock}>
-            <View style={styles.brandDot} />
-            <Text style={styles.brandTitle}>DocuGuard</Text>
-            <Text style={styles.brandSub}>Admin</Text>
-          </View>
-          <View style={styles.sidebarTabs}>
-            {TABS.map((tab) => {
-              const active =
-                pathname === tab.route || (tab.route !== "/dashboard" && pathname.startsWith(tab.route));
-              return <TabButton key={tab.key} tab={tab} active={active} sidebar onPress={() => router.replace(tab.route as any)} />;
-            })}
-          </View>
+        <View style={styles.floatPill}>
+          {TABS.map((tab) => {
+            const active =
+              pathname === tab.route || (tab.route !== "/dashboard" && pathname.startsWith(tab.route));
+            return <TabButton key={tab.key} tab={tab} active={active} vertical onPress={() => router.replace(tab.route as any)} />;
+          })}
         </View>
       </View>
     );
@@ -66,31 +59,31 @@ function TabButton({
   tab,
   active,
   onPress,
-  sidebar,
+  vertical,
 }: {
   tab: (typeof TABS)[number];
   active: boolean;
   onPress: () => void;
-  sidebar?: boolean;
+  vertical?: boolean;
 }) {
   const scale = useRef(new Animated.Value(1)).current;
   return (
     <Pressable
-      style={[sidebar ? styles.tabSidebar : styles.tab, active && sidebar && styles.tabSidebarActive]}
+      style={vertical ? styles.tabVertical : styles.tab}
       onPress={onPress}
       accessibilityRole="button"
-      onPressIn={() => Animated.spring(scale, { toValue: 0.97, useNativeDriver: true, speed: 40, bounciness: 0 }).start()}
+      onPressIn={() => Animated.spring(scale, { toValue: 0.94, useNativeDriver: true, speed: 40, bounciness: 0 }).start()}
       onPressOut={() => Animated.spring(scale, { toValue: 1, useNativeDriver: true, speed: 24, bounciness: 4 }).start()}
     >
-      <Animated.View style={{ transform: [{ scale }], flexDirection: sidebar ? "row" : "column", alignItems: "center", gap: sidebar ? 10 : 4 }}>
-        <View style={[styles.iconWrap, active && !sidebar && styles.iconWrapActive]}>
+      <Animated.View style={{ transform: [{ scale }], alignItems: "center", gap: 4 }}>
+        <View style={[styles.iconWrap, active && styles.iconWrapActive]}>
           <Ionicons
             name={(active ? tab.activeIcon : tab.icon) as any}
-            size={sidebar ? 18 : 20}
+            size={20}
             color={active ? AdminColors.primary : AdminColors.textMuted}
           />
         </View>
-        <Text style={[styles.label, sidebar && styles.labelSidebar, active && styles.labelActive]} numberOfLines={1}>
+        <Text style={[styles.label, active && styles.labelActive]} numberOfLines={1}>
           {tab.label}
         </Text>
       </Animated.View>
@@ -110,39 +103,33 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     ...(Platform.OS === "web" ? ({ backdropFilter: "blur(12px)" } as any) : {}),
   },
-  sidebarWrap: {
+  floatWrap: {
     position: "absolute",
     zIndex: 999,
-    width: 220,
+    justifyContent: "center",
+    alignItems: "flex-end",
     ...(Platform.OS === "web" ? ({ position: "fixed", pointerEvents: "none" } as any) : {}),
   },
-  sidebar: {
-    flex: 1,
+  floatPill: {
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
     backgroundColor: "rgba(255,255,255,0.96)",
     borderRadius: 24,
     borderWidth: 1,
     borderColor: AdminColors.border,
-    padding: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 6,
+    gap: 2,
     pointerEvents: "auto",
     ...(Platform.OS === "web"
-      ? ({ boxShadow: "0 12px 40px rgba(15,23,42,0.08)", backdropFilter: "blur(12px)" } as any)
-      : { shadowColor: "#0F172A", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.08, shadowRadius: 24, elevation: 8 }),
+      ? ({ boxShadow: "0 12px 40px rgba(15,23,42,0.12)", backdropFilter: "blur(12px)" } as any)
+      : { shadowColor: "#0F172A", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.12, shadowRadius: 24, elevation: 10 }),
   },
-  brandBlock: { paddingHorizontal: 10, paddingVertical: 10, marginBottom: 8 },
-  brandDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: AdminColors.primary, marginBottom: 10 },
-  brandTitle: { fontSize: 16, fontWeight: "800", color: AdminColors.text, letterSpacing: -0.3 },
-  brandSub: { fontSize: 12, color: AdminColors.textSecondary, marginTop: 2 },
-  sidebarTabs: { gap: 4 },
   tab: { flex: 1, alignItems: "center", justifyContent: "center", gap: 4, paddingVertical: 4 },
-  tabSidebar: {
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    borderRadius: 14,
-  },
-  tabSidebarActive: { backgroundColor: AdminColors.primarySoft },
-  iconWrap: { width: 32, height: 32, borderRadius: 10, alignItems: "center", justifyContent: "center" },
+  tabVertical: { alignItems: "center", justifyContent: "center", paddingVertical: 8, paddingHorizontal: 8, minWidth: 60 },
+  iconWrap: { width: 34, height: 34, borderRadius: 12, alignItems: "center", justifyContent: "center" },
   iconWrapActive: { backgroundColor: AdminColors.primarySoft },
   label: { fontSize: 10, fontWeight: "600", color: AdminColors.textMuted, textAlign: "center" },
-  labelSidebar: { fontSize: 13, fontWeight: "600", textAlign: "left", color: AdminColors.textSecondary },
   labelActive: { color: AdminColors.primary, fontWeight: "700" },
 });

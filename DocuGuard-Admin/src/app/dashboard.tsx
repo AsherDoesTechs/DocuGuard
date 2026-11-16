@@ -47,6 +47,7 @@ const REFRESH_MS = 15000;
 export default function AdminDashboardScreen() {
   const { width } = useWindowDimensions();
   const isWideNav = width >= 768;
+  const navInset = isWideNav ? 96 : 20;
   const [metrics, setMetrics] = useState<AdminMetrics | null>(null);
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [docs, setDocs] = useState<VaultDocument[]>([]);
@@ -342,7 +343,7 @@ export default function AdminDashboardScreen() {
     <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
       <View style={styles.screen}>
         <SyncLine syncing={syncing} />
-        <View style={[styles.header, { paddingBottom: ui.compactMode ? 6 : 10, paddingRight: isWideNav ? 88 : 20 }]}>
+        <View style={[styles.header, { paddingBottom: ui.compactMode ? 6 : 10, paddingRight: navInset }]}>
           <View style={{ flex: 1 }}>
             <Text style={styles.brandSub}>DocuGuard Admin</Text>
             <Text style={styles.sectionTitle}>Operations Center</Text>
@@ -357,7 +358,7 @@ export default function AdminDashboardScreen() {
         {loading && !metrics && users.length === 0 && docs.length === 0 && logs.length === 0 ? (
           <SkeletonScreen />
         ) : errorMessage && users.length === 0 && docs.length === 0 ? (
-          <View style={{ paddingHorizontal: isWideNav ? 88 : 20 }}>
+          <View style={{ paddingHorizontal: navInset }}>
             <Card>
               <Text style={styles.errorTitle}>Unable to load dashboard</Text>
               <Text style={styles.muted}>{errorMessage}</Text>
@@ -369,7 +370,7 @@ export default function AdminDashboardScreen() {
         ) : (
           <ScrollView
             style={styles.scroll}
-            contentContainerStyle={[styles.content, { gap, paddingRight: isWideNav ? 88 : 20 }]}
+            contentContainerStyle={[styles.content, { gap, paddingRight: navInset }]}
             showsVerticalScrollIndicator={false}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} tintColor={AdminColors.primary} />}
           >

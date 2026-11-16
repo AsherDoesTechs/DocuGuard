@@ -20,6 +20,7 @@ function maskIp(ip?: string | null) { const s = String(ip || ""); if (!s) return
 export default function AdminLogsScreen() {
   const { width } = useWindowDimensions();
   const isWideNav = width >= 768;
+  const navInset = isWideNav ? 96 : 20;
   const [logs, setLogs] = useState<AuditLogEntry[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [filter, setFilter] = useState<SevFilter>("all");
@@ -95,8 +96,8 @@ export default function AdminLogsScreen() {
       <View style={styles.screen}>
         <SyncLine syncing={syncing} />
         <ScreenHeader title="Security Logs" subtitle={`${ui.autoSync ? "Auto-sync 15s" : "Sync paused"}${lastSync ? ` · ${lastSync.toLocaleTimeString()}` : ""}${syncing ? " · syncing" : ""}`} right={<View style={{ flexDirection: "row", gap: 8 }}><IconButton icon="share-outline" onPress={exportLogs} label="Export" /><IconButton icon="refresh-outline" onPress={() => void fetchLogs(true)} label="Refresh" spinning={syncing} /><IconButton icon="settings-outline" onPress={() => setSettingsOpen(true)} label="Settings" tone="primary" /></View>} />
-        {loading && logs.length === 0 ? <SkeletonScreen /> : errorMessage ? (<View style={{ paddingHorizontal: isWideNav ? 88 : 20 }}><Card><Text style={styles.errorTitle}>Could not load logs</Text><Text style={styles.muted}>{errorMessage}</Text><PressableScale style={styles.retryBtn} onPress={() => void fetchLogs()}><Text style={styles.retryText}>Try again</Text></PressableScale></Card></View>) : (
-          <FlatList data={filteredLogs} keyExtractor={(item) => String(item.id)} renderItem={renderItem} contentContainerStyle={[styles.list, { gap: ui.compactMode ? 8 : 10, paddingRight: isWideNav ? 88 : 20 }]} style={{ flex: 1 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled"
+        {loading && logs.length === 0 ? <SkeletonScreen /> : errorMessage ? (<View style={{ paddingHorizontal: navInset }}><Card><Text style={styles.errorTitle}>Could not load logs</Text><Text style={styles.muted}>{errorMessage}</Text><PressableScale style={styles.retryBtn} onPress={() => void fetchLogs()}><Text style={styles.retryText}>Try again</Text></PressableScale></Card></View>) : (
+          <FlatList data={filteredLogs} keyExtractor={(item) => String(item.id)} renderItem={renderItem} contentContainerStyle={[styles.list, { gap: ui.compactMode ? 8 : 10, paddingRight: navInset }]} style={{ flex: 1 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled"
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void fetchLogs(true)} tintColor={AdminColors.primary} />}
             ListHeaderComponent={<View style={{ gap, marginBottom: 2 }}>
               <View style={{ flexDirection: "row", gap: ui.compactMode ? 8 : 12 }}><StatCard label="24h Events" value={analytics.last24h} icon="time-outline" color={AdminColors.primary} bg={AdminColors.primarySoft} /><StatCard label="Critical" value={analytics.critical} icon="alert-circle-outline" color={AdminColors.danger} bg={AdminColors.dangerSoft} /></View>
