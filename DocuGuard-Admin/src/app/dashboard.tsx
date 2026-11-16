@@ -180,9 +180,11 @@ export default function AdminDashboardScreen() {
     const totalDocs = metrics?.totalDocuments ?? docs.length;
     const activeUsers = users.filter((u) => String(u.status || "active") === "active").length;
     const suspendedUsers = users.filter((u) => String(u.status) === "suspended").length;
+    const adminUsers = users.filter((u) => String(u.role || "user").toLowerCase() === "admin").length;
     const ocrCompleted = docs.filter((d) => String(d.ocrStatus) === "completed").length;
     const ocrPending = docs.filter((d) => String(d.ocrStatus) === "pending").length;
     const ocrFailed = docs.filter((d) => !["completed", "pending", "unknown"].includes(String(d.ocrStatus))).length;
+    const ocrUnknown = docs.filter((d) => String(d.ocrStatus) === "unknown").length;
     const ocrRate = docs.length ? Math.round((ocrCompleted / docs.length) * 100) : 0;
     const nowMs = Date.now();
     const dayMs = 86400000;
@@ -190,6 +192,10 @@ export default function AdminDashboardScreen() {
       const t = new Date(l.timestamp as any).getTime();
       return Number.isFinite(t) && nowMs - t <= 7 * dayMs;
     });
+    const logs24h = logs.filter((l) => {
+      const t = new Date(l.timestamp as any).getTime();
+      return Number.isFinite(t) && nowMs - t <= dayMs;
+    }).length;
     const critical24h = logs.filter((l) => {
       const t = new Date(l.timestamp as any).getTime();
       return String(l.severity).toLowerCase() === "critical" && Number.isFinite(t) && nowMs - t <= dayMs;
@@ -198,6 +204,7 @@ export default function AdminDashboardScreen() {
       const t = new Date(l.timestamp as any).getTime();
       return String(l.severity).toLowerCase() === "warning" && Number.isFinite(t) && nowMs - t <= dayMs;
     }).length;
+    const info24h = Math.max(0, logs24h - critical24h - warning24h);
     const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     const last7 = Array.from({ length: 7 }, (_, idx) => {
       const i = 6 - idx;
@@ -205,6 +212,16 @@ export default function AdminDashboardScreen() {
       const start = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
       const count = logs.filter((l) => {
         const t = new Date(l.timestamp as any).getTime();
+        return Number.isFinite(t) && t >= start && t < start + dayMs;
+      }).length;
+      return { label: dayNames[d.getDay()], value: count };
+    });
+    const docsLast7 = Array.from({ length: 7 }, (_, idx) => {
+      const i = 6 - idx;
+      const d = new Date(nowMs - i * dayMs);
+      const start = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+      const count = docs.filter((dd) => {
+        const t = new Date((dd as any).createdAt || 0).getTime();
         return Number.isFinite(t) && t >= start && t < start + dayMs;
       }).length;
       return { label: dayNames[d.getDay()], value: count };
@@ -224,20 +241,26 @@ export default function AdminDashboardScreen() {
     if (ocrPending > 0) insights.push(`${ocrPending} document${ocrPending > 1 ? "s" : ""} pending OCR.`);
     if (ocrFailed > 0) insights.push(`${ocrFailed} document${ocrFailed > 1 ? "s" : ""} with OCR issues.`);
     if (critical24h > 0) insights.push(`${critical24h} critical event${critical24h > 1 ? "s" : ""} in last 24h.`);
+    if (suspendedUsers > 0) insights.push(`${suspendedUsers} suspended account${suspendedUsers > 1 ? "s" : ""} need review.`);
     if (!insights.length) insights.push("Operations stable based on loaded data.");
     return {
       totalUsers,
       totalDocs,
       activeUsers,
       suspendedUsers,
+      adminUsers,
       ocrCompleted,
       ocrPending,
       ocrFailed,
+      ocrUnknown,
       ocrRate,
       recentLogs,
+      logs24h,
       critical24h,
       warning24h,
+      info24h,
       last7,
+      docsLast7,
       categories,
       riskLevel,
       riskTone,
@@ -400,8 +423,53 @@ export default function AdminDashboardScreen() {
               </View>
             </Card>
 
+            <Card title="User accounts (detail)" subtitle="Role and status breakdown">
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                <View style={{ minWidth: "45%", flex: 1 }}>
+                  <Text style={styles.muted}>Active</Text>
+                  <Text style={{ fontSize: 16, fontWeight: "700", color: AdminColors.text }}>{analytics.activeUsers}</Text>
+                </View>
+                <View style={{ minWidth: "45%", flex: 1 }}>
+                  <Text style={styles.muted}>Suspended</Text>
+                  <Text style={{ fontSize: 16, fontWeight: "700", color: AdminColors.text }}>{analytics.suspendedUsers}</Text>
+                </View>
+                <View style={{ minWidth: "45%", flex: 1 }}>
+                  <Text style={styles.muted}>Admins (role)</Text>
+                  <Text style={{ fontSize: 16, fontWeight: "700", color: AdminColors.text }}>{analytics.adminUsers}</Text>
+                </View>
+                <View style={{ minWidth: "45%", flex: 1 }}>
+                  <Text style={styles.muted}>Total loaded</Text>
+                  <Text style={{ fontSize: 16, fontWeight: "700", color: AdminColors.text }}>{analytics.totalUsers}</Text>
+                </View>
+              </View>
+              <View style={{ marginTop: 10 }}>
+                <ProgressBar value={analytics.totalUsers ? Math.round((analytics.activeUsers / analytics.totalUsers) * 100) : 0} color={AdminColors.success} />
+                <Text style={[styles.muted, { marginTop: 6 }]}>Active ratio</Text>
+              </View>
+            </Card>
+
+            <Card title="Security events (24h)" subtitle="Severity mix from loaded logs">
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+                <View style={{ minWidth: "30%", flex: 1 }}><Text style={styles.muted}>Critical</Text><Text style={{ fontSize: 16, fontWeight: "700", color: AdminColors.danger }}>{analytics.critical24h}</Text></View>
+                <View style={{ minWidth: "30%", flex: 1 }}><Text style={styles.muted}>Warning</Text><Text style={{ fontSize: 16, fontWeight: "700", color: AdminColors.warning }}>{analytics.warning24h}</Text></View>
+                <View style={{ minWidth: "30%", flex: 1 }}><Text style={styles.muted}>Info</Text><Text style={{ fontSize: 16, fontWeight: "700", color: AdminColors.text }}>{analytics.info24h}</Text></View>
+              </View>
+              <BreakdownList
+                segments={[
+                  { label: "Critical (24h)", value: analytics.critical24h, color: AdminColors.danger },
+                  { label: "Warning (24h)", value: analytics.warning24h, color: AdminColors.warning },
+                  { label: "Info (24h)", value: analytics.info24h, color: AdminColors.info },
+                ]}
+              />
+              <Text style={[styles.muted, { marginTop: 10 }]}>Total events in last 7d: {analytics.recentLogs.length}</Text>
+            </Card>
+
             <Card title="Activity (7 days)" subtitle="Audit events by day">
               <BarChart data={analytics.last7} height={110} />
+            </Card>
+
+            <Card title="Documents added (7 days)" subtitle="From loaded documents (by createdAt)">
+              <BarChart data={analytics.docsLast7} height={110} />
             </Card>
 
             <Card title="Document categories">
