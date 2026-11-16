@@ -1,5 +1,5 @@
 ﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Pressable, RefreshControl, ScrollView, Share, StyleSheet, Text, useWindowDimensions, View } from "react-native";
+import { Alert, Platform, Pressable, RefreshControl, ScrollView, Share, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -21,6 +21,7 @@ import { getAdminUiSettings, subscribeAdminUiSettings, loadAdminUiSettings, setA
 import { AdminBottomNav } from "../components/AdminBottomNav";
 import { AdminSettingsModal } from "../components/AdminSettingsModal";
 import { AdminColors, AdminRadii } from "../theme/adminTheme";
+import { useAdminToast } from "../components/AdminToast";
 import {
   BarChart,
   BreakdownList,
@@ -56,6 +57,7 @@ export default function AdminDashboardScreen() {
   const [lastSync, setLastSync] = useState<Date | null>(null);
   const [now, setNow] = useState(Date.now());
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const toast = useAdminToast();
 
   useEffect(() => {
     loadAdminUiSettings();
@@ -158,20 +160,30 @@ export default function AdminDashboardScreen() {
       const subs = (health?.subscriptions || [])
         .map((s) => `${s.name}: ${s.status}${s.expiresAt ? ` (expires ${s.expiresAt})` : ""}`)
         .join(" | ");
-      await Share.share({
-        message: [
-          `DocuGuard Admin Summary - ${new Date().toISOString()}`,
-          `Users: ${metrics?.totalUsers ?? users.length}`,
-          `Documents: ${metrics?.totalDocuments ?? docs.length}`,
-          `Logs loaded: ${logs.length}`,
-          `Azure OCR: ${health?.azureOcr?.status || "unknown"}`,
-          `Subscriptions: ${subs || "n/a"}`,
-          `Last sync: ${lastSync ? lastSync.toISOString() : "n/a"}`,
-        ].join("\n"),
-        title: "Admin Summary",
-      });
+      const body = [
+        `DocuGuard Admin Summary - ${new Date().toISOString()}`,
+        `Users: ${metrics?.totalUsers ?? users.length}`,
+        `Documents: ${metrics?.totalDocuments ?? docs.length}`,
+        `Logs loaded: ${logs.length}`,
+        `Azure OCR: ${health?.azureOcr?.status || "unknown"}`,
+        `Subscriptions: ${subs || "n/a"}`,
+        `Last sync: ${lastSync ? lastSync.toISOString() : "n/a"}`,
+      ].join("\n");
+      if (Platform.OS === "web" && typeof document !== "undefined") {
+        const blob = new Blob([body], { type: "text/plain;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `docuguard-admin-summary-${new Date().toISOString().slice(0, 10)}.txt`;
+        a.click();
+        URL.revokeObjectURL(url);
+        toast.success("Summary downloaded.");
+        return;
+      }
+      await Share.share({ message: body, title: "Admin Summary" });
+      toast.success("Summary shared.");
     } catch {
-      Alert.alert("Export unavailable", "Could not share summary.");
+      toast.error("Could not export summary.");
     }
   };
 
