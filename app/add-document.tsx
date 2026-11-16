@@ -20,8 +20,15 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import * as SecureStore from "expo-secure-store";
-import * as Print from "expo-print";
 import * as DocumentPicker from "expo-document-picker";
+
+let PrintModule: typeof import("expo-print") | null = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  PrintModule = require("expo-print");
+} catch {
+  PrintModule = null;
+}
 import { recordAuditLog } from "@/services/auditService";
 
 import { useColors } from "@/context/ThemeContext";
@@ -1459,21 +1466,25 @@ export default function AddDocumentScreen() {
     let fileName = "scanned-document.jpg";
 
     if (imageArray.length > 1) {
-      try {
-        const pagesHtml = imageArray
-          .map(
-            (img, idx) =>
-              `<div style="page-break-after:${idx < imageArray.length - 1 ? "always" : "auto"};margin:0;padding:0;width:100%;height:100vh;display:flex;align-items:center;justify-content:center;"><img src="${img.uri}" style="max-width:100%;max-height:100vh;width:auto;height:auto;object-fit:contain;" /></div>`,
-          )
-          .join("");
-        const { uri: pdfUri } = await Print.printToFileAsync({
-          html: `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1.0" /></head><body style="margin:0;padding:0;">${pagesHtml}</body></html>`,
-        });
-        fileUri = pdfUri;
-        fileMime = "application/pdf";
-        fileName = `scanned-document-${imageArray.length}-pages.pdf`;
-      } catch (e) {
-        console.warn("Failed to combine scanned pages into PDF, using first page.", e);
+      if (PrintModule?.printToFileAsync) {
+        try {
+          const pagesHtml = imageArray
+            .map(
+              (img, idx) =>
+                `<div style="page-break-after:${idx < imageArray.length - 1 ? "always" : "auto"};margin:0;padding:0;width:100%;height:100vh;display:flex;align-items:center;justify-content:center;"><img src="${img.uri}" style="max-width:100%;max-height:100vh;width:auto;height:auto;object-fit:contain;" /></div>`,
+            )
+            .join("");
+          const { uri: pdfUri } = await PrintModule.printToFileAsync({
+            html: `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1.0" /></head><body style="margin:0;padding:0;">${pagesHtml}</body></html>`,
+          });
+          fileUri = pdfUri;
+          fileMime = "application/pdf";
+          fileName = `scanned-document-${imageArray.length}-pages.pdf`;
+        } catch (e) {
+          console.warn("Failed to combine scanned pages into PDF, using first page.", e);
+        }
+      } else {
+        console.warn("expo-print unavailable; saving first scanned page only.");
       }
     }
 
