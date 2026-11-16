@@ -435,10 +435,11 @@ exports.verifyEmail = async (req, res, next) => {
         tokenLength: token?.length,
       });
 
-      return res.status(400).json({
+      return res.status(409).json({
         error:
-          "This verification link is invalid, expired, or has already been used. Please sign in or request a new verification email.",
+          "This verification link is invalid, expired, or has already been used. If your email is already verified, you can sign in. Otherwise, request a new verification email.",
         code: ErrorCodes.AUTH_TOKEN_INVALID,
+        alreadyUsedOrExpired: true,
       });
     }
 
@@ -589,16 +590,15 @@ exports.verifyEmailWeb = async (req, res) => {
     );
 
     if (result.rows.length === 0) {
-      // The token may be invalid, expired, or already consumed.
-      // Do not attempt to reuse it or issue a session from this page.
+      // Token was already consumed, expired, or replaced. Checked in real time.
       return renderPage({
-        title: "Link Invalid or Expired",
-        heading: "Link Invalid or Expired",
+        title: "Link Already Used or Expired",
+        heading: "Link Already Used or Expired",
         message:
-          "This verification link is invalid, has expired, or has already been used. If you have already verified your email, you can sign in to DocuGuard. Otherwise, request a new verification email.",
+          "This verification link is no longer valid. It may have already been used, expired, or been replaced by a newer link. If your email is already verified, you can sign in to DocuGuard. If not, request a new verification email from the app.",
         type: "warning",
         buttonText: "Open DocuGuard",
-        statusCode: 400,
+        statusCode: 409,
       });
     }
 
@@ -663,11 +663,12 @@ exports.resendVerification = async (req, res) => {
       return res.status(400).json({ error: "Email is already verified." });
     }
 
+    // Issue a fresh token and invalidate any previously issued link immediately.
     const verificationToken = crypto.randomBytes(32).toString("hex");
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
     await db.query(
-      "UPDATE users SET verification_token = $1, verification_expires_at = $2 WHERE id = $3",
+      "UPDATE users SET verification_token = $1, verification_expires_at = $2 WHERE id = $3 AND is_verified = FALSE",
       [verificationToken, expiresAt, user.id],
     );
 
@@ -736,11 +737,19 @@ exports.forgotPassword = async (req, res) => {
 
     const resetToken = crypto.randomBytes(32).toString("hex");
     const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
+    const normalizedEmail = email.trim().toLowerCase();
 
-    await db.query(
-      "INSERT INTO password_resets (email, token, expires_at) VALUES ($1, $2, $3)",
-      [email.trim().toLowerCase(), resetToken, expiresAt],
-    );
+    // Invalidate previously issued unused reset links so only the newest link is valid.
+    await db.withTransaction(async (client) => {
+      await client.query(
+        "UPDATE password_resets SET used = TRUE WHERE email = $1 AND used = FALSE",
+        [normalizedEmail],
+      );
+      await client.query(
+        "INSERT INTO password_resets (email, token, expires_at) VALUES ($1, $2, $3)",
+        [normalizedEmail, resetToken, expiresAt],
+      );
+    });
 
     try {
       await sendPasswordResetEmail(email, resetToken);
@@ -812,14 +821,22 @@ exports.resetPassword = async (req, res) => {
         "UPDATE password_resets SET used = TRUE WHERE id = $1",
         [resetRecord.id],
       );
+      // Invalidate any other outstanding reset links for this email.
+      await client.query(
+        "UPDATE password_resets SET used = TRUE WHERE email = $1 AND id <> $2 AND used = FALSE",
+        [resetRecord.email, resetRecord.id],
+      );
 
       return resetRecord;
     });
 
     if (!result) {
-      return res
-        .status(400)
-        .json({ error: "Invalid or expired password reset link." });
+      return res.status(409).json({
+        error:
+          "This password reset link is invalid, expired, or has already been used. Request a new password reset link if needed.",
+        code: ErrorCodes.AUTH_TOKEN_INVALID,
+        alreadyUsedOrExpired: true,
+      });
     }
 
     return res.json({ message: "Password updated successfully!" });
@@ -858,17 +875,17 @@ exports.resetPasswordWeb = async (req, res) => {
     );
 
     if (result.rows.length === 0) {
-      return res.status(400).send(`
+      return res.status(409).send(`
         <html>
           <head>
-            <title>Invalid Link - DocuGuard</title>
+            <title>Link Already Used or Expired - DocuGuard</title>
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
           </head>
           <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; text-align: center; padding: 50px 20px; background-color: #f3f4f6;">
             <div style="max-width: 400px; margin: 0 auto; background: #ffffff; border-radius: 16px; padding: 40px; box-shadow: 0 8px 32px rgba(0,0,0,0.08);">
-              <div style="width: 80px; height: 80px; background: #FEE2E2; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px; font-size: 32px; font-weight: 700; color: #DC2626;">!</div>
-              <h1 style="margin: 0 0 12px; color: #111827; font-size: 24px; font-weight: 700;">Invalid or Expired Link</h1>
-              <p style="margin: 0; color: #6B7280; font-size: 16px;">This password reset link is invalid or has expired.</p>
+              <div style="width: 80px; height: 80px; background: #FEF3C7; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px; font-size: 32px; font-weight: 700; color: #D97706;">&#9888;</div>
+              <h1 style="margin: 0 0 12px; color: #111827; font-size: 24px; font-weight: 700;">Link Already Used or Expired</h1>
+              <p style="margin: 0; color: #6B7280; font-size: 16px;">This password reset link is no longer valid. It may have already been used, expired, or been replaced by a newer link. Request a new password reset from the app if needed.</p>
             </div>
           </body>
         </html>

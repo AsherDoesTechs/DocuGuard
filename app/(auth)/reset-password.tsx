@@ -122,9 +122,10 @@ export default function ResetPasswordScreen() {
 
         let message: string;
 
-        if ([400, 401, 410].includes(status)) {
+        if ([400, 401, 409, 410].includes(status)) {
           message =
-            "This password reset link is invalid or has expired. Please request a new one.";
+            err?.response?.data?.error ||
+            "This password reset link is invalid, expired, or has already been used. Please request a new one.";
         } else if (!err?.response) {
           message =
             "Unable to connect. Check your internet connection and try again.";

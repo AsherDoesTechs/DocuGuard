@@ -154,10 +154,21 @@ export default function VerifyEmailScreen() {
         err?.response?.data?.error ||
         err?.response?.data?.message ||
         "This verification link is invalid, expired, or has already been used.";
+      const alreadyUsed =
+        err?.response?.status === 409 ||
+        err?.response?.data?.alreadyUsedOrExpired === true ||
+        /already been used|already used|already verified/i.test(errorMsg);
+
+      if (alreadyUsed) {
+        const msg =
+          "This link is no longer valid. If your email is already verified, you can sign in now. Otherwise, request a new verification email.";
+        setStatus("success");
+        setErrorMessage(msg);
+        return;
+      }
 
       setStatus("error");
       setErrorMessage(errorMsg);
-
       feedbackService.error(errorMsg);
     }
   };
