@@ -36,6 +36,11 @@ import {
   PressableScale,
   FadeInView,
 } from "../components/ui";
+import {
+  GroupedBarChart,
+  SparklineCard,
+  TrendLineChart,
+} from "../components/ui/Charts";
 
 const REFRESH_MS = 15000;
 
@@ -476,12 +481,48 @@ export default function AdminDashboardScreen() {
               <Text style={[styles.muted, { marginTop: 10 }]}>Total events in last 7d: {analytics.recentLogs.length}</Text>
             </Card>
 
-            <Card title="Activity (7 days)" subtitle="Audit events by day">
-              <BarChart data={analytics.last7} height={110} />
+            <Card title="Indicators" subtitle="At-a-glance operational signals">
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                <SparklineCard
+                  title="OCR success"
+                  value={`${analytics.ocrRate}%`}
+                  hint={`${analytics.ocrCompleted}/${analytics.totalDocs} docs`}
+                  tone={analytics.ocrRate >= 80 ? "success" : analytics.ocrRate >= 50 ? "warning" : "danger"}
+                />
+                <SparklineCard
+                  title="Active users"
+                  value={analytics.activeUsers}
+                  hint={`${analytics.totalUsers ? Math.round((analytics.activeUsers / analytics.totalUsers) * 100) : 0}% of loaded`}
+                  tone="primary"
+                />
+                <SparklineCard
+                  title="Critical (24h)"
+                  value={analytics.critical24h}
+                  hint={analytics.critical24h > 0 ? "Needs attention" : "None"}
+                  tone={analytics.critical24h > 0 ? "danger" : "success"}
+                />
+                <SparklineCard
+                  title="Docs last 7d"
+                  value={analytics.docsLast7.reduce((s, d) => s + d.value, 0)}
+                  hint="Created (7d)"
+                  tone="primary"
+                />
+              </View>
             </Card>
 
-            <Card title="Documents added (7 days)" subtitle="From loaded documents (by createdAt)">
-              <BarChart data={analytics.docsLast7} height={110} />
+            <Card title="Audit trend (7 days)" subtitle="Events per day (line)">
+              <TrendLineChart data={analytics.last7} height={130} color={AdminColors.primary} />
+            </Card>
+
+            <Card title="Activity vs documents (7 days)" subtitle="Grouped bars: audit events vs docs created">
+              <GroupedBarChart
+                data={analytics.last7.map((d) => ({ label: d.label }))}
+                series={[
+                  { key: "logs", label: "Audit events", color: AdminColors.primary, values: analytics.last7.map((d) => d.value) },
+                  { key: "docs", label: "Docs created", color: AdminColors.success, values: analytics.docsLast7.map((d) => d.value) },
+                ]}
+                height={150}
+              />
             </Card>
 
             <Card title="Document categories">
@@ -519,13 +560,45 @@ export default function AdminDashboardScreen() {
             </Card>
 
             {ui.showInsights && (
-              <Card title="Insights">
-                {analytics.insights.map((t, idx) => (
-                  <View key={idx} style={styles.insightRow}>
-                    <Ionicons name="bulb-outline" size={16} color={AdminColors.warning} />
-                    <Text style={styles.insightText}>{t}</Text>
+              <Card title="Insights" subtitle="Clear, detailed, actionable summary">
+                <View style={{ gap: 10 }}>
+                  <View style={styles.insightRow}>
+                    <Ionicons name="people-circle-outline" size={16} color={AdminColors.primary} />
+                    <Text style={styles.insightText}>
+                      Users (loaded): {analytics.totalUsers} total — {analytics.activeUsers} active ({analytics.totalUsers ? Math.round((analytics.activeUsers / analytics.totalUsers) * 100) : 0}% of loaded), {analytics.suspendedUsers} suspended, {analytics.adminUsers} admin role. Review suspended accounts and role assignments regularly.
+                    </Text>
                   </View>
-                ))}
+                  <View style={styles.insightRow}>
+                    <Ionicons name="document-text-outline" size={16} color={AdminColors.success} />
+                    <Text style={styles.insightText}>
+                      Documents (loaded): {analytics.totalDocs}. OCR — {analytics.ocrCompleted} completed ({analytics.ocrRate}%), {analytics.ocrPending} pending, {analytics.ocrFailed} failed/other{analytics.ocrUnknown ? `, ${analytics.ocrUnknown} unknown` : ""}. Backlog in pending/failed often needs reprocessing or operator review.
+                    </Text>
+                  </View>
+                  <View style={styles.insightRow}>
+                    <Ionicons name="shield-checkmark-outline" size={16} color={analytics.critical24h > 0 ? AdminColors.danger : AdminColors.warning} />
+                    <Text style={styles.insightText}>
+                      Security (24h): {analytics.logs24h} events — {analytics.critical24h} critical, {analytics.warning24h} warnings, {analytics.info24h} info. Last 7 days: {analytics.recentLogs.length} audit events loaded. Prioritize critical items first.
+                    </Text>
+                  </View>
+                  <View style={styles.insightRow}>
+                    <Ionicons name="pulse-outline" size={16} color={AdminColors.info} />
+                    <Text style={styles.insightText}>
+                      Services: Azure OCR {String(health?.azureOcr?.status || "unknown").replace(/_/g, " ")}; database {String(health?.database?.status || "unknown")} (~{Number(health?.database?.latencyMs ?? 0)}ms). Storage: {Number(health?.supabaseStorage?.bucketUsageBytes || 0) > 0 ? "reported by Health API (see Health screen)." : "Health may show 0 until server redeploy/data mapping is confirmed."}
+                    </Text>
+                  </View>
+                  {analytics.insights.map((t, idx) => (
+                    <View key={idx} style={styles.insightRow}>
+                      <Ionicons name="bulb-outline" size={16} color={AdminColors.warning} />
+                      <Text style={styles.insightText}>{t}</Text>
+                    </View>
+                  ))}
+                  <View style={[styles.insightRow, { paddingTop: 8, borderTopWidth: 1, borderTopColor: AdminColors.border }]}>
+                    <Ionicons name="time-outline" size={16} color={AdminColors.textMuted} />
+                    <Text style={styles.insightText}>
+                      Last sync: {lastSync ? lastSync.toLocaleString() : "—"} {syncing ? "(syncing…)" : ui.autoSync ? "(auto refresh every 15s)" : "(auto refresh paused)"}.
+                    </Text>
+                  </View>
+                </View>
               </Card>
             )}
 
