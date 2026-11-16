@@ -133,7 +133,33 @@ export default function AdminHealthScreen() {
     return mb >= 1024 ? `${(mb / 1024).toFixed(2)} GB` : `${mb.toFixed(2)} MB`;
   };
   const signOut = async () => { setSettingsOpen(false); try { const t = await getAdminToken(); if (t) await logoutAdmin(t); else await clearAdminToken(); } catch { await clearAdminToken(); } router.replace("/"); };
-  const exportReport = async () => { try { await Share.share({ message: health ? JSON.stringify({ fetchedAt: new Date().toISOString(), health }, null, 2) : "No health data", title: "System Health Report" }); } catch { Alert.alert("Export unavailable", "Could not share report."); } };
+  const exportReport = async () => {
+    try {
+      const { getAdminId } = await import("../services/adminSession");
+      const { requireSensitiveActionAuth } = await import("../services/adminSensitiveAuth");
+      const hint = await getAdminId();
+      const ok = await requireSensitiveActionAuth({ adminIdHint: hint });
+      if (!ok) {
+        Alert.alert("Verification required", "Sensitive export was cancelled or verification failed.");
+        return;
+      }
+      const payload = health
+        ? {
+            fetchedAt: new Date().toISOString(),
+            health: {
+              ...health,
+              subscriptions: (health.subscriptions || []).map((s) => ({
+                ...s,
+                note: s.note ? "[redacted]" : s.note,
+              })),
+            },
+          }
+        : { fetchedAt: new Date().toISOString(), health: null };
+      await Share.share({ message: JSON.stringify(payload, null, 2), title: "System Health Report" });
+    } catch {
+      Alert.alert("Export unavailable", "Could not share report.");
+    }
+  };
   const gap = ui.compactMode ? 10 : 14;
 
   return (

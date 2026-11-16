@@ -1,6 +1,7 @@
 ﻿"use strict";
 
 const db = require("../config/db");
+const { logAuthenticated, EVENT_TYPE } = require("../services/auditService");
 
 function hasColumn(rows, col) {
   return rows.some((r) => String(r.column_name) === col);
@@ -107,6 +108,22 @@ exports.updateUserStatus = async (req, res) => {
     });
   }
 
+  const actorId = req.user?.userId;
+  if (actorId != null && String(actorId) === String(id)) {
+    await logAuthenticated({
+      req,
+      userId: actorId,
+      eventType: EVENT_TYPE.ADMIN_USER_STATUS_UPDATE,
+      outcome: "blocked",
+      resource: { type: "user", id },
+      details: { reason: "self_status_change_blocked", requestedStatus: status },
+    });
+    return res.status(400).json({
+      error: "You cannot change your own account status.",
+      code: "ADMIN_SELF_STATUS_CHANGE_BLOCKED",
+    });
+  }
+
   try {
     const cols = await getTableColumns("users");
     if (!hasColumn(cols, "status")) {
@@ -115,6 +132,15 @@ exports.updateUserStatus = async (req, res) => {
         code: "USER_STATUS_UNSUPPORTED",
       });
     }
+
+    const existing = await db.query(
+      `SELECT id, email, status FROM public.users WHERE id = $1`,
+      [id],
+    );
+    if (existing.rowCount === 0) {
+      return res.status(404).json({ error: "User not found.", code: "USER_NOT_FOUND" });
+    }
+    const previousStatus = safeStatus(existing.rows[0].status);
 
     const updatedAt = hasColumn(cols, "updated_at") ? ", updated_at = NOW()" : "";
     const result = await db.query(
@@ -125,13 +151,27 @@ exports.updateUserStatus = async (req, res) => {
       [status, id],
     );
 
-    if (result.rowCount === 0) {
-      return res.status(404).json({ error: "User not found.", code: "USER_NOT_FOUND" });
-    }
+    const user = { ...result.rows[0], status: safeStatus(result.rows[0].status) };
+    await logAuthenticated({
+      req,
+      userId: user.id,
+      eventType: EVENT_TYPE.ADMIN_USER_STATUS_UPDATE,
+      outcome: "success",
+      resource: { type: "user", id: user.id },
+      details: { previousStatus, newStatus: user.status },
+    });
 
-    return res.json({ status: "ok", user: { ...result.rows[0], status: safeStatus(result.rows[0].status) } });
+    return res.json({ status: "ok", user });
   } catch (err) {
     console.error("Admin update user status failed:", err?.message || err);
+    await logAuthenticated({
+      req,
+      userId: id,
+      eventType: EVENT_TYPE.ADMIN_USER_STATUS_UPDATE,
+      outcome: "failure",
+      resource: { type: "user", id },
+      details: { requestedStatus: status, error: err?.message || "unknown" },
+    });
     return res.status(500).json({
       error: "Unable to update user status.",
       code: "ADMIN_USER_UPDATE_FAILED",

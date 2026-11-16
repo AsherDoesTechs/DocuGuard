@@ -137,7 +137,6 @@ export default function AdminUsersScreen() {
   const handleToggleStatus = (user: AdminUser) => {
     const status = String(user.status || "active");
     const nextStatus = status === "active" ? "suspended" : "active";
-    const label = ui.privacyMode ? "Selected account" : user.email || user.name || "User";
     setConfirmState({ user, nextStatus });
   };
 
@@ -146,6 +145,14 @@ export default function AdminUsersScreen() {
     setConfirmState(null);
     if (!pending) return;
     const { user, nextStatus } = pending;
+
+    const hint = await getAdminId();
+    const verified = await requireSensitiveActionAuth({ adminIdHint: hint });
+    if (!verified) {
+      toast.error("Verification required. Action cancelled.");
+      return;
+    }
+
     setUpdatingId(user.id);
     try {
       const token = await getAdminToken();

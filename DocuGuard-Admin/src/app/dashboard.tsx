@@ -162,6 +162,14 @@ export default function AdminDashboardScreen() {
   };
   const exportSummary = async () => {
     try {
+      const { getAdminId } = await import("../services/adminSession");
+      const { requireSensitiveActionAuth } = await import("../services/adminSensitiveAuth");
+      const hint = await getAdminId();
+      const ok = await requireSensitiveActionAuth({ adminIdHint: hint });
+      if (!ok) {
+        toast.error("Verification required. Export cancelled.");
+        return;
+      }
       const subs = (health?.subscriptions || [])
         .map((s) => `${s.name}: ${s.status}${s.expiresAt ? ` (expires ${s.expiresAt})` : ""}`)
         .join(" | ");

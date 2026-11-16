@@ -49,7 +49,39 @@ export default function AdminLogsScreen() {
   }, [logs]);
 
   const filteredLogs = useMemo(() => { const q = searchQuery.trim().toLowerCase(); return logs.filter((l) => { const sev = sevOf(l); if (filter !== "all" && sev !== filter) return false; if (!q) return true; const details = typeof l.details === "string" ? l.details : JSON.stringify(l.details || ""); return [l.action,l.actor,details,l.ipAddress,l.id].some((v)=>String(v??"").toLowerCase().includes(q)); }); }, [logs, searchQuery, filter]);
-  const exportLogs = async () => { try { const rows = [["id","action","actor","severity","ipAddress","timestamp","details"].join(",")]; filteredLogs.forEach((l)=>{ const details=typeof l.details==="string"?l.details:JSON.stringify(l.details||{}); rows.push([l.id,l.action||"", ui.privacyMode?maskActor(l.actor): (l.actor||""), sevOf(l), ui.privacyMode?maskIp(l.ipAddress): (l.ipAddress||""), l.timestamp||"", ui.privacyMode?"[redacted]":details].map((v)=>`"${String(v??"").replace(/"/g,'""')}"`).join(",")); }); await Share.share({ message: rows.join("\n"), title: "Security Logs Export" }); } catch { Alert.alert("Export unavailable", "Could not share export."); } };
+  const exportLogs = async () => {
+    try {
+      const { getAdminId } = await import("../services/adminSession");
+      const { requireSensitiveActionAuth } = await import("../services/adminSensitiveAuth");
+      const hint = await getAdminId();
+      const ok = await requireSensitiveActionAuth({ adminIdHint: hint });
+      if (!ok) {
+        Alert.alert("Verification required", "Sensitive export was cancelled or verification failed.");
+        return;
+      }
+      const rows = [["id", "action", "actor", "severity", "ipAddress", "timestamp", "details"].join(",")];
+      filteredLogs.forEach((l) => {
+        const detailsRaw = typeof l.details === "string" ? l.details : JSON.stringify(l.details || {});
+        const redactedDetails = "[redacted]";
+        rows.push(
+          [
+            l.id,
+            l.action || "",
+            maskActor(l.actor),
+            sevOf(l),
+            maskIp(l.ipAddress),
+            l.timestamp || "",
+            redactedDetails,
+          ]
+            .map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`)
+            .join(","),
+        );
+      });
+      await Share.share({ message: rows.join("\n"), title: "Security Logs Export" });
+    } catch {
+      Alert.alert("Export unavailable", "Could not share export.");
+    }
+  };
   const signOut = async () => { setSettingsOpen(false); try { const t = await getAdminToken(); if (t) await logoutAdmin(t); else await clearAdminToken(); } catch { await clearAdminToken(); } router.replace("/"); };
   const gap = ui.compactMode ? 10 : 14;
 
