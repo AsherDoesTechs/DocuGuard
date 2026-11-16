@@ -135,6 +135,32 @@ const statusMatches = (
   return status === selected;
 };
 
+const syncStatusMatches = (
+  doc: LocalDocument,
+  selectedSyncStatus: string,
+): boolean => {
+  if (selectedSyncStatus === "all") return true;
+
+  const syncStatus = normalizeFilterValue(doc.syncStatus);
+  const needsSync = doc.needsSync === true;
+  const selected = normalizeFilterValue(selectedSyncStatus);
+
+  if (selected === "synced") {
+    return syncStatus === "synced" && !needsSync;
+  }
+  if (selected === "pending" || selected === "waiting to sync") {
+    return needsSync || syncStatus === "pending";
+  }
+  if (selected === "failed") {
+    return syncStatus === "failed";
+  }
+  if (selected === "local" || selected === "stored locally") {
+    return !syncStatus && !needsSync;
+  }
+
+  return syncStatus === selected;
+};
+
 interface DocumentItemProps {
   doc: LocalDocument;
   COLORS: any;
@@ -508,11 +534,13 @@ export default function DocumentsScreen() {
   const [search, setSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [selectedStatus, setSelectedStatus] = useState<string>("all");
+  const [selectedSyncStatus, setSelectedSyncStatus] = useState<string>("all");
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [allTags, setAllTags] = useState<string[]>([]);
 
   const [categoryModalVisible, setCategoryModalVisible] = useState(false);
   const [statusModalVisible, setStatusModalVisible] = useState(false);
+  const [syncStatusModalVisible, setSyncStatusModalVisible] = useState(false);
   const [ocrSearchIds, setOcrSearchIds] = useState<Set<number> | null>(null);
   const [viewMode, setViewMode] = useState<"active" | "archived" | "trash">("active");
 
@@ -693,6 +721,17 @@ export default function DocumentsScreen() {
     [],
   );
 
+  const syncStatusFilters = useMemo(
+    () => [
+      { value: "all", label: "All Sync" },
+      { value: "synced", label: "Synced" },
+      { value: "pending", label: "Waiting to sync" },
+      { value: "failed", label: "Failed Sync" },
+      { value: "local", label: "Stored locally" },
+    ],
+    [],
+  );
+
   useEffect(() => {
     const q = search.trim();
     if (q.length < 2) { setOcrSearchIds(null); return; }
@@ -727,17 +766,19 @@ export default function DocumentsScreen() {
         (ocrSearchIds ? ocrSearchIds.has(Number(doc.id)) : false);
       const matchesCategory = categoryMatches(doc.category, selectedCategory, doc.title);
       const matchesStatus = statusMatches(doc.expiryDate, selectedStatus);
+      const matchesSyncStatus = syncStatusMatches(doc, selectedSyncStatus);
       const matchesTags =
         selectedTagSet.length === 0 ||
         selectedTagSet.every((tag) => tags.includes(tag));
-      return matchesSearch && matchesCategory && matchesStatus && matchesTags;
+      return matchesSearch && matchesCategory && matchesStatus && matchesSyncStatus && matchesTags;
     });
-  }, [documents, archivedDocs, trashedDocs, viewMode, search, selectedCategory, selectedStatus, selectedTags, ocrSearchIds]);
+  }, [documents, archivedDocs, trashedDocs, viewMode, search, selectedCategory, selectedStatus, selectedSyncStatus, selectedTags, ocrSearchIds]);
 
   const hasActiveFilters =
     search.trim().length > 0 ||
     selectedCategory !== "all" ||
     selectedStatus !== "all" ||
+    selectedSyncStatus !== "all" ||
     selectedTags.length > 0;
 
   const pendingSyncCount = documents.filter((doc) => doc.needsSync).length;
@@ -758,10 +799,15 @@ export default function DocumentsScreen() {
     statusFilters.find((item) => item.value === selectedStatus)?.label ||
     "All Statuses";
 
+  const currentSyncStatusLabel =
+    syncStatusFilters.find((item) => item.value === selectedSyncStatus)?.label ||
+    "All Sync";
+
   const clearFilters = useCallback(() => {
     setSearch("");
     setSelectedCategory("all");
     setSelectedStatus("all");
+    setSelectedSyncStatus("all");
     setSelectedTags([]);
   }, []);
 
@@ -938,6 +984,31 @@ export default function DocumentsScreen() {
 
               <Text style={styles.dropdownButtonText} numberOfLines={1}>
                 {currentStatusLabel}
+              </Text>
+            </View>
+
+            <Ionicons
+              name="chevron-down"
+              size={16}
+              color={COLORS.textSecondary}
+            />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel={`Sync status filter: ${currentSyncStatusLabel}`}
+            accessibilityState={{
+              selected: selectedSyncStatus !== "all",
+            }}
+            style={styles.dropdownButton}
+            onPress={() => setSyncStatusModalVisible(true)}
+            activeOpacity={0.75}
+          >
+            <View style={styles.dropdownButtonContent}>
+              <Ionicons name="cloud-outline" size={16} color={COLORS.primary} />
+
+              <Text style={styles.dropdownButtonText} numberOfLines={1}>
+                {currentSyncStatusLabel}
               </Text>
             </View>
 
@@ -1182,6 +1253,81 @@ export default function DocumentsScreen() {
                     onPress={() => {
                       setSelectedStatus(item.value);
                       setStatusModalVisible(false);
+                    }}
+                  >
+                    <Text
+                      style={[
+                        styles.modalItemText,
+                        isSelected && styles.modalItemTextSelected,
+                      ]}
+                    >
+                      {item.label}
+                    </Text>
+
+                    {isSelected && (
+                      <Ionicons
+                        name="checkmark-circle"
+                        size={20}
+                        color={COLORS.primary}
+                      />
+                    )}
+                  </TouchableOpacity>
+                );
+              }}
+            />
+          </View>
+        </View>
+      </Modal>
+
+      {/* Sync Status selection modal */}
+      <Modal
+        visible={syncStatusModalVisible}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={() => setSyncStatusModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity
+            style={styles.modalBackdrop}
+            activeOpacity={1}
+            accessibilityRole="button"
+            accessibilityLabel="Close sync status selection"
+            onPress={() => setSyncStatusModalVisible(false)}
+          />
+
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Select Sync Status</Text>
+
+              <TouchableOpacity
+                accessibilityRole="button"
+                accessibilityLabel="Close"
+                onPress={() => setSyncStatusModalVisible(false)}
+                style={styles.modalCloseButton}
+              >
+                <Ionicons name="close" size={22} color={COLORS.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <FlatList
+              data={syncStatusFilters}
+              keyExtractor={(item) => item.value}
+              keyboardShouldPersistTaps="handled"
+              renderItem={({ item }) => {
+                const isSelected = selectedSyncStatus === item.value;
+
+                return (
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: isSelected }}
+                    style={[
+                      styles.modalItem,
+                      isSelected && styles.modalItemSelected,
+                    ]}
+                    onPress={() => {
+                      setSelectedSyncStatus(item.value);
+                      setSyncStatusModalVisible(false);
                     }}
                   >
                     <Text
