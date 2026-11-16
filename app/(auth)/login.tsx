@@ -397,8 +397,15 @@ export default function LoginScreen() {
         setTwoFactorError(message);
         feedbackService.warning(message);
       } else if (!err?.response) {
-        const message =
-          "Network error. Check your internet connection and try again.";
+        const isNetworkError =
+          err?.isAxiosError ||
+          err?.code === "ERR_NETWORK" ||
+          err?.message === "Network Error";
+        const message = isNetworkError
+          ? "Network error. Check your internet connection and try again."
+          : err instanceof Error && err.message
+            ? err.message
+            : "Unable to sign in. Please try again.";
         setTwoFactorError(message);
         feedbackService.error(message);
       } else {
@@ -474,8 +481,15 @@ export default function LoginScreen() {
           "Unable to sign in. Please check your credentials and try again.";
 
         if (!err?.response) {
-          errorMessage =
-            "Network error. Please check your internet connection and try again.";
+          const isNetworkError =
+            err?.isAxiosError ||
+            err?.code === "ERR_NETWORK" ||
+            err?.message === "Network Error";
+          errorMessage = isNetworkError
+            ? "Network error. Please check your internet connection and try again."
+            : err instanceof Error && err.message
+              ? err.message
+              : "Unable to sign in. Please try again.";
         } else if (
           status === 429 ||
           err?.response?.data?.code === "AUTH_RATE_LIMIT_EXCEEDED"
