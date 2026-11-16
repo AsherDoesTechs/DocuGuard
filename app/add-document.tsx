@@ -34,7 +34,7 @@ import { recordAuditLog } from "@/services/auditService";
 import { useColors } from "@/context/ThemeContext";
 import { DocumentScanner as DocumentScannerComponent, TagsInput } from "@/components/ui";
 import { verifyDocumentWithOrchestrator } from "@/services/documentVerificationClient";
-import { extractDocumentData } from "../utils/ocr";
+import { extractDocumentData, validateOcrImageFile } from "../utils/ocr";
 import { LocalDocument } from "../services/localDatabase";
 import { saveDocumentToVault } from "@/services/documentSaveService";
 import { DocumentSaveError } from "@/shared/sync/documentSaveCore";
@@ -1162,6 +1162,13 @@ export default function AddDocumentScreen() {
         feedbackService.warning(
           "Only photos of printed/physical documents are allowed. Please scan with the camera.",
         );
+        return;
+      }
+
+      // Validate image format for OCR (only JPEG supported)
+      const ocrValidation = validateOcrImageFile(asset.name || "image.jpg", assetMime || "image/jpeg");
+      if (!ocrValidation.ok) {
+        feedbackService.warning(ocrValidation.error || "Unsupported image format");
         return;
       }
 

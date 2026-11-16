@@ -51,6 +51,20 @@ function getMimeType(uri: string, providedType?: string, providedName?: string):
   return "image/jpeg";
 }
 
+export function validateOcrImageFile(fileName: string, mimeType: string): { ok: boolean; error?: string } {
+  // Only JPEG is reliably supported by the OCR AI model
+  const allowedTypes = ["image/jpeg", "image/jpg"];
+  const normalizedMime = mimeType.toLowerCase();
+  
+  if (!allowedTypes.includes(normalizedMime)) {
+    return {
+      ok: false,
+      error: `Unsupported image format: ${mimeType}. Only JPEG images are supported for OCR processing. Please convert your image to JPEG format.`,
+    };
+  }
+  return { ok: true };
+}
+
 function normalizeExtractedData(data: any): ExtractedDocumentData {
   return {
     title: data?.title || "",
@@ -79,6 +93,12 @@ export async function extractDocumentData(
 
   const fileName = getFileName(imageUri, options?.fileName);
   const fileType = getMimeType(imageUri, options?.mimeType, fileName);
+
+  // Validate image format before uploading
+  const validation = validateOcrImageFile(fileName, fileType);
+  if (!validation.ok) {
+    throw new Error(validation.error);
+  }
 
   let uploadedKey: string | null = null;
   let draftDocumentId: number | null = null;
