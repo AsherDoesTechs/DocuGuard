@@ -10,6 +10,7 @@ import {
   Platform,
   UIManager,
   DeviceEventEmitter,
+  Alert,
 } from "react-native";
 import { LayoutAnimation } from "react-native";
 import Animated, { FadeInDown } from "react-native-reanimated";
@@ -346,7 +347,14 @@ const DocumentItem = React.memo(
                         accessibilityLabel={`Archive ${doc.title || "document"}`}
                         onPress={(e) => {
                           e.stopPropagation?.();
-                          onArchiveToggle?.(localId, true);
+                          Alert.alert(
+                            "Archive Document",
+                            `Archive "${doc.title || "this document"}"?`,
+                            [
+                              { text: "Cancel", style: "cancel" },
+                              { text: "Archive", onPress: () => onArchiveToggle?.(localId, true) },
+                            ],
+                          );
                         }}
                         style={{
                           flexDirection: "row",
@@ -370,7 +378,14 @@ const DocumentItem = React.memo(
                         accessibilityLabel={`Move ${doc.title || "document"} to trash`}
                         onPress={(e) => {
                           e.stopPropagation?.();
-                          onMoveToTrash?.(localId);
+                          Alert.alert(
+                            "Move to Trash",
+                            `Move "${doc.title || "this document"}" to trash?`,
+                            [
+                              { text: "Cancel", style: "cancel" },
+                              { text: "Trash", style: "destructive", onPress: () => onMoveToTrash?.(localId) },
+                            ],
+                          );
                         }}
                         style={{
                           flexDirection: "row",
@@ -398,7 +413,14 @@ const DocumentItem = React.memo(
                         accessibilityLabel={`Unarchive ${doc.title || "document"}`}
                         onPress={(e) => {
                           e.stopPropagation?.();
-                          onArchiveToggle?.(localId, false);
+                          Alert.alert(
+                            "Unarchive Document",
+                            `Unarchive "${doc.title || "this document"}"?`,
+                            [
+                              { text: "Cancel", style: "cancel" },
+                              { text: "Unarchive", onPress: () => onArchiveToggle?.(localId, false) },
+                            ],
+                          );
                         }}
                         style={{
                           flexDirection: "row",
@@ -422,7 +444,14 @@ const DocumentItem = React.memo(
                         accessibilityLabel={`Move ${doc.title || "document"} to trash`}
                         onPress={(e) => {
                           e.stopPropagation?.();
-                          onMoveToTrash?.(localId);
+                          Alert.alert(
+                            "Move to Trash",
+                            `Move "${doc.title || "this document"}" to trash?`,
+                            [
+                              { text: "Cancel", style: "cancel" },
+                              { text: "Trash", style: "destructive", onPress: () => onMoveToTrash?.(localId) },
+                            ],
+                          );
                         }}
                         style={{
                           flexDirection: "row",
@@ -450,7 +479,14 @@ const DocumentItem = React.memo(
                         accessibilityLabel={`Restore ${doc.title || "document"}`}
                         onPress={(e) => {
                           e.stopPropagation?.();
-                          onRestore?.(localId);
+                          Alert.alert(
+                            "Restore Document",
+                            `Restore "${doc.title || "this document"}" from trash?`,
+                            [
+                              { text: "Cancel", style: "cancel" },
+                              { text: "Restore", onPress: () => onRestore?.(localId) },
+                            ],
+                          );
                         }}
                         style={{
                           flexDirection: "row",
@@ -474,7 +510,14 @@ const DocumentItem = React.memo(
                         accessibilityLabel={`Delete ${doc.title || "document"} permanently`}
                         onPress={(e) => {
                           e.stopPropagation?.();
-                          onPermanentDelete?.(localId);
+                          Alert.alert(
+                            "Delete Permanently",
+                            `Permanently delete "${doc.title || "this document"}"? This cannot be undone.`,
+                            [
+                              { text: "Cancel", style: "cancel" },
+                              { text: "Delete", style: "destructive", onPress: () => onPermanentDelete?.(localId) },
+                            ],
+                          );
                         }}
                         style={{
                           flexDirection: "row",
