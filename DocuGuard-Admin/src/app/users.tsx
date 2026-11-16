@@ -31,7 +31,7 @@ import {
   FadeInView,
 } from "../components/ui";
 
-type Filter = "all" | "active" | "suspended" | "admin";
+type Filter = "all" | "active" | "suspended";
 type SortKey = "recent" | "name" | "email";
 const REFRESH_MS = 15000;
 
@@ -102,11 +102,9 @@ export default function AdminUsersScreen() {
   const analytics = useMemo(() => {
     const active = users.filter((u) => String(u.status || "active") === "active").length;
     const suspended = users.filter((u) => String(u.status) === "suspended").length;
-    const admins = users.filter((u) => String(u.role) === "admin").length;
     return {
       active,
       suspended,
-      admins,
       prediction:
         suspended > 0
           ? `${suspended} suspended account${suspended > 1 ? "s" : ""} to review.`
@@ -118,10 +116,8 @@ export default function AdminUsersScreen() {
     const q = searchQuery.trim().toLowerCase();
     let list = users.filter((u) => {
       const status = String(u.status || "active");
-      const role = String(u.role || "user");
       if (filter === "active" && status !== "active") return false;
       if (filter === "suspended" && status !== "suspended") return false;
-      if (filter === "admin" && role !== "admin") return false;
       if (!q) return true;
       return [u.email, u.name, u.role, u.status, u.id].some((v) => String(v ?? "").toLowerCase().includes(q));
     });
@@ -253,7 +249,6 @@ export default function AdminUsersScreen() {
     { key: "all", label: "All" },
     { key: "active", label: "Active" },
     { key: "suspended", label: "Suspended" },
-    { key: "admin", label: "Admins" },
   ];
   const gap = ui.compactMode ? 10 : 14;
 
@@ -353,16 +348,14 @@ export default function AdminUsersScreen() {
                 </View>
                 {ui.showInsights && (
                   <Card title="Overview">
-                    <BreakdownList
-                      segments={[
-                        { label: "Active", value: analytics.active, color: AdminColors.success },
-                        { label: "Suspended", value: analytics.suspended, color: AdminColors.danger },
-                        { label: "Admins", value: analytics.admins, color: AdminColors.primary },
-                      ]}
-                    />
-                    <View style={styles.insight}>
-                      <Ionicons name="sparkles-outline" size={14} color={AdminColors.primary} />
-                      <Text style={styles.insightText}>{analytics.prediction}</Text>
+                    <Text style={styles.muted}>{analytics.prediction}</Text>
+                    <View style={{ marginTop: 10 }}>
+                      <BreakdownList
+                        segments={[
+                          { label: "Active", value: analytics.active, color: AdminColors.success },
+                          { label: "Suspended", value: analytics.suspended, color: AdminColors.danger },
+                        ]}
+                      />
                     </View>
                   </Card>
                 )}
