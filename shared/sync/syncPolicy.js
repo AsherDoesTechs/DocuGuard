@@ -459,6 +459,11 @@ function buildDocumentSyncPayload(doc, options) {
     payload.baseUpdatedAt = baseUpdatedAt;
   }
 
+  // Force overwrite server changes (skip revision check)
+  if (options && options.force === true) {
+    payload.force = true;
+  }
+
   return payload;
 }
 

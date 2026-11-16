@@ -270,25 +270,26 @@ export const documentUpdateSchema = z
 
 export const documentSyncSchema = z
   .object({
-  title: z.string().min(1).max(100).trim(),
-  category: categorySchema,
-  issuer: z.string().max(150).trim().optional().default(""),
-  documentNumber: z.string().min(1).max(50).transform((val) => val.toUpperCase()),
-  issueDate: nullableDateStringSchema,
-  expiryDate: nullableDateStringSchema,
-  notes: z.string().max(1000).trim().optional(),
-  enableAlerts: z.boolean().default(true),
-  status: z.enum(["active", "verified", "expired"]).default("active"),
-  s3Key: z.string().optional().nullable(),
-  fileUrl: fileUrlSchema,
-  fileType: z.string().optional().nullable(),
-  processingStatus: z.enum(["pending", "uploading", "processing", "completed", "failed"]).default("completed"),
-  // Unset means unassessed. See the note on documentShape.
-  riskScore: z.number().min(0).max(100).nullish().transform((val) => (val === null ? undefined : val)),
-  riskLevel: z.enum(["Low", "Medium", "High"]).nullish().transform((val) => (val === null ? undefined : val)),
-  cloudId: z.number().int().positive().optional(),
-  baseUpdatedAt: z.string().min(1).max(64).optional(),
-})
+    title: z.string().min(1).max(100).trim(),
+    category: categorySchema,
+    issuer: z.string().max(150).trim().optional().default(""),
+    documentNumber: z.string().min(1).max(50).transform((val) => val.toUpperCase()),
+    issueDate: nullableDateStringSchema,
+    expiryDate: nullableDateStringSchema,
+    notes: z.string().max(1000).trim().optional(),
+    enableAlerts: z.boolean().default(true),
+    status: z.enum(["active", "verified", "expired"]).default("active"),
+    s3Key: z.string().optional().nullable(),
+    fileUrl: fileUrlSchema,
+    fileType: z.string().optional().nullable(),
+    processingStatus: z.enum(["pending", "uploading", "processing", "completed", "failed"]).default("completed"),
+    // Unset means unassessed. See the note on documentShape.
+    riskScore: z.number().min(0).max(100).nullish().transform((val) => (val === null ? undefined : val)),
+    riskLevel: z.enum(["Low", "Medium", "High"]).nullish().transform((val) => (val === null ? undefined : val)),
+    cloudId: z.number().int().positive().optional(),
+    baseUpdatedAt: z.string().min(1).max(64).optional(),
+    force: z.boolean().optional().default(false),
+  })
   .refine(
     (data) => {
       if (!data.issueDate || !data.expiryDate) return true;

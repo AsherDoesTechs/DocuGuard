@@ -157,6 +157,73 @@ export async function syncToCloud(
   return syncMutex.run(() => performSync(options));
 }
 
+/**
+ * Force syncs a specific document, overwriting any server changes.
+ *
+ * This bypasses the revision check on the server, allowing the local copy
+ * to overwrite the server version. Use with caution - this will discard
+ * any changes made on other devices.
+ */
+export async function forceSyncDocument(
+  documentId: number,
+): Promise<{ success: boolean; message: string }> {
+  return syncMutex.run(async () => {
+    const token = await SecureStore.getItemAsync("userToken");
+    if (!token) {
+      return {
+        success: false,
+        message: "No authentication token. Please sign in first.",
+      };
+    }
+
+    const docs = await getUnsyncedDocuments();
+    const doc = docs.find((d) => d.id === documentId);
+
+    if (!doc) {
+      return {
+        success: false,
+        message: "Document not found in local queue.",
+      };
+    }
+
+    try {
+      // Build payload with force: true
+      const { buildDocumentSyncPayload } = await import(
+        "@/shared/sync/syncPolicy"
+      );
+      const { formatCategoryForBackend } = await import("@/utils/categories");
+      const { normalizeCloudId } = await import("@/shared/sync/cloudId");
+
+      const payload = buildDocumentSyncPayload(doc, {
+        formatCategory: formatCategoryForBackend,
+        force: true,
+      });
+
+      const result = await api.documents.syncDocument(payload);
+
+      // Update local document as synced
+      const cloudId = result?.document?.id ?? result?.id ?? null;
+      const serverUpdatedAt = result?.document?.updatedAt ?? result?.updated_at ?? null;
+
+      const { markDocumentSyncedWithCloud } = await import(
+        "@/services/localDatabase"
+      );
+      await markDocumentSyncedWithCloud(doc.id!, cloudId, serverUpdatedAt);
+
+      await logDocumentAction(doc.id!, "synced", doc);
+
+      return {
+        success: true,
+        message: `"${doc.title}" has been force-synced to the cloud. Server changes were overwritten.`,
+      };
+    } catch (error: any) {
+      const message =
+        error?.response?.data?.error || error.message || "Force sync failed";
+      return { success: false, message };
+    }
+  });
+}
+
 async function performSync(options: SyncToCloudOptions): Promise<SyncResult> {
   const {
     force = false,

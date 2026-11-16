@@ -14,7 +14,7 @@ import { Button, Card } from "@/components/ui";
 import { useTheme } from "@/context/ThemeContext";
 import * as SecureStore from "expo-secure-store";
 
-import { syncToCloud } from "../../services/syncService";
+import { syncToCloud, forceSyncDocument, SyncConflict } from "../../services/syncService";
 import {
   getUnsyncedDocuments,
   getUnsyncedReminders,
@@ -24,6 +24,7 @@ import {
   useFeedbackService,
 } from "../../services/feedbackService";
 import { LocalDocument, LocalReminder } from "@/types/offline";
+import { AlertModal } from "../../components/ui";
 
 type SyncPalette = ReturnType<typeof useTheme>["colors"];
 
@@ -78,6 +79,11 @@ export default function SyncScreen() {
   const [lastSync, setLastSync] = useState<string | null>(null);
   const [pendingDocs, setPendingDocs] = useState<LocalDocument[]>([]);
   const [pendingReminders, setPendingReminders] = useState<LocalReminder[]>([]);
+  const [conflicts, setConflicts] = useState<SyncConflict[]>([]);
+  const [forceSyncModal, setForceSyncModal] = useState<{
+    visible: boolean;
+    conflict: SyncConflict | null;
+  }>({ visible: false, conflict: null });
 
   const stylesForTheme = useMemo(() => createStyles(colors), [colors]);
 
@@ -185,6 +191,7 @@ export default function SyncScreen() {
            * about which version wins is theirs.
            */
           const conflicts = result.conflicts ?? [];
+          setConflicts(conflicts);
 
           const conflictText = conflicts.length
             ? `\n\nChanged on another device:\n${conflicts
@@ -244,6 +251,48 @@ export default function SyncScreen() {
       });
     }
   }, [fetchPending, router, syncing, totalPending]);
+
+  const handleForceSync = useCallback(async (conflict: SyncConflict) => {
+    setForceSyncModal({ visible: true, conflict });
+  }, []);
+
+  const confirmForceSync = useCallback(async () => {
+    const { conflict } = forceSyncModal;
+    if (!conflict) return;
+
+    setSyncing(true);
+    try {
+      const result = await forceSyncDocument(conflict.documentId);
+      if (result.success) {
+        await feedbackService.success(result.message);
+        await fetchPending();
+        setConflicts([]);
+      } else {
+        await feedbackService.alert({
+          title: "Force Sync Failed",
+          message: result.message,
+          type: "error",
+        });
+      }
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : "Force sync failed unexpectedly.";
+      await feedbackService.alert({
+        title: "Force Sync Failed",
+        message,
+        type: "error",
+      });
+    } finally {
+      setSyncing(false);
+      setForceSyncModal({ visible: false, conflict: null });
+    }
+  }, [forceSyncModal, fetchPending]);
+
+  const cancelForceSync = useCallback(() => {
+    setForceSyncModal({ visible: false, conflict: null });
+  }, []);
 
   const formattedLastSync = useMemo(() => {
     if (!lastSync) return "Never synced";
@@ -470,6 +519,77 @@ export default function SyncScreen() {
               </View>
             )}
 
+            {/* Conflicts */}
+            {conflicts.length > 0 && (
+              <View
+                style={[
+                  stylesForTheme.pendingGroup,
+                  pendingDocs.length > 0 && stylesForTheme.secondPendingGroup,
+                ]}
+              >
+                <View style={stylesForTheme.groupHeader}>
+                  <View style={stylesForTheme.groupTitleRow}>
+                    <Ionicons
+                      name="alert-circle-outline"
+                      size={18}
+                      color={colors.error}
+                    />
+                    <Text style={stylesForTheme.groupTitle}>Conflicts</Text>
+                  </View>
+
+                  <Text style={stylesForTheme.groupCount}>
+                    {conflicts.length}
+                  </Text>
+                </View>
+
+                {conflicts.map((conflict) => (
+                  <View
+                    key={conflict.documentId}
+                    style={[
+                      stylesForTheme.pendingItem,
+                      { borderBottomColor: colors.border },
+                    ]}
+                  >
+                    <View
+                      style={[
+                        stylesForTheme.pendingIconContainer,
+                        { backgroundColor: `${colors.error}14` },
+                      ]}
+                    >
+                      <Ionicons
+                        name="alert-circle-outline"
+                        size={19}
+                        color={colors.error}
+                      />
+                    </View>
+
+                    <View style={stylesForTheme.conflictItemContent}>
+                      <Text
+                        style={[stylesForTheme.pendingItemName, { color: colors.text }]}
+                        numberOfLines={2}
+                      >
+                        {conflict.title?.trim() || "Untitled"}
+                      </Text>
+                      {conflict.serverUpdatedAt && (
+                        <Text style={stylesForTheme.conflictServerTime}>
+                          Server version:{" "}
+                          {new Date(conflict.serverUpdatedAt).toLocaleString()}
+                        </Text>
+                      )}
+                    </View>
+
+                    <Button
+                      title="Force Sync"
+                      onPress={() => handleForceSync(conflict)}
+                      variant="outline"
+                      style={stylesForTheme.forceSyncButton}
+                      disabled={syncing}
+                    />
+                  </View>
+                ))}
+              </View>
+            )}
+
             {/* Reminders */}
             {pendingReminders.length > 0 && (
               <View
@@ -555,6 +675,27 @@ export default function SyncScreen() {
           </View>
         </View>
       </ScrollView>
+
+      {/* Force Sync Confirmation Modal */}
+      <AlertModal
+        visible={forceSyncModal.visible}
+        title="Force Sync Document?"
+        message={
+          forceSyncModal.conflict
+            ? `This will overwrite the server version of "${forceSyncModal.conflict.title}" with your local copy. Any changes made on other devices will be lost.`
+            : "This will overwrite the server version with your local copy. Any changes made on other devices will be lost."
+        }
+        type="warning"
+        buttons={[
+          { text: "Cancel", style: "cancel", onPress: cancelForceSync },
+          {
+            text: "Force Sync",
+            style: "destructive",
+            onPress: confirmForceSync,
+          },
+        ]}
+        onDismiss={cancelForceSync}
+      />
     </SafeAreaView>
   );
 }
@@ -771,6 +912,19 @@ function createStyles(colors: SyncPalette) {
       fontSize: 13,
       fontWeight: "500",
       lineHeight: 18,
+    },
+    conflictItemContent: {
+      flex: 1,
+      minWidth: 0,
+    },
+    conflictServerTime: {
+      fontSize: 11,
+      color: colors.textSecondary,
+      marginTop: 2,
+    },
+    forceSyncButton: {
+      marginLeft: 8,
+      minWidth: 90,
     },
     emptyCard: {
       alignItems: "center",

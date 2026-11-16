@@ -1549,6 +1549,7 @@ exports.syncDocument = async (req, res) => {
     riskLevel,
     cloudId,
     baseUpdatedAt,
+    force,
   } = validation.data;
 
   debug("Documents", "Sync document request", { userId, title });
@@ -1634,6 +1635,12 @@ exports.syncDocument = async (req, res) => {
       // started, so two writes in the same transaction would leave the
       // revision unchanged and the second write would look like a write
       // against a row that had not moved.
+      //
+      // If force: true, skip the revision check and allow overwriting.
+      const revisionCondition = force
+        ? "TRUE"
+        : `($${18}::timestamptz IS NULL OR ${REVISION_MATCH_SQL})`;
+
       const updated = await db.query(
         `UPDATE documents
          SET title = $1, category = $2, issuer = $3, document_number = $4,
@@ -1642,7 +1649,7 @@ exports.syncDocument = async (req, res) => {
              processing_status = $13, risk_score = $14, risk_level = $15,
              updated_at = clock_timestamp()
          WHERE id = $16 AND user_id = $17
-           AND ($18::timestamptz IS NULL OR ${REVISION_MATCH_SQL})
+           AND ${revisionCondition}
          RETURNING id, title, category, issuer, document_number AS "documentNumber",
                    issue_date AS "issueDate", expiry_date AS "expiryDate", notes, status,
                    enable_alerts AS "enableAlerts", file_url AS "fileUrl", file_type AS "fileType",
@@ -1673,7 +1680,7 @@ exports.syncDocument = async (req, res) => {
       );
 
       // The revision guard matched no row: the server copy moved on.
-      if (updated.rows.length === 0) {
+      if (updated.rows.length === 0 && !force) {
         const current = await db.query(
           `SELECT ${UPDATED_AT_ISO_SQL} AS "updatedAt"
         FROM documents WHERE id = $1 AND user_id = $2 AND status <> 'deleted'`,
