@@ -6,6 +6,7 @@ import { router } from "expo-router";
 import { getAdminDocuments, getAdminSystemHealth, logoutAdmin, type VaultDocument } from "../services/adminApi";
 import { getAdminId, getAdminToken, clearAdminToken } from "../services/adminSession";
 import { requireSensitiveActionAuth } from "../services/adminSensitiveAuth";
+import { useAdminToast } from "../components/AdminToast";
 import { getAdminUiSettings, setAdminUiSettings, subscribeAdminUiSettings, loadAdminUiSettings, maskPerson } from "../services/adminSettings";
 import { AdminBottomNav } from "../components/AdminBottomNav";
 import { AdminSettingsModal } from "../components/AdminSettingsModal";
@@ -45,6 +46,7 @@ export default function AdminDocumentsScreen() {
   const [lastSync, setLastSync] = useState<Date | null>(null);
   const [realStorageBytes, setRealStorageBytes] = useState<number | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const toast = useAdminToast();
 
   useEffect(() => {
     loadAdminUiSettings();
@@ -173,8 +175,7 @@ export default function AdminDocumentsScreen() {
       const hint = await getAdminId();
       const ok = await requireSensitiveActionAuth({ adminIdHint: hint });
       if (!ok) {
-        if (typeof window !== "undefined") window.alert("Export cancelled: verification required.");
-        else Alert.alert("Verification required", "Biometric/identity confirmation failed or was cancelled.");
+        toast.error("Export cancelled: verification required.");
         return;
       }
       const rows = [["id", "title", "fileName", "category", "ownerEmail", "ocrStatus", "fileSize", "createdAt"].join(",")];
@@ -206,11 +207,13 @@ export default function AdminDocumentsScreen() {
         a.download = filename;
         a.click();
         URL.revokeObjectURL(url);
+        toast.success("Documents CSV downloaded.");
         return;
       }
       await Share.share({ message: csv, title: "Documents Export" });
+      toast.success("Documents export shared.");
     } catch {
-      Alert.alert("Export unavailable", "Could not share/export.");
+      toast.error("Could not export documents.");
     }
   };
 

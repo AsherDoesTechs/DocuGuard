@@ -6,6 +6,7 @@ import { router } from "expo-router";
 import { getAdminUsers, updateAdminUserStatus, logoutAdmin, type AdminUser } from "../services/adminApi";
 import { getAdminId, getAdminToken, clearAdminToken } from "../services/adminSession";
 import { requireSensitiveActionAuth } from "../services/adminSensitiveAuth";
+import { useAdminToast } from "../components/AdminToast";
 import {
   getAdminUiSettings,
   setAdminUiSettings,
@@ -50,6 +51,7 @@ export default function AdminUsersScreen() {
   const [lastSync, setLastSync] = useState<Date | null>(null);
   const [updatingId, setUpdatingId] = useState<string | number | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const toast = useAdminToast();
 
   useEffect(() => {
     loadAdminUiSettings();
@@ -145,8 +147,7 @@ export default function AdminUsersScreen() {
       try {
         const token = await getAdminToken();
         if (!token) {
-          if (typeof window !== "undefined") window.alert("Not signed in. Please sign in again.");
-          else Alert.alert("Not signed in", "Please sign in again.");
+          toast.error("Not signed in. Please sign in again.");
           router.replace("/");
           return;
         }
@@ -165,17 +166,11 @@ export default function AdminUsersScreen() {
             prev.map((u) => (String(u.id) === String(user.id) ? { ...u, status: nextStatus } : u))
           );
         }
-        if (typeof window !== "undefined") {
-          window.alert(`User ${nextStatus === "suspended" ? "suspended" : "activated"} successfully.`);
-        }
+        toast.success(`User ${nextStatus === "suspended" ? "suspended" : "activated"}.`);
       } catch (err: any) {
         const msg =
           err?.response?.data?.error || err?.data?.error || err?.message || "Could not update status.";
-        if (typeof window !== "undefined") {
-          window.alert(`Update failed: ${msg}`);
-        } else {
-          Alert.alert("Update failed", msg);
-        }
+        toast.error(msg);
       } finally {
         setUpdatingId(null);
       }
