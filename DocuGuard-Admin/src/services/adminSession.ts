@@ -3,6 +3,7 @@ import { Platform } from "react-native";
 
 const TOKEN_KEY = "docuguard.admin.session.token";
 const DEVICE_ID_KEY = "docuguard.admin.device.id";
+const ADMIN_ID_KEY = "docuguard.admin.id";
 
 const isWeb = Platform.OS === "web";
 let devAdminToken: string | null = null;
@@ -73,6 +74,19 @@ export async function getAdminDeviceId(): Promise<string | null> {
 
 export async function clearAdminDeviceId(): Promise<void> {
   await deleteItem(DEVICE_ID_KEY);
+}
+
+export async function saveAdminId(adminId: string): Promise<void> {
+  if (!adminId.trim()) return;
+  await setItem(ADMIN_ID_KEY, adminId.trim());
+}
+
+export async function getAdminId(): Promise<string | null> {
+  return getItem(ADMIN_ID_KEY);
+}
+
+export async function clearAdminId(): Promise<void> {
+  await deleteItem(ADMIN_ID_KEY);
 }
 
 export function setDevAdminToken(token: string | null): void {

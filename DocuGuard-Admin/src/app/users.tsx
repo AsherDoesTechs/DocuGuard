@@ -1,10 +1,11 @@
 ﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, FlatList, Pressable, RefreshControl, Share, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
+import { Alert, FlatList, Platform, Pressable, RefreshControl, Share, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { getAdminUsers, updateAdminUserStatus, logoutAdmin, type AdminUser } from "../services/adminApi";
-import { getAdminToken, clearAdminToken } from "../services/adminSession";
+import { getAdminId, getAdminToken, clearAdminToken } from "../services/adminSession";
+import { requireSensitiveActionAuth } from "../services/adminSensitiveAuth";
 import {
   getAdminUiSettings,
   setAdminUiSettings,
@@ -202,6 +203,13 @@ export default function AdminUsersScreen() {
 
   const exportUsers = async () => {
     try {
+      const hint = await getAdminId();
+      const ok = await requireSensitiveActionAuth({ adminIdHint: hint });
+      if (!ok) {
+        if (typeof window !== "undefined") window.alert("Export cancelled: verification required.");
+        else Alert.alert("Verification required", "Biometric/identity confirmation failed or was cancelled.");
+        return;
+      }
       const rows = [["id", "name", "email", "role", "status", "createdAt"].join(",")];
       filteredUsers.forEach((u) => {
         rows.push(
@@ -217,9 +225,20 @@ export default function AdminUsersScreen() {
             .join(",")
         );
       });
-      await Share.share({ message: rows.join("\n"), title: "Users Export" });
+      const csv = rows.join("\n");
+      if (Platform.OS === "web" && typeof document !== "undefined") {
+        const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `users-export-${new Date().toISOString().slice(0, 10)}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+        return;
+      }
+      await Share.share({ message: csv, title: "Users Export" });
     } catch {
-      Alert.alert("Export unavailable", "Could not share export.");
+      Alert.alert("Export unavailable", "Could not export users.");
     }
   };
 

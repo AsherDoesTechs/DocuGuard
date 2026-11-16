@@ -4,7 +4,8 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { getAdminDocuments, getAdminSystemHealth, logoutAdmin, type VaultDocument } from "../services/adminApi";
-import { getAdminToken, clearAdminToken } from "../services/adminSession";
+import { getAdminId, getAdminToken, clearAdminToken } from "../services/adminSession";
+import { requireSensitiveActionAuth } from "../services/adminSensitiveAuth";
 import { getAdminUiSettings, setAdminUiSettings, subscribeAdminUiSettings, loadAdminUiSettings, maskPerson } from "../services/adminSettings";
 import { AdminBottomNav } from "../components/AdminBottomNav";
 import { AdminSettingsModal } from "../components/AdminSettingsModal";
@@ -169,6 +170,13 @@ export default function AdminDocumentsScreen() {
 
   const exportDocs = async () => {
     try {
+      const hint = await getAdminId();
+      const ok = await requireSensitiveActionAuth({ adminIdHint: hint });
+      if (!ok) {
+        if (typeof window !== "undefined") window.alert("Export cancelled: verification required.");
+        else Alert.alert("Verification required", "Biometric/identity confirmation failed or was cancelled.");
+        return;
+      }
       const rows = [["id", "title", "fileName", "category", "ownerEmail", "ocrStatus", "fileSize", "createdAt"].join(",")];
       filteredDocs.forEach((d) => {
         const anyD = d as any;
@@ -190,7 +198,6 @@ export default function AdminDocumentsScreen() {
       });
       const csv = rows.join("\n");
       const filename = `documents-export-${new Date().toISOString().slice(0, 10)}.csv`;
-
       if (Platform.OS === "web" && typeof document !== "undefined") {
         const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
         const url = URL.createObjectURL(blob);

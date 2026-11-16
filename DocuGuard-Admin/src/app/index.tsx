@@ -29,6 +29,7 @@ import {
   getAdminDeviceId,
   getAdminToken,
   saveAdminDeviceId,
+  saveAdminId,
   saveAdminToken,
   setDevAdminToken,
 } from "../services/adminSession";
@@ -103,6 +104,7 @@ export default function AdminLoginScreen() {
       const verified = await verifyAdminDevice(login.pendingToken, challenge.challengeId, deviceId, signature);
       if (!verified.token || !verified.user) throw new Error("Device verification failed.");
       await saveAdminToken(verified.token);
+      await saveAdminId(String(verified.user?.id ?? adminId.trim()));
       setRequiresTwoFactor(false);
       setTotpCode("");
       router.replace("/dashboard");
