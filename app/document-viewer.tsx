@@ -40,6 +40,7 @@ function isImageType(fileType?: string | null, uri?: string | null) {
 
 function inferExtension(fileType?: string | null, uri?: string | null) {
   const t = (fileType || "").toLowerCase();
+  if (t.includes("pdf")) return "pdf";
   if (t.includes("png")) return "png";
   if (t.includes("webp")) return "webp";
   if (t.includes("heic")) return "heic";
@@ -47,9 +48,24 @@ function inferExtension(fileType?: string | null, uri?: string | null) {
   if (t.includes("gif")) return "gif";
   if (t.includes("bmp")) return "bmp";
   if (t.includes("jpeg") || t.includes("jpg") || t.includes("image")) return "jpg";
-  const match = (uri || "").toLowerCase().match(/\.(png|jpe?g|webp|heic|heif|gif|bmp)(\?|#|$)/i);
-  if (!match) return "jpg";
+  const match = (uri || "").toLowerCase().match(/\.(pdf|png|jpe?g|webp|heic|heif|gif|bmp)(\?|#|$)/i);
+  if (!match) return "bin";
   return match[1] === "jpeg" ? "jpg" : match[1];
+}
+
+function inferMimeType(fileType?: string | null, uri?: string | null) {
+  const t = (fileType || "").toLowerCase().trim();
+  if (t.includes("/")) return t;
+  const ext = inferExtension(fileType, uri);
+  if (ext === "pdf") return "application/pdf";
+  if (ext === "png") return "image/png";
+  if (ext === "webp") return "image/webp";
+  if (ext === "gif") return "image/gif";
+  if (ext === "bmp") return "image/bmp";
+  if (ext === "heic") return "image/heic";
+  if (ext === "heif") return "image/heif";
+  if (ext === "jpg") return "image/jpeg";
+  return "application/octet-stream";
 }
 
 function isPdfType(fileType?: string | null, uri?: string | null) {
@@ -137,64 +153,88 @@ export default function DocumentViewerScreen() {
   const isPdf = isPdfType(document?.fileType, fileUri || document?.fileUrl || null);
 
   const handleOpenExternal = async () => {
-    if (!fileUri) return;
+    if (!fileUri || !document) return;
+    setError(null);
     try {
-      let uri = fileUri;
+      let localUri = fileUri;
 
-      if (Platform.OS === "android" && uri.startsWith("file://")) {
-        try {
-          uri = await FileSystem.getContentUriAsync(uri);
-        } catch {
-          // Keep original URI as fallback.
+      // Remote files: download to cache so external apps can access reliably.
+      if (/^https?:\/\//i.test(localUri)) {
+        const fresh = await fetchFreshRemoteUri(document);
+        const source = fresh || localUri;
+        const ext = inferExtension(document.fileType, source);
+        const baseDir = FileSystem.cacheDirectory || FileSystem.documentDirectory;
+        if (!baseDir) throw new Error("No storage available");
+        const target = `${baseDir}open_${document.id ?? document.cloudId ?? "file"}_${Date.now()}.${ext}`;
+        const result = await FileSystem.downloadAsync(source, target);
+        if (result.status < 200 || result.status >= 300 || !result.uri) {
+          // Fallback: try opening remote URL directly (e.g. in browser/PDF viewer)
+          const canOpenRemote = await Linking.canOpenURL(source);
+          if (canOpenRemote) {
+            await Linking.openURL(source);
+            return;
+          }
+          throw new Error("Download failed");
+        }
+        localUri = result.uri;
+      }
+
+      if (localUri.startsWith("file://")) {
+        const info = await FileSystem.getInfoAsync(localUri);
+        if (!info.exists) {
+          const fresh = await fetchFreshRemoteUri(document);
+          if (fresh) {
+            setFileUri(fresh);
+            localUri = fresh;
+          } else {
+            throw new Error("File missing");
+          }
         }
       }
 
-      if (Platform.OS === "android") {
+      const mimeType = inferMimeType(document.fileType, localUri);
+
+      if (Platform.OS === "android" && localUri.startsWith("file://")) {
+        let contentUri = localUri;
         try {
-          // eslint-disable-next-line @typescript-eslint/no-var-requires
-          const IntentLauncher = require("expo-intent-launcher");
-          await IntentLauncher.startActivityAsync("android.intent.action.VIEW", {
-            data: uri,
-            flags: 1,
-            type: document?.fileType || undefined,
-          });
-          return;
+          contentUri = await FileSystem.getContentUriAsync(localUri);
         } catch {
+          // keep file://; sharing may still work
+        }
+        if (/^(content:|https?:)/i.test(contentUri)) {
           try {
-            // eslint-disable-next-line @typescript-eslint/no-var-requires
-            const IntentLauncher = require("expo-intent-launcher");
-            await IntentLauncher.startActivityAsync("android.intent.action.CHOOSER", {
-              extra: {
-                "android.intent.extra.INTENT": {
-                  action: "android.intent.action.VIEW",
-                  data: uri,
-                  flags: 1,
-                  type: document?.fileType || undefined,
-                },
-              },
-            });
-            return;
+            const canOpen = await Linking.canOpenURL(contentUri);
+            if (canOpen) {
+              await Linking.openURL(contentUri);
+              return;
+            }
           } catch {
-            // Fall through to share sheet as fallback.
+            // fall through to share
           }
         }
       }
 
       if (Platform.OS !== "web" && (await Sharing.isAvailableAsync())) {
-        await Sharing.shareAsync(fileUri, {
-          mimeType: document?.fileType || undefined,
+        await Sharing.shareAsync(localUri, {
+          mimeType,
           dialogTitle: "Open with",
-          UTI: document?.fileType || undefined,
+          UTI: mimeType,
         } as any);
         return;
       }
 
-      if (/^(https?:|content:)/i.test(uri)) {
-        await Linking.openURL(uri);
+      if (/^(https?:|content:)/i.test(localUri)) {
+        await Linking.openURL(localUri);
         return;
       }
 
-      await Linking.openURL(fileUri);
+      const canOpen = await Linking.canOpenURL(localUri);
+      if (canOpen) {
+        await Linking.openURL(localUri);
+        return;
+      }
+
+      throw new Error("No handler available");
     } catch {
       setError("Could not open this file in an external viewer.");
     }
