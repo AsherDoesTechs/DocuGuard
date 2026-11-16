@@ -510,18 +510,22 @@ export default function AdminDashboardScreen() {
               </View>
             </Card>
 
-            <Card title="Audit trend (7 days)" subtitle="Events per day (line)">
-              <TrendLineChart data={analytics.last7} height={130} color={AdminColors.primary} />
+            <Card title="Audit trend (7 days)" subtitle="Events per day (line) — values labeled on chart">
+              <Text style={[styles.muted, { marginBottom: 8 }]}>Total (7d): {analytics.last7.reduce((s, d) => s + d.value, 0)} events</Text>
+              <TrendLineChart data={analytics.last7} height={150} color={AdminColors.primary} />
             </Card>
 
-            <Card title="Activity vs documents (7 days)" subtitle="Grouped bars: audit events vs docs created">
+            <Card title="Activity vs documents (7 days)" subtitle="Grouped bars (counts labeled above bars)">
+              <Text style={[styles.muted, { marginBottom: 8 }]}>
+                Audit events (7d): {analytics.last7.reduce((s, d) => s + d.value, 0)} · Documents created (7d): {analytics.docsLast7.reduce((s, d) => s + d.value, 0)}
+              </Text>
               <GroupedBarChart
                 data={analytics.last7.map((d) => ({ label: d.label }))}
                 series={[
                   { key: "logs", label: "Audit events", color: AdminColors.primary, values: analytics.last7.map((d) => d.value) },
                   { key: "docs", label: "Docs created", color: AdminColors.success, values: analytics.docsLast7.map((d) => d.value) },
                 ]}
-                height={150}
+                height={170}
               />
             </Card>
 

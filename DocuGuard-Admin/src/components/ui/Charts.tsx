@@ -7,24 +7,24 @@ type Segment = { label: string; value: number; color: string };
 export function BarChart({
   data,
   height = 120,
+  showValues = true,
 }: {
   data: { label: string; value: number; color?: string }[];
   height?: number;
+  showValues?: boolean;
 }) {
   const safeData = (data || []).map((d) => ({ ...d, value: Number.isFinite(Number(d.value)) ? Number(d.value) : 0 }));
   const max = Math.max(1, ...safeData.map((d) => d.value));
   return (
     <View style={[styles.wrap, { height }]}>
       {safeData.map((d, i) => {
-        const h = Math.max(6, (d.value / max) * (height - 34));
+        const h = Math.max(6, (d.value / max) * (height - (showValues ? 48 : 34)));
         return (
           <View key={`${d.label}-${i}`} style={styles.col}>
+            {showValues ? <Text style={styles.valueAbove} numberOfLines={1}>{d.value}</Text> : null}
             <View style={styles.barTrack}>
               <View style={[styles.bar, { height: h, backgroundColor: d.color || AdminColors.primary }]} />
             </View>
-            <Text style={styles.value} numberOfLines={1}>
-              {d.value}
-            </Text>
             <Text style={styles.label} numberOfLines={1}>
               {d.label}
             </Text>
@@ -99,25 +99,33 @@ export function GroupedBarChart({
   data,
   series,
   height = 140,
+  showValues = true,
 }: {
   data: { label: string }[];
   series: { key: string; label: string; color: string; values: number[] }[];
   height?: number;
+  showValues?: boolean;
 }) {
   const safeData = data || [];
   const flat = series.flatMap((s) => s.values.map((v) => (Number.isFinite(Number(v)) ? Number(v) : 0)));
   const max = Math.max(1, ...flat);
-  const groupWidth = Math.max(28, 220 / Math.max(1, safeData.length));
+  const groupWidth = Math.max(36, 220 / Math.max(1, safeData.length));
+  const barAreaH = height - (showValues ? 56 : 40);
   return (
     <View style={{ height }}>
-      <View style={[styles.groupedRow, { height: height - 22 }]}>
+      <View style={[styles.groupedRow, { height: barAreaH }]}>
         {safeData.map((d, i) => (
           <View key={`${d.label}-${i}`} style={[styles.groupedCol, { width: groupWidth }]}>
             <View style={styles.groupedBars}>
               {series.map((s) => {
                 const v = Number(s.values[i] ?? 0);
-                const h = Math.max(4, (v / max) * (height - 52));
-                return <View key={s.key} style={[styles.groupedBar, { height: h, backgroundColor: s.color }]} />;
+                const h = Math.max(4, (v / max) * barAreaH);
+                return (
+                  <View key={s.key} style={styles.groupedBarWrap}>
+                    {showValues ? <Text style={styles.groupedBarValue} numberOfLines={1}>{v}</Text> : null}
+                    <View style={[styles.groupedBar, { height: h, backgroundColor: s.color }]} />
+                  </View>
+                );
               })}
             </View>
             <Text style={styles.groupedLabel} numberOfLines={1}>
@@ -142,14 +150,16 @@ export function TrendLineChart({
   data,
   height = 120,
   color = AdminColors.primary,
+  showValues = true,
 }: {
   data: { label: string; value: number }[];
   height?: number;
   color?: string;
+  showValues?: boolean;
 }) {
   const safe = (data || []).map((d) => ({ ...d, value: Number.isFinite(Number(d.value)) ? Number(d.value) : 0 }));
   const max = Math.max(1, ...safe.map((d) => d.value));
-  const chartH = height - 28;
+  const chartH = height - (showValues ? 40 : 28);
   const points = safe.map((d, i) => {
     const x = safe.length <= 1 ? 50 : (i / (safe.length - 1)) * 100;
     const y = chartH - (d.value / max) * chartH;
@@ -160,18 +170,18 @@ export function TrendLineChart({
       <View style={[styles.trendWrap, { height: chartH }]}>
         <View style={styles.trendGrid} />
         {points.map((p, i) => (
-          <View
-            key={i}
-            style={[
-              styles.trendDot,
-              {
-                left: `${p.x}%`,
-                top: p.y,
-                marginLeft: -4,
-                backgroundColor: color,
-              },
-            ]}
-          />
+          <View key={i} style={[styles.trendPointWrap, { left: `${p.x}%`, top: 0, height: chartH }]}>
+            {showValues ? <Text style={[styles.trendValue, { color: AdminColors.text }]} numberOfLines={1}>{p.v}</Text> : null}
+            <View
+              style={[
+                styles.trendDot,
+                {
+                  top: Math.max(0, p.y - 4),
+                  backgroundColor: color,
+                },
+              ]}
+            />
+          </View>
         ))}
         {points.map((p, i) => {
           if (i === 0) return null;
@@ -218,10 +228,11 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: 8,
   },
-  col: { flex: 1, alignItems: "center", gap: 4 },
-  barTrack: { flex: 1, width: "100%", justifyContent: "flex-end", alignItems: "center" },
+  col: { flex: 1, alignItems: "center", gap: 2, minWidth: 0 },
+  barTrack: { flex: 1, width: "100%", justifyContent: "flex-end", alignItems: "center", minHeight: 12 },
   bar: { width: "70%", borderRadius: 8, minHeight: 6 },
   value: { fontSize: 11, fontWeight: "700", color: AdminColors.text },
+  valueAbove: { fontSize: 10, fontWeight: "700", color: AdminColors.text, marginBottom: 2 },
   label: { fontSize: 10, color: AdminColors.textSecondary },
   progressTrack: {
     width: "100%",
@@ -241,18 +252,22 @@ const styles = StyleSheet.create({
   indicatorTitle: { fontSize: 11, color: AdminColors.textSecondary, fontWeight: "600" },
   indicatorValue: { fontSize: 18, fontWeight: "800", marginTop: 4 },
   indicatorHint: { fontSize: 11, color: AdminColors.textMuted, marginTop: 4 },
-  groupedRow: { flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between", gap: 6 },
+  groupedRow: { flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between", gap: 4 },
   groupedCol: { alignItems: "center" },
-  groupedBars: { flexDirection: "row", alignItems: "flex-end", gap: 2, height: "100%" },
-  groupedBar: { width: 10, borderRadius: 4, minHeight: 4 },
-  groupedLabel: { fontSize: 9, color: AdminColors.textSecondary, marginTop: 4, maxWidth: 56 },
+  groupedBars: { flexDirection: "row", alignItems: "flex-end", justifyContent: "center", gap: 3, flex: 1, width: "100%" },
+  groupedBarWrap: { alignItems: "center", justifyContent: "flex-end", minWidth: 14 },
+  groupedBarValue: { fontSize: 9, fontWeight: "700", color: AdminColors.text, marginBottom: 2 },
+  groupedBar: { width: 12, borderRadius: 4, minHeight: 4 },
+  groupedLabel: { fontSize: 9, color: AdminColors.textSecondary, marginTop: 4, maxWidth: 60, textAlign: "center" },
   legendRow: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginTop: 6 },
   legendItem: { flexDirection: "row", alignItems: "center", gap: 4 },
   legendText: { fontSize: 11, color: AdminColors.textSecondary },
-  trendWrap: { position: "relative", width: "100%", backgroundColor: AdminColors.surfaceAlt, borderRadius: 8, overflow: "hidden" },
+  trendWrap: { position: "relative", width: "100%", backgroundColor: AdminColors.surfaceAlt, borderRadius: 8, overflow: "visible" },
   trendGrid: { position: "absolute", left: 0, right: 0, top: "50%", height: 1, backgroundColor: AdminColors.border },
-  trendDot: { position: "absolute", width: 8, height: 8, borderRadius: 4 },
+  trendPointWrap: { position: "absolute", width: 28, marginLeft: -14, alignItems: "center" },
+  trendValue: { fontSize: 9, fontWeight: "700", marginBottom: 2 },
+  trendDot: { position: "absolute", width: 8, height: 8, borderRadius: 4, marginLeft: 10 },
   trendSeg: { position: "absolute", height: 2, borderRadius: 1 },
-  trendLabels: { flexDirection: "row", justifyContent: "space-between", marginTop: 4 },
+  trendLabels: { flexDirection: "row", justifyContent: "space-between", marginTop: 6 },
   trendLabelText: { fontSize: 9, color: AdminColors.textSecondary, flex: 1, textAlign: "center" },
 });
