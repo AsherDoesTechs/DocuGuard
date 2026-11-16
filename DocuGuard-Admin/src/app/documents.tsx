@@ -74,8 +74,14 @@ export default function AdminDocumentsScreen() {
       }
       if (healthRes.status === "fulfilled") {
         const h: any = (healthRes.value as any)?.health ?? (healthRes.value as any);
-        const bytes = Number(h?.supabaseStorage?.bucketUsageBytes ?? 0);
-        setRealStorageBytes(Number.isFinite(bytes) ? bytes : null);
+        const rawBytes =
+          h?.supabaseStorage?.bucketUsageBytes ??
+          h?.supabaseStorage?.usageBytes ??
+          h?.supabaseStorage?.bytes ??
+          h?.bucketUsageBytes ??
+          h?.storageBytes;
+        const bytes = rawBytes == null ? NaN : Number(rawBytes);
+        setRealStorageBytes(Number.isFinite(bytes) && bytes >= 0 ? bytes : null);
       } else {
         setRealStorageBytes(null);
       }

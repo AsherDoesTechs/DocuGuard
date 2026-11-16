@@ -399,18 +399,27 @@ exports.getSystemHealth = async (req, res) => {
     if (bucketUsageBytes <= 0 && hasColumn(docCols, "s3_key")) {
       try {
         const keysRes = await db.query(
-          `SELECT DISTINCT s3_key FROM public.documents WHERE ${whereStatus} AND s3_key IS NOT NULL AND s3_key <> '' LIMIT 50`,
+          `SELECT DISTINCT s3_key FROM public.documents WHERE ${whereStatus} AND s3_key IS NOT NULL AND s3_key <> ''`,
         );
         const { getObjectMetadata } = require("../services/storageService");
         let total = BigInt(0);
-        for (const r of keysRes.rows) {
-          try {
-            const meta = await getObjectMetadata(r.s3_key);
+        const CONCURRENCY = 10;
+        const keys = keysRes.rows.map((r) => r.s3_key).filter(Boolean);
+        for (let i = 0; i < keys.length; i += CONCURRENCY) {
+          const batch = keys.slice(i, i + CONCURRENCY);
+          const metas = await Promise.all(
+            batch.map(async (key) => {
+              try {
+                return await getObjectMetadata(key);
+              } catch (_e) {
+                return null;
+              }
+            }),
+          );
+          for (const meta of metas) {
             if (meta && typeof meta.size === "number" && Number.isFinite(meta.size) && meta.size >= 0) {
               total += BigInt(Math.floor(meta.size));
             }
-          } catch (_e) {
-            /* best effort */
           }
         }
         if (total > BigInt(0)) bucketUsageBytes = Number(total);
