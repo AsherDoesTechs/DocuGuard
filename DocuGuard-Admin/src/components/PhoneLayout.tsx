@@ -4,8 +4,7 @@ import { AdminColors } from "../theme/adminTheme";
 
 export function PhoneLayout({ children }: { children: React.ReactNode }) {
   const { width } = useWindowDimensions();
-  const isTablet = width >= 768;
-  const isDesktop = width >= 1024;
+  const isDesktop = width >= 1100;
 
   if (Platform.OS !== "web") {
     return <View style={styles.native}>{children}</View>;
@@ -13,15 +12,7 @@ export function PhoneLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <View style={styles.webOuter}>
-      <View
-        style={[
-          styles.webFrame,
-          isDesktop && styles.webFrameDesktop,
-          isTablet && !isDesktop && styles.webFrameTablet,
-        ]}
-      >
-        {children}
-      </View>
+      <View style={[styles.webFrame, isDesktop && styles.webFrameDesktop]}>{children}</View>
     </View>
   );
 }
@@ -31,28 +22,21 @@ const styles = StyleSheet.create({
   webOuter: {
     flex: 1,
     minHeight: "100%" as any,
-    backgroundColor: "#E9EEF7",
+    backgroundColor: "#EEF3FA",
     alignItems: "center",
-    justifyContent: "flex-start",
   },
   webFrame: {
     flex: 1,
     width: "100%",
-    maxWidth: 430,
+    maxWidth: 1440,
     minHeight: "100%" as any,
     backgroundColor: AdminColors.background,
-    overflow: "hidden",
-    ...(Platform.OS === "web"
-      ? ({
-          boxShadow:
-            "0 0 0 1px rgba(16,24,40,0.06), 0 16px 48px rgba(16,24,40,0.10)",
-        } as any)
-      : {}),
-  },
-  webFrameTablet: {
-    maxWidth: 900,
   },
   webFrameDesktop: {
-    maxWidth: 1320,
+    ...(Platform.OS === "web"
+      ? ({
+          boxShadow: "0 0 0 1px rgba(15,23,42,0.04)",
+        } as any)
+      : {}),
   },
 });

@@ -18,27 +18,34 @@ export function AdminBottomNav() {
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
-  const isVertical = width >= 768;
+  const isSidebar = width >= 900;
 
-  if (isVertical) {
+  if (isSidebar) {
     return (
       <View
         pointerEvents="box-none"
         style={[
-          styles.floatWrap,
+          styles.sidebarWrap,
           {
-            top: Math.max(insets.top, 24),
-            bottom: Math.max(insets.bottom, 24),
-            right: Math.max(insets.right, 4),
+            top: Math.max(insets.top, 16),
+            bottom: Math.max(insets.bottom, 16),
+            left: Math.max(insets.left, 16),
           },
         ]}
       >
-        <View style={styles.floatPillVertical}>
-          {TABS.map((tab) => {
-            const active =
-              pathname === tab.route || (tab.route !== "/dashboard" && pathname.startsWith(tab.route));
-            return <TabButton key={tab.key} tab={tab} active={active} vertical onPress={() => router.replace(tab.route as any)} />;
-          })}
+        <View style={styles.sidebar}>
+          <View style={styles.brandBlock}>
+            <View style={styles.brandDot} />
+            <Text style={styles.brandTitle}>DocuGuard</Text>
+            <Text style={styles.brandSub}>Admin</Text>
+          </View>
+          <View style={styles.sidebarTabs}>
+            {TABS.map((tab) => {
+              const active =
+                pathname === tab.route || (tab.route !== "/dashboard" && pathname.startsWith(tab.route));
+              return <TabButton key={tab.key} tab={tab} active={active} sidebar onPress={() => router.replace(tab.route as any)} />;
+            })}
+          </View>
         </View>
       </View>
     );
@@ -59,32 +66,34 @@ function TabButton({
   tab,
   active,
   onPress,
-  vertical,
+  sidebar,
 }: {
   tab: (typeof TABS)[number];
   active: boolean;
   onPress: () => void;
-  vertical?: boolean;
+  sidebar?: boolean;
 }) {
   const scale = useRef(new Animated.Value(1)).current;
-  const lift = useRef(new Animated.Value(active ? 1 : 0)).current;
-  useEffect(() => {
-    Animated.spring(lift, { toValue: active ? 1 : 0, useNativeDriver: true, speed: 20, bounciness: 6 }).start();
-  }, [active, lift]);
-  const translateY = lift.interpolate({ inputRange: [0, 1], outputRange: [0, vertical ? 0 : -2] });
   return (
     <Pressable
-      style={vertical ? styles.tabVertical : styles.tab}
+      style={[sidebar ? styles.tabSidebar : styles.tab, active && sidebar && styles.tabSidebarActive]}
       onPress={onPress}
       accessibilityRole="button"
-      onPressIn={() => Animated.spring(scale, { toValue: 0.92, useNativeDriver: true, speed: 40, bounciness: 0 }).start()}
+      onPressIn={() => Animated.spring(scale, { toValue: 0.97, useNativeDriver: true, speed: 40, bounciness: 0 }).start()}
       onPressOut={() => Animated.spring(scale, { toValue: 1, useNativeDriver: true, speed: 24, bounciness: 4 }).start()}
     >
-      <Animated.View style={[styles.iconWrap, active && styles.iconWrapActive, { transform: [{ scale }, { translateY }] }]}>
-        <Ionicons name={(active ? tab.activeIcon : tab.icon) as any} size={vertical ? 20 : 19} color={active ? AdminColors.primary : AdminColors.textMuted} />
+      <Animated.View style={{ transform: [{ scale }], flexDirection: sidebar ? "row" : "column", alignItems: "center", gap: sidebar ? 10 : 4 }}>
+        <View style={[styles.iconWrap, active && !sidebar && styles.iconWrapActive]}>
+          <Ionicons
+            name={(active ? tab.activeIcon : tab.icon) as any}
+            size={sidebar ? 18 : 20}
+            color={active ? AdminColors.primary : AdminColors.textMuted}
+          />
+        </View>
+        <Text style={[styles.label, sidebar && styles.labelSidebar, active && styles.labelActive]} numberOfLines={1}>
+          {tab.label}
+        </Text>
       </Animated.View>
-      <Text style={[styles.label, active && styles.labelActive]} numberOfLines={1}>{tab.label}</Text>
-      {!vertical && <Animated.View style={[styles.activeDot, { opacity: lift, transform: [{ scale: lift }] }]} />}
     </Pressable>
   );
 }
@@ -94,46 +103,46 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "flex-end",
     justifyContent: "space-around",
-    backgroundColor: AdminColors.surface,
+    backgroundColor: "rgba(255,255,255,0.96)",
     borderTopWidth: 1,
     borderTopColor: AdminColors.border,
     paddingTop: 8,
     paddingHorizontal: 8,
+    ...(Platform.OS === "web" ? ({ backdropFilter: "blur(12px)" } as any) : {}),
   },
-  floatWrap: {
+  sidebarWrap: {
     position: "absolute",
     zIndex: 999,
-    justifyContent: "center",
-    alignItems: "center",
+    width: 220,
     ...(Platform.OS === "web" ? ({ position: "fixed", pointerEvents: "none" } as any) : {}),
   },
-  floatPillVertical: {
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: AdminColors.surface,
-    borderRadius: 28,
+  sidebar: {
+    flex: 1,
+    backgroundColor: "rgba(255,255,255,0.96)",
+    borderRadius: 24,
     borderWidth: 1,
     borderColor: AdminColors.border,
-    paddingVertical: 8,
-    paddingHorizontal: 4,
-    gap: 2,
+    padding: 14,
     pointerEvents: "auto",
     ...(Platform.OS === "web"
-      ? ({ boxShadow: "0 8px 24px rgba(16,24,40,0.12)" } as any)
-      : {
-          shadowColor: "#101828",
-          shadowOffset: { width: 0, height: 8 },
-          shadowOpacity: 0.12,
-          shadowRadius: 24,
-          elevation: 10,
-        }),
+      ? ({ boxShadow: "0 12px 40px rgba(15,23,42,0.08)", backdropFilter: "blur(12px)" } as any)
+      : { shadowColor: "#0F172A", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.08, shadowRadius: 24, elevation: 8 }),
   },
-  tab: { flex: 1, alignItems: "center", justifyContent: "center", gap: 3, paddingVertical: 2 },
-  tabVertical: { alignItems: "center", justifyContent: "center", gap: 4, paddingVertical: 8, paddingHorizontal: 6, minWidth: 64 },
-  iconWrap: { width: 36, height: 28, borderRadius: 14, alignItems: "center", justifyContent: "center" },
+  brandBlock: { paddingHorizontal: 10, paddingVertical: 10, marginBottom: 8 },
+  brandDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: AdminColors.primary, marginBottom: 10 },
+  brandTitle: { fontSize: 16, fontWeight: "800", color: AdminColors.text, letterSpacing: -0.3 },
+  brandSub: { fontSize: 12, color: AdminColors.textSecondary, marginTop: 2 },
+  sidebarTabs: { gap: 4 },
+  tab: { flex: 1, alignItems: "center", justifyContent: "center", gap: 4, paddingVertical: 4 },
+  tabSidebar: {
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 14,
+  },
+  tabSidebarActive: { backgroundColor: AdminColors.primarySoft },
+  iconWrap: { width: 32, height: 32, borderRadius: 10, alignItems: "center", justifyContent: "center" },
   iconWrapActive: { backgroundColor: AdminColors.primarySoft },
   label: { fontSize: 10, fontWeight: "600", color: AdminColors.textMuted, textAlign: "center" },
+  labelSidebar: { fontSize: 13, fontWeight: "600", textAlign: "left", color: AdminColors.textSecondary },
   labelActive: { color: AdminColors.primary, fontWeight: "700" },
-  activeDot: { width: 4, height: 4, borderRadius: 2, backgroundColor: AdminColors.primary, marginTop: 1 },
 });

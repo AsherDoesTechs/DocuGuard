@@ -16,13 +16,17 @@ export function ScreenHeader({ title, subtitle, onBack, right, style, topSlot }:
   return (
     <View style={[styles.header, style]}>
       <View style={styles.left}>
-        {onBack ? (
-          <IconButton icon="chevron-back" onPress={onBack} label="Back" />
-        ) : null}
+        {onBack ? <IconButton icon="chevron-back" onPress={onBack} label="Back" /> : null}
         <View style={{ flex: 1 }}>
           {topSlot}
-          <Text style={styles.title} numberOfLines={1}>{title}</Text>
-          {subtitle ? <Text style={styles.subtitle} numberOfLines={1}>{subtitle}</Text> : null}
+          <Text style={styles.title} numberOfLines={1}>
+            {title}
+          </Text>
+          {subtitle ? (
+            <Text style={styles.subtitle} numberOfLines={1}>
+              {subtitle}
+            </Text>
+          ) : null}
         </View>
       </View>
       {right ? <View style={styles.right}>{right}</View> : null}
@@ -59,7 +63,7 @@ export function IconButton({
     spin.setValue(0);
   }, [spinning, spin]);
 
-  const color = tone === "danger" ? AdminColors.danger : tone === "primary" ? AdminColors.primary : AdminColors.text;
+  const color = tone === "danger" ? AdminColors.danger : tone === "primary" ? AdminColors.primary : AdminColors.textSecondary;
   const bg = tone === "danger" ? AdminColors.dangerSoft : tone === "primary" ? AdminColors.primarySoft : AdminColors.surface;
   const border = tone === "danger" ? "#FECACA" : tone === "primary" ? "#BFDBFE" : AdminColors.border;
   const rotate = spin.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "360deg"] });
@@ -69,7 +73,7 @@ export function IconButton({
       disabled={disabled || spinning}
       accessibilityRole="button"
       accessibilityLabel={label}
-      onPressIn={() => Animated.spring(scale, { toValue: 0.92, useNativeDriver: true, speed: 40, bounciness: 0 }).start()}
+      onPressIn={() => Animated.spring(scale, { toValue: 0.94, useNativeDriver: true, speed: 40, bounciness: 0 }).start()}
       onPressOut={() => Animated.spring(scale, { toValue: 1, useNativeDriver: true, speed: 24, bounciness: 4 }).start()}
     >
       <Animated.View style={[styles.iconBtn, { backgroundColor: bg, borderColor: border, opacity: disabled ? 0.6 : 1, transform: [{ scale }] }]}>
@@ -84,25 +88,23 @@ export function IconButton({
 const styles = StyleSheet.create({
   header: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     justifyContent: "space-between",
     paddingHorizontal: 20,
-    paddingTop: 6,
-    paddingBottom: 12,
+    paddingTop: 8,
+    paddingBottom: 14,
     gap: 12,
   },
-  left: { flexDirection: "row", alignItems: "center", gap: 10, flex: 1 },
-  right: { flexDirection: "row", alignItems: "center", gap: 8 },
+  left: { flexDirection: "row", alignItems: "flex-start", gap: 10, flex: 1 },
+  right: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" },
   iconBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
+    width: 38,
+    height: 38,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: AdminColors.border,
-    backgroundColor: AdminColors.surface,
     alignItems: "center",
     justifyContent: "center",
   },
-  title: { fontSize: 22, fontWeight: "800", color: AdminColors.text, letterSpacing: -0.4 },
-  subtitle: { fontSize: 13, color: AdminColors.textSecondary, marginTop: 1 },
+  title: { fontSize: 28, fontWeight: "800", color: AdminColors.text, letterSpacing: -0.6 },
+  subtitle: { fontSize: 13, color: AdminColors.textSecondary, marginTop: 4, lineHeight: 18 },
 });
