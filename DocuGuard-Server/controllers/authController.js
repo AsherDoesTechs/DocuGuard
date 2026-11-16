@@ -61,6 +61,10 @@ exports.register = async (req, res, next) => {
     const verificationToken = crypto.randomBytes(32).toString("hex");
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
+    if (typeof db.ensureEmailVerificationColumns === "function") {
+      await db.ensureEmailVerificationColumns().catch(() => {});
+    }
+
     const result = await db.query(
       `INSERT INTO users (name, email, password_hash, verification_token, verification_expires_at, is_verified) 
        VALUES ($1, $2, $3, $4, $5, FALSE) 
@@ -416,6 +420,10 @@ exports.verifyEmail = async (req, res, next) => {
       tokenLength: token?.length,
     });
 
+    if (typeof db.ensureEmailVerificationColumns === "function") {
+      await db.ensureEmailVerificationColumns().catch(() => {});
+    }
+
     // Atomically verify the account and consume the token.
     // A token can succeed only once and only before expiration.
     const result = await db.query(
@@ -575,6 +583,10 @@ exports.verifyEmailWeb = async (req, res) => {
   }
 
   try {
+    if (typeof db.ensureEmailVerificationColumns === "function") {
+      await db.ensureEmailVerificationColumns().catch(() => {});
+    }
+
     // Verify and consume the token in one database operation.
     // This also prevents concurrent requests from using the same token.
     const result = await db.query(
@@ -666,6 +678,10 @@ exports.resendVerification = async (req, res) => {
     // Issue a fresh token and invalidate any previously issued link immediately.
     const verificationToken = crypto.randomBytes(32).toString("hex");
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+    if (typeof db.ensureEmailVerificationColumns === "function") {
+      await db.ensureEmailVerificationColumns().catch(() => {});
+    }
 
     await db.query(
       "UPDATE users SET verification_token = $1, verification_expires_at = $2 WHERE id = $3 AND is_verified = FALSE",

@@ -46,9 +46,40 @@ pool.on("error", (err) => {
   console.error("Unexpected PostgreSQL pool error:", err);
 });
 
+let emailVerificationSchemaReady;
+
+async function ensureEmailVerificationColumns() {
+  if (!emailVerificationSchemaReady) {
+    emailVerificationSchemaReady = (async () => {
+      await pool.query(`
+        ALTER TABLE public.users
+          ADD COLUMN IF NOT EXISTS verification_token TEXT,
+          ADD COLUMN IF NOT EXISTS verification_expires_at TIMESTAMPTZ
+      `);
+      await pool.query(`
+        CREATE INDEX IF NOT EXISTS idx_users_verification_token
+          ON public.users (verification_token)
+      `);
+    })().catch((err) => {
+      emailVerificationSchemaReady = null;
+      console.error(
+        "Failed to ensure email verification columns:",
+        err?.message || err,
+      );
+      throw err;
+    });
+  }
+  return emailVerificationSchemaReady;
+}
+
+// Best-effort startup ensure so Supabase environments missing migrations
+// can still store/fetch verification tokens.
+ensureEmailVerificationColumns().catch(() => {});
+
 module.exports = {
   query: (text, params) => pool.query(text, params),
   getClient: () => pool.connect(),
+  ensureEmailVerificationColumns,
   withTransaction: async (fn) => {
     const client = await pool.connect();
     try {
