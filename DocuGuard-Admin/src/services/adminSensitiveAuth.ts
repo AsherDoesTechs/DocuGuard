@@ -1,24 +1,51 @@
 import { Platform } from "react-native";
 import { checkAdminBiometrics } from "./adminBiometrics";
-
-const WEB_AUTH_MESSAGE =
-  "Re-enter your admin credentials context is not stored. For web, confirm this sensitive action by entering your Admin ID again.";
+import { adminLogin } from "./adminApi";
+import { getAdminId, getAdminToken } from "./adminSession";
 
 export async function requireSensitiveActionAuth(opts?: {
   adminIdHint?: string | null;
 }): Promise<boolean> {
   if (Platform.OS === "web") {
     if (typeof window === "undefined") return false;
-    const hint = opts?.adminIdHint?.trim();
-    const promptText = hint
-      ? `Confirm your identity to continue. Enter Admin ID "${hint}" to proceed:`
-      : "Confirm your identity to continue. Enter your Admin ID to proceed:";
-    const entered = window.prompt(promptText);
-    if (!entered) return false;
-    if (hint && entered.trim().toLowerCase() !== hint.toLowerCase()) {
-      window.alert("Admin ID does not match. Action cancelled.");
+    const storedId = opts?.adminIdHint?.trim() || (await getAdminId())?.trim() || "";
+
+    const password = window.prompt(
+      "Confirm your identity to continue.\nEnter your Password:",
+    );
+    if (password == null || !password.trim()) {
+      window.alert("Password is required. Action cancelled.");
       return false;
     }
+
+    const jwtToken = window.prompt(
+      "Confirm your identity to continue.\nEnter your JWT/Bearer Token:",
+    );
+    if (jwtToken == null || !jwtToken.trim()) {
+      window.alert("JWT token is required. Action cancelled.");
+      return false;
+    }
+
+    const sessionToken = (await getAdminToken())?.trim() || "";
+    if (jwtToken.trim() !== sessionToken) {
+      window.alert("JWT token does not match your active session. Action cancelled.");
+      return false;
+    }
+
+    if (storedId) {
+      try {
+        await adminLogin(storedId, password.trim());
+      } catch (e: any) {
+        const msg =
+          e?.response?.data?.error ||
+          e?.response?.data?.message ||
+          e?.message ||
+          "Password verification failed.";
+        window.alert(String(msg));
+        return false;
+      }
+    }
+
     return true;
   }
 
@@ -37,9 +64,6 @@ export async function requireSensitiveActionAuth(opts?: {
     return true;
   } catch (e: any) {
     const msg = e?.message || "Biometric verification failed or was cancelled.";
-    if (typeof window !== "undefined") {
-      // no-op for native Alert usage in callers; return false and let caller show
-    }
     console.warn("[requireSensitiveActionAuth]", msg);
     return false;
   }
