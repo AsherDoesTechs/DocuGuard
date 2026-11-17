@@ -104,6 +104,13 @@ async function querySingle<T>(
   return database.getFirstAsync<T>(sql, ...params);
 }
 
+export async function querySingleExported<T>(
+  sql: string,
+  params: any[] = [],
+): Promise<T | null> {
+  return querySingle<T>(sql, params);
+}
+
 /**
  * reminder_intervals is stored as a JSON string but the LocalDocument contract
  * exposes number[]. Every read path must run rows through this helper or the

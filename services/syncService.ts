@@ -18,6 +18,7 @@ import {
   LocalDocument,
   LocalReminder,
   LocalUserProfile,
+  querySingleExported,
 } from "../services/localDatabase";
 import { formatCategoryForBackend } from "@/utils/categories";
 import {
@@ -663,8 +664,21 @@ export async function pullDocumentsFromCloud(): Promise<number> {
             : Number(ownerValue),
       };
 
-      await reconcileRealtimeDocument("INSERT", ownedRemote);
-      processed++;
+      // Check if document already exists locally by cloudId before reconciling
+      const cloudId = Number(ownedRemote.id);
+      if (Number.isSafeInteger(cloudId) && cloudId > 0) {
+        const existing = await querySingleExported<{ id: number }>(
+          `SELECT id FROM documents WHERE cloud_id = ? AND user_id = ? LIMIT 1`,
+          [cloudId, localUserId],
+        );
+        
+        // If document doesn't exist locally, reconcile it (INSERT)
+        // If it exists, the push sync already handled it, or realtime will handle updates
+        if (!existing) {
+          await reconcileRealtimeDocument("INSERT", ownedRemote);
+          processed++;
+        }
+      }
     }
 
     return processed;
