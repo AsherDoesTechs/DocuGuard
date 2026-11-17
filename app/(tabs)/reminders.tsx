@@ -959,6 +959,37 @@ export default function RemindersScreen() {
                                     </Text>
                                   </TouchableOpacity>
                                 )}
+
+                                {reminder.documentId && reminder.severity !== "Valid" && (
+                                  <TouchableOpacity
+                                    style={[
+                                      styles.actionButton,
+                                      { borderColor: themeColors.primary },
+                                    ]}
+                                    onPress={(e) => {
+                                      e.stopPropagation?.();
+                                      // Handle update document - for now just log
+                                      console.log("Update document for:", reminder.id);
+                                    }}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={`Update renewal date for ${reminder.title}`}
+                                    activeOpacity={0.7}
+                                  >
+                                    <Ionicons
+                                      name="refresh-circle-outline"
+                                      size={15}
+                                      color={themeColors.primary}
+                                    />
+                                    <Text
+                                      style={[
+                                        styles.actionButtonText,
+                                        { color: themeColors.primary, fontWeight: "700" },
+                                      ]}
+                                    >
+                                      Updated Document
+                                    </Text>
+                                  </TouchableOpacity>
+                                )}
                               </View>
                             </View>
                           </View>
