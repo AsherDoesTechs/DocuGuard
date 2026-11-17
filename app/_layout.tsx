@@ -11,6 +11,7 @@ import { useAppLock, AppLockScreen } from "../hooks/useAppLock";
 import { initDatabase } from "../services/localDatabase";
 import { checkAndScheduleAlerts } from "../services/notificationScheduler";
 import { syncWorker } from "@/services/syncWorker";
+import { useRealtime } from "@/hooks/useRealtime";
 
 import { AlertProvider } from "@/components/ui/AlertService";
 import { ThemeProvider, useColors, useIsDark } from "@/context/ThemeContext";
@@ -275,6 +276,11 @@ function RootLayoutNav() {
                     onComplete={handleSplashComplete}
                   />
                 )}
+
+                {/* Realtime sync for instant cloud updates */}
+                {startupStep === "ready" && !showSplash && !isLocked && !sessionExpired && (
+                  <RealtimeSyncComponent />
+                )}
               </>
             )}
             <PushNotificationToastBridge
@@ -298,4 +304,21 @@ export default function RootLayout() {
       <RootLayoutNav />
     </ThemeProvider>
   );
+}
+
+// Realtime sync component - mounts the WebSocket for instant cloud updates
+function RealtimeSyncComponent() {
+  useRealtime({
+    onConnect: () => console.log("Realtime: Connected - listening for cloud changes"),
+    onDisconnect: () => console.log("Realtime: Disconnected"),
+    onError: (error) => console.error("Realtime: Error", error),
+    onDocumentChange: (event, data) => {
+      console.log(`Realtime: Document ${event}`, data?.title || data?.id);
+    },
+    onReminderChange: (event, data) => {
+      console.log(`Realtime: Reminder ${event}`, data?.title || data?.id);
+    },
+  });
+
+  return null;
 }

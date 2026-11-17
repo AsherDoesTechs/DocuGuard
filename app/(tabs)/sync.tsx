@@ -581,7 +581,7 @@ export default function SyncScreen() {
                     <Button
                       title="Force Sync"
                       onPress={() => handleForceSync(conflict)}
-                      variant="outline"
+                      variant="danger"
                       style={stylesForTheme.forceSyncButton}
                       disabled={syncing}
                     />

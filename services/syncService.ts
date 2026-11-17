@@ -195,15 +195,16 @@ export async function forceSyncDocument(
       const { normalizeCloudId } = await import("@/shared/sync/cloudId");
 
       const payload = buildDocumentSyncPayload(doc, {
-        formatCategory: formatCategoryForBackend,
+        formatCategory: (value) => formatCategoryForBackend(value ?? "other"),
         force: true,
       });
 
       const result = await api.documents.syncDocument(payload);
 
       // Update local document as synced
-      const cloudId = result?.document?.id ?? result?.id ?? null;
-      const serverUpdatedAt = result?.document?.updatedAt ?? result?.updated_at ?? null;
+      const syncedDoc = result?.document as { id?: number; updatedAt?: string; updated_at?: string } | undefined;
+      const cloudId = syncedDoc?.id ?? null;
+      const serverUpdatedAt = syncedDoc?.updatedAt ?? syncedDoc?.updated_at ?? null;
 
       const { markDocumentSyncedWithCloud } = await import(
         "@/services/localDatabase"

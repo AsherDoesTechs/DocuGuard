@@ -33,6 +33,7 @@ export interface BackoffOptions {
 
 export interface SyncPayloadOptions {
   formatCategory?: (value: string | undefined) => string;
+  force?: boolean;
 }
 
 export interface SyncDocumentPayload {
