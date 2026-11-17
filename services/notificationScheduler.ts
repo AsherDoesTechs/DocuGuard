@@ -38,7 +38,7 @@ export async function syncDocumentRemindersToDb() {
     }
 
     if (daysUntil < 0) {
-      await upsertExpiredDocumentReminder(doc.title, doc.expiryDate || "");
+      await upsertExpiredDocumentReminder(doc.title, doc.expiryDate || "", doc.id!);
     }
   }
 }

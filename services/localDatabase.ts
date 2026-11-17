@@ -905,6 +905,7 @@ export async function initDatabase() {
       CREATE TABLE IF NOT EXISTS reminders (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
+        document_id INTEGER,
         title TEXT NOT NULL,
         description TEXT,
         due_date TEXT,
@@ -927,6 +928,11 @@ export async function initDatabase() {
     if (!reminderColumns.has("user_id")) {
       await database.execAsync(
         `ALTER TABLE reminders ADD COLUMN user_id INTEGER`,
+      );
+    }
+    if (!reminderColumns.has("document_id")) {
+      await database.execAsync(
+        `ALTER TABLE reminders ADD COLUMN document_id INTEGER`,
       );
     }
     // cloud_id is what makes reminder sync idempotent; without it every sync
@@ -2605,7 +2611,7 @@ export async function getAllReminders(): Promise<LocalReminder[]> {
   const userId = await getLocalUserId();
   return queryAll<LocalReminder>(
     `
-    SELECT id, user_id AS "userId", title, description, due_date AS "dueDate",
+    SELECT id, user_id AS "userId", document_id AS "documentId", title, description, due_date AS "dueDate",
            severity, is_read AS "read", needs_sync AS "needsSync",
            cloud_id AS "cloudId", created_at AS "createdAt"
     FROM reminders
@@ -3662,6 +3668,7 @@ export async function createReminder(
 export async function upsertExpiredDocumentReminder(
   documentTitle: string,
   expiryDate: string,
+  documentId: number,
 ): Promise<number | null> {
   const userId = await getLocalUserId();
 
@@ -3695,12 +3702,11 @@ export async function upsertExpiredDocumentReminder(
     SELECT id, is_read AS "read"
     FROM reminders
     WHERE user_id = ?
-      AND title = ?
-      AND due_date = ?
+      AND document_id = ?
     ORDER BY id ASC
     LIMIT 1
     `,
-    [userId, reminderTitle, expiryDate],
+    [userId, documentId],
   );
 
   if (existing) {
@@ -3725,6 +3731,7 @@ export async function upsertExpiredDocumentReminder(
     INSERT INTO reminders
       (
         user_id,
+        document_id,
         title,
         description,
         due_date,
@@ -3735,7 +3742,7 @@ export async function upsertExpiredDocumentReminder(
       )
     VALUES (?, ?, ?, ?, 'Expired', 0, 1, ?)
     `,
-    [userId, reminderTitle, description, expiryDate, new Date().toISOString()],
+    [userId, documentId, reminderTitle, description, expiryDate, new Date().toISOString()],
   );
 
   return result.lastInsertRowId as number;

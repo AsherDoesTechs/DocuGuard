@@ -56,6 +56,8 @@ export interface LocalReminder {
   /** Backend reminder id once uploaded, so re-sync updates instead of duplicating. */
   cloudId?: number | null;
   createdAt?: string;
+  /** Local document id this reminder is associated with. */
+  documentId?: number;
 }
 
 export interface LocalUserProfile {
