@@ -16,6 +16,7 @@ import {
   AppState,
   AppStateStatus,
   DeviceEventEmitter,
+  Modal,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useFocusEffect } from "expo-router";
@@ -35,6 +36,8 @@ import {
   markReminderAsRead,
   markAllRemindersAsRead,
   LocalReminder,
+  updateDocument,
+  upsertExpiredDocumentReminder,
 } from "../../services/localDatabase";
 
 import {
@@ -102,6 +105,13 @@ export default function RemindersScreen() {
   const mountedRef = useRef(true);
   const fetchInProgressRef = useRef(false);
 
+  // Updated Document modal state
+  const [updateDocModal, setUpdateDocModal] = useState<{
+    visible: boolean;
+    reminder: Reminder | null;
+    newExpiryDate: string;
+  }>({ visible: false, reminder: null, newExpiryDate: "" });
+
   const getDaysUntil = useCallback(
     (dateStr: string) => {
       const due = parseLocalDate(dateStr);
@@ -166,6 +176,9 @@ export default function RemindersScreen() {
         // Include any document that is Expired or Expiring Soon (within 30 days)
         if (severity === "Expired" || severity === "Expiring Soon") {
           const existing = reminderMap.get(String(doc.id));
+
+          // Ensure reminder row exists in database for both Expired and Expiring Soon
+          upsertExpiredDocumentReminder(doc.title, doc.expiryDate, doc.id);
 
           dynamicReminders.push({
             id: doc.id ? Number(doc.id) : nextId++,
@@ -437,6 +450,32 @@ export default function RemindersScreen() {
     setMarkingAllRead(true);
 
     try {
+      // First, get all documents to ensure reminder rows exist for expiring/expired docs
+      const localDocs = await getAllDocuments();
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const thirtyDaysFromNow = new Date();
+      thirtyDaysFromNow.setDate(today.getDate() + 30);
+      thirtyDaysFromNow.setHours(23, 59, 59, 999);
+
+      for (const doc of localDocs) {
+        if (!doc.expiryDate || doc.status === "deleted") continue;
+        const expDate = new Date(doc.expiryDate);
+        if (isNaN(expDate.getTime())) continue;
+        expDate.setHours(0, 0, 0, 0);
+        if (expDate < today || (expDate >= today && expDate <= thirtyDaysFromNow)) {
+          // This document is expired or expiring soon - ensure reminder row exists
+          if (doc.id != null) {
+            await upsertExpiredDocumentReminder(
+              doc.title,
+              doc.expiryDate,
+              doc.id,
+            );
+          }
+        }
+      }
+
+      // Now mark all reminders as read
       await markAllRemindersAsRead();
 
       if (mountedRef.current) {
@@ -461,6 +500,65 @@ export default function RemindersScreen() {
       }
     }
   };
+
+  const handleOpenUpdateDocument = useCallback((reminder: Reminder) => {
+    if (!reminder.documentId) return;
+    // Pre-fill with current expiry date or tomorrow
+    const currentDate = reminder.dueDate;
+    setUpdateDocModal({
+      visible: true,
+      reminder,
+      newExpiryDate: currentDate,
+    });
+  }, []);
+
+  const handleConfirmUpdateDocument = useCallback(async () => {
+    const { reminder, newExpiryDate } = updateDocModal;
+    if (!reminder?.documentId || !newExpiryDate) {
+      setUpdateDocModal((prev) => ({ ...prev, visible: false }));
+      return;
+    }
+
+    try {
+      // Update the document's expiry date
+      await updateDocument(reminder.documentId as number, {
+        expiryDate: newExpiryDate,
+      });
+
+      // Also update the local reminder
+      if (mountedRef.current) {
+        setReminders((prev) =>
+          prev.map((r) =>
+            r.id === reminder.id
+              ? { ...r, dueDate: newExpiryDate, severity: calculateSeverity(newExpiryDate) }
+              : r,
+          ),
+        );
+      }
+
+      // Upsert the reminder with new expiry date to keep it in sync
+      await upsertExpiredDocumentReminder(
+        reminder.title.replace("Document Expired: ", "").replace("Document Expiring: ", ""),
+        newExpiryDate,
+        reminder.documentId as number,
+      );
+
+      await feedbackService.success("Document renewal date updated successfully.");
+    } catch (err) {
+      console.error("Failed to update document expiry:", err);
+      await feedbackService.alert({
+        title: "Error",
+        message: "Could not update the document renewal date.",
+        type: "error",
+      });
+    } finally {
+      setUpdateDocModal((prev) => ({ ...prev, visible: false }));
+    }
+  }, [updateDocModal, calculateSeverity]);
+
+  const handleCancelUpdateDocument = useCallback(() => {
+    setUpdateDocModal((prev) => ({ ...prev, visible: false }));
+  }, []);
 
   const unreadCount = useMemo(
     () => reminders.filter((reminder) => !reminder.read).length,
@@ -968,8 +1066,7 @@ export default function RemindersScreen() {
                                     ]}
                                     onPress={(e) => {
                                       e.stopPropagation?.();
-                                      // Handle update document - for now just log
-                                      console.log("Update document for:", reminder.id);
+                                      handleOpenUpdateDocument(reminder);
                                     }}
                                     accessibilityRole="button"
                                     accessibilityLabel={`Update renewal date for ${reminder.title}`}
@@ -1003,6 +1100,90 @@ export default function RemindersScreen() {
           </>
         )}
       </RefreshableContainer>
+
+      {/* Updated Document Modal */}
+      {updateDocModal.visible && (
+        <Modal
+          visible={true}
+          transparent
+          animationType="fade"
+          onRequestClose={handleCancelUpdateDocument}
+        >
+          <View style={styles.modalOverlay}>
+            <TouchableOpacity
+              style={styles.modalBackdrop}
+              activeOpacity={1}
+              onPress={handleCancelUpdateDocument}
+            />
+            <View style={styles.modalContent}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Update Document Renewal</Text>
+                <TouchableOpacity
+                  style={styles.modalCloseButton}
+                  onPress={handleCancelUpdateDocument}
+                  accessibilityLabel="Close"
+                >
+                  <Ionicons name="close" size={22} color={themeColors.textSecondary} />
+                </TouchableOpacity>
+              </View>
+
+              <Text style={styles.modalMessage}>
+                Enter the new renewal date for{"\n"}
+                <Text style={styles.modalDocumentTitle}>
+                  {updateDocModal.reminder?.title || "this document"}
+                </Text>
+              </Text>
+
+              <View style={styles.datePickerContainer}>
+                <TouchableOpacity
+                  style={[
+                    styles.datePickerButton,
+                    { borderColor: themeColors.primary },
+                  ]}
+                  onPress={() => {
+                    // For now just use the current date - could add a proper date picker later
+                    const tomorrow = new Date();
+                    tomorrow.setDate(tomorrow.getDate() + 1);
+                    const formatted = tomorrow.toISOString().split("T")[0];
+                    setUpdateDocModal((prev) => ({ ...prev, newExpiryDate: formatted }));
+                  }}
+                >
+                  <Ionicons
+                    name="calendar-outline"
+                    size={20}
+                    color={themeColors.primary}
+                  />
+                  <Text style={styles.datePickerText}>
+                    {updateDocModal.newExpiryDate
+                      ? formatShortDate(updateDocModal.newExpiryDate)
+                      : "Select date"}
+                  </Text>
+                  <Ionicons
+                    name="chevron-down"
+                    size={18}
+                    color={themeColors.textSecondary}
+                  />
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.modalButtonRow}>
+                <TouchableOpacity
+                  style={styles.modalCancelButton}
+                  onPress={handleCancelUpdateDocument}
+                >
+                  <Text style={styles.modalCancelButtonText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.modalConfirmButton}
+                  onPress={handleConfirmUpdateDocument}
+                >
+                  <Text style={styles.modalConfirmButtonText}>Update</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      )}
     </SafeAreaView>
   );
 }
@@ -1332,5 +1513,104 @@ const createStyles = (COLORS: any) =>
       color: COLORS.buttonPrimaryText,
       fontSize: 14,
       fontWeight: "600",
+    },
+    // Updated Document Modal Styles
+    modalOverlay: {
+      flex: 1,
+      backgroundColor: "rgba(0,0,0,0.5)",
+      justifyContent: "center",
+      alignItems: "center",
+      paddingHorizontal: 20,
+    },
+    modalBackdrop: {
+      flex: 1,
+      width: "100%",
+    },
+    modalContent: {
+      backgroundColor: COLORS.surface,
+      borderRadius: 20,
+      padding: 24,
+      width: "100%",
+      maxWidth: 340,
+      shadowColor: COLORS.shadow,
+      shadowOffset: { width: 0, height: 10 },
+      shadowOpacity: 0.2,
+      shadowRadius: 20,
+      elevation: 10,
+    },
+    modalHeader: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      marginBottom: 16,
+    },
+    modalTitle: {
+      fontSize: 18,
+      fontWeight: "700",
+      color: COLORS.text,
+    },
+    modalCloseButton: {
+      padding: 4,
+    },
+    modalMessage: {
+      fontSize: 14,
+      color: COLORS.textSecondary,
+      lineHeight: 21,
+      textAlign: "center",
+      marginBottom: 20,
+    },
+    modalDocumentTitle: {
+      fontWeight: "600",
+      color: COLORS.text,
+    },
+    datePickerContainer: {
+      marginBottom: 24,
+    },
+    datePickerButton: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      paddingHorizontal: 16,
+      paddingVertical: 14,
+      borderRadius: 12,
+      borderWidth: 2,
+      backgroundColor: COLORS.surfaceSecondary,
+    },
+    datePickerText: {
+      fontSize: 15,
+      color: COLORS.text,
+      flex: 1,
+      textAlign: "center",
+    },
+    modalButtonRow: {
+      flexDirection: "row",
+      gap: 12,
+      marginTop: 8,
+    },
+    modalCancelButton: {
+      flex: 1,
+      paddingVertical: 14,
+      borderRadius: 12,
+      backgroundColor: COLORS.surfaceSecondary,
+      borderWidth: 1,
+      borderColor: COLORS.border,
+      alignItems: "center",
+    },
+    modalCancelButtonText: {
+      fontSize: 15,
+      fontWeight: "600",
+      color: COLORS.text,
+    },
+    modalConfirmButton: {
+      flex: 1,
+      paddingVertical: 14,
+      borderRadius: 12,
+      backgroundColor: COLORS.primary,
+      alignItems: "center",
+    },
+    modalConfirmButtonText: {
+      fontSize: 15,
+      fontWeight: "700",
+      color: COLORS.buttonPrimaryText,
     },
   });
