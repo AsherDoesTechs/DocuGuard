@@ -2209,6 +2209,72 @@ export async function getDocumentById(
   }
 }
 
+/**
+ * Checks if a document with the same document number already exists for the user.
+ * Returns the existing document if found, null otherwise.
+ * Also checks by title + issuer combination as a fallback.
+ */
+export async function findExistingDocument(
+  documentNumber: string,
+  title?: string,
+  issuer?: string,
+): Promise<LocalDocument | null> {
+  try {
+    const userId = await getLocalUserId();
+    if (userId === null) return null;
+
+    const normalizedNumber = documentNumber?.trim().toUpperCase();
+    if (!normalizedNumber) return null;
+
+    // First check by document number (most reliable)
+    let row = await querySingle<LocalDocument>(
+      `SELECT ${DOC_COLUMNS}
+       FROM documents
+       WHERE document_number = ? AND status IS NOT 'deleted'
+         AND user_id = ?
+       LIMIT 1`,
+      [normalizedNumber, userId],
+    );
+
+    if (row) {
+      normalizeDocumentRow(row);
+      row.tags = await getDocumentTags(row.id!);
+      return row;
+    }
+
+    // Fallback: check by title + issuer combination
+    if (title && issuer) {
+      const normalizedTitle = title.trim();
+      const normalizedIssuer = issuer.trim();
+      
+      row = await querySingle<LocalDocument>(
+        `SELECT ${DOC_COLUMNS}
+         FROM documents
+         WHERE title = ? AND issuer = ? AND status IS NOT 'deleted'
+           AND user_id = ?
+         LIMIT 1`,
+        [normalizedTitle, normalizedIssuer, userId],
+      );
+
+      if (row) {
+        normalizeDocumentRow(row);
+        row.tags = await getDocumentTags(row.id!);
+        return row;
+      }
+    }
+
+    return null;
+  } catch (err) {
+    DebugLogger.error(
+      "LocalDatabase",
+      "Failed to check for existing document",
+      { error: err, documentNumber },
+      ErrorCodes.LOCAL_DB_QUERY,
+    );
+    return null;
+  }
+}
+
 /** Maps the camelCase LocalDocument surface onto documents columns. */
 const UPDATE_COLUMN_MAP: Record<string, string> = {
   title: "title",

@@ -36,7 +36,10 @@ import { DocumentScanner as DocumentScannerComponent, TagsInput } from "@/compon
 import { verifyDocumentWithOrchestrator } from "@/services/documentVerificationClient";
 import { extractDocumentData, validateOcrImageFile } from "../utils/ocr";
 import { LocalDocument } from "../services/localDatabase";
-import { saveDocumentToVault } from "@/services/documentSaveService";
+import {
+  saveDocumentToVault,
+  findExistingDocument,
+} from "@/services/documentSaveService";
 import { DocumentSaveError } from "@/shared/sync/documentSaveCore";
 import { normalizeCloudId } from "@/shared/sync/cloudId";
 import {
@@ -1712,6 +1715,30 @@ export default function AddDocumentScreen() {
         pageCount: scannedPageUris.length > 1 ? scannedPageUris.length : undefined,
         pageImages: scannedPageUris.length > 1 ? scannedPageUris : undefined,
       };
+
+      // Check for existing document with same document number or title+issuer
+      const existingDoc = await findExistingDocument(
+        payload.documentNumber!,
+        payload.title,
+        payload.issuer,
+      );
+
+      if (existingDoc) {
+        setSaving(false);
+        saveInProgressRef.current = false;
+
+        // Show alert and navigate to existing document
+        const docNumber = existingDoc.documentNumber || "this document";
+        await feedbackService.confirm({
+          title: "Document Already Exists",
+          message: `A document with number "${docNumber}" already exists in your vault.\n\nTitle: ${existingDoc.title}\nIssuer: ${existingDoc.issuer || "Unknown"}\n\nWould you like to view the existing document?`,
+          confirmText: "View Existing",
+          cancelText: "Cancel",
+          onConfirm: () => router.push(`/document-details/${existingDoc.id}` as any),
+          onCancel: () => {},
+        });
+        return;
+      }
 
       /*
        * The local insert is the only step that can fail the save. The history

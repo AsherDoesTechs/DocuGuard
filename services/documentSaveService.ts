@@ -2,6 +2,7 @@ import {
   createDocument,
   logDocumentAction,
   LocalDocument,
+  findExistingDocument,
 } from "./localDatabase";
 import { api } from "./api";
 import { scheduleRemindersForDocument } from "./notificationScheduler";
@@ -11,6 +12,11 @@ import {
 } from "@/shared/sync/documentSaveCore";
 import { normalizeCloudId } from "@/shared/sync/cloudId";
 import { DebugLogger } from "./debugLogger";
+
+/**
+ * Checks if a document with the same document number already exists for the user.
+ */
+export { findExistingDocument };
 
 /**
  * Creates a document in the local vault.
