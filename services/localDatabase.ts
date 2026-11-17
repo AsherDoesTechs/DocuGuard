@@ -1053,12 +1053,47 @@ export async function initDatabase() {
         file_url TEXT,
         file_type TEXT,
         s3_key TEXT,
+        page_count INTEGER,
+        page_images TEXT,
         processing_status TEXT,
         risk_score REAL,
         risk_level TEXT,
         created_at TEXT DEFAULT (datetime('now'))
       )
     `);
+
+    /*
+     * page_count / page_images were added to the history insert later, so
+     * installs created before that have a document_history table without them.
+     * Every insert then fails with "no column named page_count", which is what
+     * broke cloud sync. Add the columns to existing databases here.
+     */
+    const historyColumns = new Set(
+      (
+        await database.getAllAsync<{ name: string }>(
+          `PRAGMA table_info(document_history)`,
+        )
+      ).map((column) => column.name),
+    );
+
+    const historyMigrations = [
+      { name: "page_count", sql: `ALTER TABLE document_history ADD COLUMN page_count INTEGER` },
+      { name: "page_images", sql: `ALTER TABLE document_history ADD COLUMN page_images TEXT` },
+      { name: "processing_status", sql: `ALTER TABLE document_history ADD COLUMN processing_status TEXT` },
+      { name: "risk_score", sql: `ALTER TABLE document_history ADD COLUMN risk_score REAL` },
+      { name: "risk_level", sql: `ALTER TABLE document_history ADD COLUMN risk_level TEXT` },
+    ];
+
+    for (const migration of historyMigrations) {
+      if (!historyColumns.has(migration.name)) {
+        DebugLogger.info("LocalDatabase", `Adding missing column to document_history: ${migration.name}`);
+        try {
+          await database.execAsync(migration.sql);
+        } catch (error) {
+          DebugLogger.error("LocalDatabase", `Failed to add column ${migration.name} to document_history`, { error });
+        }
+      }
+    }
 
     // Document tags table
     await database.execAsync(`
@@ -3066,15 +3101,12 @@ export async function logDocumentAction(
   snapshot: Partial<LocalDocument>,
 ) {
   await run(
-    `INSERT INTO document_history 
-       (document_id, action, title, category, issuer, document_number, 
-        issue_date, expiry_date, notes, status, file_url, file_type, 
-                    s3_key,
-            page_count,
-            page_images,
-            processing_status,
-            risk_score, risk_level, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO document_history
+       (document_id, action, title, category, issuer, document_number,
+        issue_date, expiry_date, notes, status, file_url, file_type,
+        s3_key, page_count, page_images,
+        processing_status, risk_score, risk_level, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       docId,
       action,
@@ -3089,6 +3121,8 @@ export async function logDocumentAction(
       snapshot.fileUrl,
       snapshot.fileType,
       snapshot.s3Key,
+      snapshot.pageCount ?? null,
+      snapshot.pageImages ? JSON.stringify(snapshot.pageImages) : null,
       snapshot.processingStatus,
       snapshot.riskScore,
       snapshot.riskLevel,
