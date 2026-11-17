@@ -168,8 +168,8 @@ export default function RemindersScreen() {
       let nextId = 1000;
 
       // 3. Dynamically evaluate all documents to build real-time reminders
-      localDocs.forEach((doc: any) => {
-        if (!doc.expiryDate || doc.status === "deleted") return;
+      for (const doc of localDocs) {
+        if (!doc.expiryDate || doc.status === "deleted") continue;
 
         const severity = calculateSeverity(doc.expiryDate);
 
@@ -178,7 +178,9 @@ export default function RemindersScreen() {
           const existing = reminderMap.get(String(doc.id));
 
           // Ensure reminder row exists in database for both Expired and Expiring Soon
-          upsertExpiredDocumentReminder(doc.title, doc.expiryDate, doc.id);
+          if (doc.id != null) {
+            await upsertExpiredDocumentReminder(doc.title, doc.expiryDate, doc.id);
+          }
 
           dynamicReminders.push({
             id: doc.id ? Number(doc.id) : nextId++,
@@ -193,7 +195,7 @@ export default function RemindersScreen() {
             read: existing ? !!existing.read : false,
           });
         }
-      });
+      }
 
       // Also append any non-document custom reminders if they exist
       localReminders.forEach((r: any) => {
