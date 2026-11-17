@@ -70,6 +70,7 @@ export interface LocalUserProfile {
   documentCount: number;
   expiringCount: number;
   expiredCount: number;
+  noExpiryCount: number;
   notificationsEnabled: boolean;
   notifyEmail: boolean;
   notifyExpiry: boolean;

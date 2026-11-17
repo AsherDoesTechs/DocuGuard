@@ -754,6 +754,7 @@ export default function ProfileScreen() {
                 documentCount: parseInt(res.data.documentCount || 0),
                 expiringCount: parseInt(res.data.expiringCount || 0),
                 expiredCount: parseInt(res.data.expiredCount || 0),
+                noExpiryCount: parseInt(res.data.noExpiryCount || 0),
                 notifyEmail: resolvedEmail,
                 notificationsEnabled: resolvedPush,
                 notifyExpiry: resolvedExpiry,

@@ -29,6 +29,7 @@ import {
   getExpiredDocuments,
   saveUserProfile,
   LocalDocument,
+  getLocalUserId,
 } from "../../services/localDatabase";
 import { syncDocumentRemindersToDb } from "../../services/notificationScheduler";
 import {
@@ -42,6 +43,7 @@ interface DashboardSummary {
   validDocuments: number;
   expiringDocuments: number;
   expiredDocuments: number;
+  noExpiryDocuments: number;
   totalReminders: number;
 }
 
@@ -83,6 +85,7 @@ export default function HomeScreen() {
     validDocuments: 0,
     expiringDocuments: 0,
     expiredDocuments: 0,
+    noExpiryDocuments: 0,
     totalReminders: 0,
   });
 
@@ -215,10 +218,13 @@ export default function HomeScreen() {
         setUserName(localProfile.name.trim());
       }
 
-      // 1. Exclude deleted/draft documents
+      // 1. Exclude deleted/draft documents AND ensure user ownership
+      const userId = await getLocalUserId();
       const activeDocs = localDocs.filter(
         (doc: any) =>
-          doc.status !== "deleted" && doc.processingStatus !== "failed",
+          doc.status !== "deleted" &&
+          doc.processingStatus !== "failed" &&
+          (userId === null || doc.userId === userId || doc.user_id === userId),
       );
 
       const today = new Date();
@@ -231,12 +237,14 @@ export default function HomeScreen() {
       let expiredCount = 0;
       let expiringCount = 0;
       let validCount = 0;
+      let noExpiryCount = 0;
 
       // 2. Tally states accurately by checking every active document's expiryDate
       activeDocs.forEach((doc: any) => {
         if (!doc.expiryDate) {
-          // Documents without an expiration date are considered Valid
-          validCount++;
+          // Documents without an expiration date are tracked separately
+          noExpiryCount++;
+          validCount++; // Still count as valid for safety score
           return;
         }
 
@@ -299,6 +307,7 @@ export default function HomeScreen() {
         validDocuments: validCount,
         expiringDocuments: expiringCount,
         expiredDocuments: expiredCount,
+        noExpiryDocuments: noExpiryCount,
         totalReminders: dynamicReminderCount + customReminderCount,
       });
 
@@ -320,6 +329,7 @@ export default function HomeScreen() {
               documentCount: totalActiveDocs,
               expiringCount,
               expiredCount,
+              noExpiryCount,
               notificationsEnabled: localProfile?.notificationsEnabled ?? true,
               notifyEmail: localProfile?.notifyEmail ?? true,
               notifyExpiry: localProfile?.notifyExpiry ?? true,

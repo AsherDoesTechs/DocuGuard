@@ -954,6 +954,7 @@ export async function initDatabase() {
         document_count INTEGER DEFAULT 0,
         expiring_count INTEGER DEFAULT 0,
         expired_count INTEGER DEFAULT 0,
+        no_expiry_count INTEGER DEFAULT 0,
         notifications_enabled BOOLEAN DEFAULT 1,
         notify_email BOOLEAN DEFAULT 1,
         notify_expiry BOOLEAN DEFAULT 1,
@@ -1000,6 +1001,12 @@ export async function initDatabase() {
     if (!profileColumns.has("preferences_dirty")) {
       await database.execAsync(
         `ALTER TABLE user_profile ADD COLUMN preferences_dirty BOOLEAN DEFAULT 0`,
+      );
+    }
+
+    if (!profileColumns.has("no_expiry_count")) {
+      await database.execAsync(
+        `ALTER TABLE user_profile ADD COLUMN no_expiry_count INTEGER DEFAULT 0`,
       );
     }
 
@@ -2654,13 +2661,13 @@ export async function saveUserProfile(profile: LocalUserProfile) {
     (profile.serialNumber && String(profile.serialNumber).trim()) ||
     `DG-USER-${String(userId).padStart(4, "0")}`;
 
-  await run(
+await run(
     `
     INSERT OR REPLACE INTO user_profile
-      (id, name, email, occupation, phone, serial_number, document_count, expiring_count, expired_count,
-       notifications_enabled, notify_email, notify_expiry, two_factor,
-       preferences_dirty)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (id, name, email, occupation, phone, serial_number, document_count, expiring_count, expired_count, no_expiry_count,
+        notifications_enabled, notify_email, notify_expiry, two_factor,
+        preferences_dirty)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
     [
       userId,
@@ -2672,6 +2679,7 @@ export async function saveUserProfile(profile: LocalUserProfile) {
       profile.documentCount,
       profile.expiringCount,
       profile.expiredCount,
+      profile.noExpiryCount ?? 0,
       profile.notificationsEnabled ? 1 : 0,
       profile.notifyEmail ? 1 : 0,
       profile.notifyExpiry ? 1 : 0,
@@ -2719,6 +2727,7 @@ export async function updateLocalNotificationPreferences(fields: {
     documentCount: existing?.documentCount ?? 0,
     expiringCount: existing?.expiringCount ?? 0,
     expiredCount: existing?.expiredCount ?? 0,
+    noExpiryCount: existing?.noExpiryCount ?? 0,
     notificationsEnabled:
       fields.notificationsEnabled ?? existing?.notificationsEnabled ?? true,
     notifyEmail: fields.notifyEmail ?? existing?.notifyEmail ?? true,
@@ -2752,6 +2761,7 @@ export async function getUserProfile(): Promise<LocalUserProfile | null> {
             COALESCE(NULLIF(serial_number, ''), 'DG-USER-' || printf('%04d', id)) AS "serialNumber",
             document_count AS "documentCount",
             expiring_count AS "expiringCount", expired_count AS "expiredCount",
+            no_expiry_count AS "noExpiryCount",
             notifications_enabled AS "notificationsEnabled",
             notify_email AS "notifyEmail", notify_expiry AS "notifyExpiry",
             two_factor AS "twoFactor",
