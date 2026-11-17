@@ -11,6 +11,7 @@ import { useAppLock, AppLockScreen } from "../hooks/useAppLock";
 import { initDatabase } from "../services/localDatabase";
 import { checkAndScheduleAlerts } from "../services/notificationScheduler";
 import { syncWorker } from "@/services/syncWorker";
+import { pullSyncWorker } from "@/services/pullSyncWorker";
 import { useRealtime } from "@/hooks/useRealtime";
 
 import { AlertProvider } from "@/components/ui/AlertService";
@@ -166,6 +167,8 @@ function RootLayoutNav() {
         void (syncWorker as any).kick?.().catch((error: any) => {
           console.warn("Background sync kick failed:", error);
         });
+        // Start background pull sync worker for cloud→local sync
+        pullSyncWorker.start();
       } catch (error) {
         console.error("Auth check failed:", error);
         if (!cancelled) router.replace("/(auth)/login" as any);
