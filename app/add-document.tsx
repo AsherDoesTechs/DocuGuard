@@ -251,7 +251,7 @@ const DOCUMENTS_BY_CATEGORY: Record<string, SpecificDocumentItem[]> = {
     },
     {
       id: "sirb",
-      title: "SeafarerÃ¢â‚¬â„¢s Identification and Record Book (SIRB)",
+      title: "Seafarer Identification and Record Book (SIRB)",
       description: "Seaman's book issued by MARINA",
       icon: "boat-outline",
       defaultIssuer: "Maritime Industry Authority",
