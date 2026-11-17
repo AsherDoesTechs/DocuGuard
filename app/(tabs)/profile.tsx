@@ -121,14 +121,38 @@ interface SettingRowProps {
 }
 
 const PHONE_COUNTRIES = [
-  { code: "PH", name: "Philippines", dialCode: "+63", flag: "🇵🇭", maxLength: 10 },
-  { code: "US", name: "United States", dialCode: "+1", flag: "🇺🇸", maxLength: 10 },
+  {
+    code: "PH",
+    name: "Philippines",
+    dialCode: "+63",
+    flag: "🇵🇭",
+    maxLength: 10,
+  },
+  {
+    code: "US",
+    name: "United States",
+    dialCode: "+1",
+    flag: "🇺🇸",
+    maxLength: 10,
+  },
   { code: "SG", name: "Singapore", dialCode: "+65", flag: "🇸🇬", maxLength: 8 },
   { code: "AE", name: "UAE", dialCode: "+971", flag: "🇦🇪", maxLength: 9 },
-  { code: "SA", name: "Saudi Arabia", dialCode: "+966", flag: "🇸🇦", maxLength: 9 },
+  {
+    code: "SA",
+    name: "Saudi Arabia",
+    dialCode: "+966",
+    flag: "🇸🇦",
+    maxLength: 9,
+  },
   { code: "JP", name: "Japan", dialCode: "+81", flag: "🇯🇵", maxLength: 10 },
   { code: "AU", name: "Australia", dialCode: "+61", flag: "🇦🇺", maxLength: 9 },
-  { code: "GB", name: "United Kingdom", dialCode: "+44", flag: "🇬🇧", maxLength: 10 },
+  {
+    code: "GB",
+    name: "United Kingdom",
+    dialCode: "+44",
+    flag: "🇬🇧",
+    maxLength: 10,
+  },
   { code: "CA", name: "Canada", dialCode: "+1", flag: "🇨🇦", maxLength: 10 },
   { code: "QA", name: "Qatar", dialCode: "+974", flag: "🇶🇦", maxLength: 8 },
 ];
@@ -201,47 +225,49 @@ const SettingRow = ({
   isDestructive = false,
   isWarning = false,
 }: SettingRowProps) => {
-  const accentColor = isDestructive ? colors.error : isWarning ? colors.warning : colors.primary;
+  const accentColor = isDestructive
+    ? colors.error
+    : isWarning
+      ? colors.warning
+      : colors.primary;
   return (
-  <TouchableOpacity
-    onPress={onPress}
-    accessibilityRole="button"
-    accessibilityLabel={title}
-  >
-    <View
-      style={[
-        styles.settingRow,
-        {
-          backgroundColor: colors.surface,
-          borderColor: isActive ? colors.primary : colors.border,
-        },
-      ]}
+    <TouchableOpacity
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={title}
     >
-      <Ionicons
-        name={icon}
-        size={22}
-        color={accentColor}
-      />
-      <View style={styles.settingInfo}>
-        <Text
-          style={[
-            styles.settingTitle,
-            { color: isDestructive || isWarning ? accentColor : colors.text },
-          ]}
-        >
-          {title}
-        </Text>
-        <Text style={[styles.settingSubtitle, { color: colors.textSecondary }]}>
-          {subtitle}
-        </Text>
+      <View
+        style={[
+          styles.settingRow,
+          {
+            backgroundColor: colors.surface,
+            borderColor: isActive ? colors.primary : colors.border,
+          },
+        ]}
+      >
+        <Ionicons name={icon} size={22} color={accentColor} />
+        <View style={styles.settingInfo}>
+          <Text
+            style={[
+              styles.settingTitle,
+              { color: isDestructive || isWarning ? accentColor : colors.text },
+            ]}
+          >
+            {title}
+          </Text>
+          <Text
+            style={[styles.settingSubtitle, { color: colors.textSecondary }]}
+          >
+            {subtitle}
+          </Text>
+        </View>
+        <Ionicons
+          name={isActive ? "chevron-down" : "chevron-forward"}
+          size={20}
+          color={isActive ? colors.primary : colors.border}
+        />
       </View>
-      <Ionicons
-        name={isActive ? "chevron-down" : "chevron-forward"}
-        size={20}
-        color={isActive ? colors.primary : colors.border}
-      />
-    </View>
-  </TouchableOpacity>
+    </TouchableOpacity>
   );
 };
 
@@ -364,7 +390,8 @@ export default function ProfileScreen() {
   });
   const [phoneCountry, setPhoneCountry] = useState(DEFAULT_PHONE_COUNTRY);
   const [phoneLocalNumber, setPhoneLocalNumber] = useState("");
-  const [phoneCountryModalVisible, setPhoneCountryModalVisible] = useState(false);
+  const [phoneCountryModalVisible, setPhoneCountryModalVisible] =
+    useState(false);
   const [savingPersonal, setSavingPersonal] = useState(false);
   const [maskPersonalData, setMaskPersonalData] = useState(true);
 
@@ -454,11 +481,12 @@ export default function ProfileScreen() {
       let storedBiometricEnrollment: string | null = null;
       let storedAppLock: string | null = null;
       if (activeUserId !== null) {
-        [storedBiometric, storedBiometricEnrollment, storedAppLock] = await Promise.all([
-          SecureStore.getItemAsync(getBiometricEnabledKey(activeUserId)),
-          SecureStore.getItemAsync(getBiometricEnrolledKey(activeUserId)),
-          SecureStore.getItemAsync(getAppLockEnabledKey(activeUserId)),
-        ]);
+        [storedBiometric, storedBiometricEnrollment, storedAppLock] =
+          await Promise.all([
+            SecureStore.getItemAsync(getBiometricEnabledKey(activeUserId)),
+            SecureStore.getItemAsync(getBiometricEnrolledKey(activeUserId)),
+            SecureStore.getItemAsync(getAppLockEnabledKey(activeUserId)),
+          ]);
 
         // Migrate legacy/global preferences for this account.
         if (storedBiometric === null) {
@@ -510,9 +538,7 @@ export default function ProfileScreen() {
           isEnrolled,
         type: bioType,
       });
-      setAppLockEnabled(
-        activeUserId !== null && storedAppLock === "true",
-      );
+      setAppLockEnabled(activeUserId !== null && storedAppLock === "true");
     } catch (err) {
       console.warn("Biometric check failed:", err);
     }
@@ -736,7 +762,10 @@ export default function ProfileScreen() {
               });
             }
           } catch (persistErr) {
-            console.warn("Failed to persist notification preferences locally:", persistErr);
+            console.warn(
+              "Failed to persist notification preferences locally:",
+              persistErr,
+            );
           }
         }
 
@@ -993,9 +1022,19 @@ export default function ProfileScreen() {
           }
         }
         if (!validCached) {
-          await SecureStore.setItemAsync(getBiometricEnabledKey(ownerId), "false");
-          await SecureStore.setItemAsync(getBiometricEnrolledKey(ownerId), "false");
-          setBiometric((prev) => ({ ...prev, enabled: false, appEnrolled: false }));
+          await SecureStore.setItemAsync(
+            getBiometricEnabledKey(ownerId),
+            "false",
+          );
+          await SecureStore.setItemAsync(
+            getBiometricEnrolledKey(ownerId),
+            "false",
+          );
+          setBiometric((prev) => ({
+            ...prev,
+            enabled: false,
+            appEnrolled: false,
+          }));
           DeviceEventEmitter.emit("docuguard.securityPreferencesChanged");
           feedbackService.warning(
             "Sign in with your password once on this device to enable biometric login for this account.",
@@ -1021,14 +1060,22 @@ export default function ProfileScreen() {
     }
     try {
       await Promise.all([
-        SecureStore.setItemAsync(getBiometricEnabledKey(ownerId), String(value)),
-        SecureStore.setItemAsync(getBiometricEnrolledKey(ownerId), String(value)),
+        SecureStore.setItemAsync(
+          getBiometricEnabledKey(ownerId),
+          String(value),
+        ),
+        SecureStore.setItemAsync(
+          getBiometricEnrolledKey(ownerId),
+          String(value),
+        ),
       ]);
       setSecurityOwnerId(ownerId);
       setBiometric((prev) => ({ ...prev, enabled: value, appEnrolled: value }));
       DeviceEventEmitter.emit("docuguard.securityPreferencesChanged");
       feedbackService.success(
-        value ? "Biometric login enabled for this account" : "Biometric login disabled",
+        value
+          ? "Biometric login enabled for this account"
+          : "Biometric login disabled",
       );
     } catch {
       feedbackService.error("Failed to update biometric preference");
@@ -1038,7 +1085,9 @@ export default function ProfileScreen() {
   const handleEnrollBiometric = async () => {
     const ownerId = securityOwnerId ?? (await getActiveLocalUserIdStrict());
     if (ownerId === null) {
-      feedbackService.error("Please sign in to enroll biometrics for this account.");
+      feedbackService.error(
+        "Please sign in to enroll biometrics for this account.",
+      );
       return;
     }
 
@@ -1052,9 +1101,15 @@ export default function ProfileScreen() {
     }
 
     try {
-      const storedCredentials = await SecureStore.getItemAsync("secure_user_credentials");
+      const storedCredentials = await SecureStore.getItemAsync(
+        "secure_user_credentials",
+      );
       let validCached = false;
-      let parsed: { email?: string; password?: string; userId?: number } | null = null;
+      let parsed: {
+        email?: string;
+        password?: string;
+        userId?: number;
+      } | null = null;
       if (storedCredentials) {
         parsed = JSON.parse(storedCredentials);
         validCached =
@@ -1063,7 +1118,10 @@ export default function ProfileScreen() {
           (parsed?.userId === ownerId || typeof parsed?.userId !== "number");
         if (validCached && parsed && parsed.userId !== ownerId) {
           parsed.userId = ownerId;
-          await SecureStore.setItemAsync("secure_user_credentials", JSON.stringify(parsed));
+          await SecureStore.setItemAsync(
+            "secure_user_credentials",
+            JSON.stringify(parsed),
+          );
         }
       }
 
@@ -1105,7 +1163,9 @@ export default function ProfileScreen() {
       ]);
       setBiometric((prev) => ({ ...prev, appEnrolled: false, enabled: false }));
       DeviceEventEmitter.emit("docuguard.securityPreferencesChanged");
-      feedbackService.success("Fingerprint enrollment removed for this account.");
+      feedbackService.success(
+        "Fingerprint enrollment removed for this account.",
+      );
     } catch {
       feedbackService.error("Failed to remove fingerprint enrollment.");
     }
@@ -1118,7 +1178,10 @@ export default function ProfileScreen() {
       return;
     }
     try {
-      await SecureStore.setItemAsync(getAppLockEnabledKey(ownerId), String(value));
+      await SecureStore.setItemAsync(
+        getAppLockEnabledKey(ownerId),
+        String(value),
+      );
       setSecurityOwnerId(ownerId);
       setAppLockEnabled(value);
       DeviceEventEmitter.emit("docuguard.securityPreferencesChanged");
@@ -1494,16 +1557,17 @@ export default function ProfileScreen() {
 
           // Preserve cached credentials/per-user biometric settings for quick
           // sign-in on this device; clear only transient session tokens.
-          await Promise.all([
-            SecureStore.deleteItemAsync("refreshToken"),
-          ]);
+          await Promise.all([SecureStore.deleteItemAsync("refreshToken")]);
 
           if (token) {
             // Best-effort, bounded: never block navigation on slow/offline network.
             void removePushTokenFromBackend(token);
             if (ownerId && ownerId > 0) {
               void api.auth.logout(token, ownerId).catch((err) => {
-                console.warn("Server session revocation failed or offline:", err);
+                console.warn(
+                  "Server session revocation failed or offline:",
+                  err,
+                );
               });
             } else {
               void SecureStore.deleteItemAsync("userToken").catch(() => {});
@@ -1722,7 +1786,9 @@ export default function ProfileScreen() {
                         <Text
                           style={[
                             styles.dropdownSelectorText,
-                            !personalInfo.occupation && { color: colors.textMuted },
+                            !personalInfo.occupation && {
+                              color: colors.textMuted,
+                            },
                           ]}
                         >
                           {personalInfo.occupation || "Select what you do..."}
@@ -1771,8 +1837,12 @@ export default function ProfileScreen() {
                           accessibilityRole="button"
                           accessibilityLabel="Select country code"
                         >
-                          <Text style={styles.countryFlag}>{phoneCountry.flag}</Text>
-                          <Text style={styles.countryDialCode}>{phoneCountry.dialCode}</Text>
+                          <Text style={styles.countryFlag}>
+                            {phoneCountry.flag}
+                          </Text>
+                          <Text style={styles.countryDialCode}>
+                            {phoneCountry.dialCode}
+                          </Text>
                           <Ionicons
                             name="chevron-down"
                             size={16}
@@ -1787,21 +1857,26 @@ export default function ProfileScreen() {
                           </View>
                           <TextInput
                             style={styles.phoneNumberInput}
-                            placeholder={"9".repeat(Math.min(phoneCountry.maxLength, 10))}
+                            placeholder={"9".repeat(
+                              Math.min(phoneCountry.maxLength, 10),
+                            )}
                             placeholderTextColor={colors.textMuted}
                             keyboardType="phone-pad"
                             value={phoneLocalNumber}
                             maxLength={phoneCountry.maxLength}
                             onChangeText={(text) =>
                               setPhoneLocalNumber(
-                                text.replace(/\D/g, "").slice(0, phoneCountry.maxLength),
+                                text
+                                  .replace(/\D/g, "")
+                                  .slice(0, phoneCountry.maxLength),
                               )
                             }
                           />
                         </View>
                       </View>
                       <Text style={styles.phoneHintText}>
-                        Select country first. Country code is fixed and saved with the number.
+                        Select country first. Country code is fixed and saved
+                        with the number.
                       </Text>
                       <TouchableOpacity
                         style={styles.saveButton}
@@ -2369,22 +2444,49 @@ export default function ProfileScreen() {
                           return (
                             <TouchableOpacity
                               key={days}
-                              style={[styles.selectorChip, active && styles.selectorChipActive]}
+                              style={[
+                                styles.selectorChip,
+                                active && styles.selectorChipActive,
+                              ]}
                               onPress={() => {
                                 setExpiryLeadDays(String(days));
                                 void (async () => {
                                   try {
-                                    const token = await SecureStore.getItemAsync("userToken");
-                                    if (!token) { feedbackService.error("Please sign in to save this setting."); return; }
-                                    await api.profile.updateSettings({ reminderBeforeDays: days });
-                                    feedbackService.success("Reminder lead time saved.");
+                                    const token =
+                                      await SecureStore.getItemAsync(
+                                        "userToken",
+                                      );
+                                    if (!token) {
+                                      feedbackService.error(
+                                        "Please sign in to save this setting.",
+                                      );
+                                      return;
+                                    }
+                                    await api.profile.updateSettings({
+                                      reminderBeforeDays: days,
+                                    });
+                                    feedbackService.success(
+                                      "Reminder lead time saved.",
+                                    );
                                   } catch (err: any) {
-                                    feedbackService.error(getApiErrorMessage(err, "Failed to save reminder lead time"));
+                                    feedbackService.error(
+                                      getApiErrorMessage(
+                                        err,
+                                        "Failed to save reminder lead time",
+                                      ),
+                                    );
                                   }
                                 })();
                               }}
                             >
-                              <Text style={[styles.selectorChipText, active && styles.selectorChipTextActive]}>{days} days</Text>
+                              <Text
+                                style={[
+                                  styles.selectorChipText,
+                                  active && styles.selectorChipTextActive,
+                                ]}
+                              >
+                                {days} days
+                              </Text>
                             </TouchableOpacity>
                           );
                         })}
@@ -2441,14 +2543,30 @@ export default function ProfileScreen() {
                       </Text>
                       <View style={styles.selectorRow}>
                         {[7, 15, 30].map((days) => {
-                          const active = Number(docPreferences.expiryReminderDays) === days;
+                          const active =
+                            Number(docPreferences.expiryReminderDays) === days;
                           return (
                             <TouchableOpacity
                               key={days}
-                              style={[styles.selectorChip, active && styles.selectorChipActive]}
-                              onPress={() => setDocPreferences({ ...docPreferences, expiryReminderDays: days })}
+                              style={[
+                                styles.selectorChip,
+                                active && styles.selectorChipActive,
+                              ]}
+                              onPress={() =>
+                                setDocPreferences({
+                                  ...docPreferences,
+                                  expiryReminderDays: days,
+                                })
+                              }
                             >
-                              <Text style={[styles.selectorChipText, active && styles.selectorChipTextActive]}>{days} days</Text>
+                              <Text
+                                style={[
+                                  styles.selectorChipText,
+                                  active && styles.selectorChipTextActive,
+                                ]}
+                              >
+                                {days} days
+                              </Text>
                             </TouchableOpacity>
                           );
                         })}
@@ -2550,7 +2668,10 @@ export default function ProfileScreen() {
                         uploaded to the cloud.
                       </Text>
                       <TouchableOpacity
-                        style={[styles.saveButton, { marginTop: 16, flexDirection: "row", gap: 8 }]}
+                        style={[
+                          styles.saveButton,
+                          { marginTop: 16, flexDirection: "row", gap: 8 },
+                        ]}
                         onPress={() => void exportLocalBackup()}
                         accessibilityRole="button"
                         accessibilityLabel="Export local backup"
@@ -2563,7 +2684,10 @@ export default function ProfileScreen() {
                         <Text style={styles.saveButtonText}>Export Backup</Text>
                       </TouchableOpacity>
                       <TouchableOpacity
-                        style={[styles.saveButton, { marginTop: 10, flexDirection: "row", gap: 8 }]}
+                        style={[
+                          styles.saveButton,
+                          { marginTop: 10, flexDirection: "row", gap: 8 },
+                        ]}
                         onPress={() => void importLocalBackup()}
                         accessibilityRole="button"
                         accessibilityLabel="Import local backup"
@@ -2921,7 +3045,11 @@ export default function ProfileScreen() {
                     </Text>
                   </View>
                   {phoneCountry.code === item.code && (
-                    <Ionicons name="checkmark" size={18} color={colors.primary} />
+                    <Ionicons
+                      name="checkmark"
+                      size={18}
+                      color={colors.primary}
+                    />
                   )}
                 </TouchableOpacity>
               )}
@@ -2992,8 +3120,8 @@ export default function ProfileScreen() {
           <View style={styles.modalContainer}>
             <Text style={styles.modalTitle}>
               {deleteStep === 1
-                ? "âš ï¸ Permanent Account Deletion"
-                : "ðŸ”’ Verify Your Password"}
+                ? "Permanent Account Deletion"
+                : "Verify Your Password"}
             </Text>
 
             {deleteStep === 1 ? (
@@ -3449,7 +3577,12 @@ const createStyles = (COLORS: ColorScheme) =>
       color: COLORS.textSecondary,
       marginBottom: 12,
     },
-    countryRowLeft: { flexDirection: "row", alignItems: "center", gap: 10, flex: 1 },
+    countryRowLeft: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 10,
+      flex: 1,
+    },
     actionButton: {
       backgroundColor: COLORS.buttonPrimary,
       paddingVertical: 12,
